@@ -56,7 +56,7 @@
   }
 
   /** Wandelt den Notiztext in portables Markdown: ?/! werden zu Zitatblöcken, [[Titel]] zu Links. */
-  function bodyToMarkdown(body, resolveLink) {
+  function bodyToMarkdown(body, resolveLink, resolveAttachment) {
     const lines = String(body || '').replace(/\r\n?/g, '\n').split('\n');
     const out = [];
     for (let i = 0; i < lines.length; i++) {
@@ -65,27 +65,34 @@
       if (q && q[1].trim()) {
         let j = i + 1;
         const answers = [];
-        while (j < lines.length && /^\s*!\s?/.test(lines[j])) answers.push(lines[j++].replace(/^\s*!\s?/, '').trim());
+        while (j < lines.length && /^\s*!(?!\[)\s?/.test(lines[j])) answers.push(lines[j++].replace(/^\s*!(?!\[)\s?/, '').trim());
         const answered = answers.join('').trim().length > 0;
         if (out.length && out[out.length - 1].trim() !== '' && !out[out.length - 1].startsWith('>')) out.push('');
-        out.push(`> **${answered ? 'Frage (beantwortet)' : 'Offene Frage'}:** ${inline(q[1].trim(), resolveLink)}`);
-        if (answered) out.push(`> **Antwort:** ${answers.map(a => inline(a, resolveLink)).join(' ')}`);
+        out.push(`> **${answered ? 'Frage (beantwortet)' : 'Offene Frage'}:** ${inline(q[1].trim(), resolveLink, resolveAttachment)}`);
+        if (answered) out.push(`> **Antwort:** ${answers.map(a => inline(a, resolveLink, resolveAttachment)).join(' ')}`);
         if (j < lines.length && lines[j].trim() !== '') out.push('');
         i = j - 1;
         continue;
       }
-      const a = /^\s*!\s?(.*)$/.exec(line);
-      if (a) { out.push(`> **Antwort:** ${inline(a[1].trim(), resolveLink)}`); continue; }
-      out.push(inline(line, resolveLink));
+      const a = /^\s*!(?!\[)\s?(.*)$/.exec(line);
+      if (a) { out.push(`> **Antwort:** ${inline(a[1].trim(), resolveLink, resolveAttachment)}`); continue; }
+      out.push(inline(line, resolveLink, resolveAttachment));
     }
     return out.join('\n').trim();
   }
 
-  function inline(text, resolveLink) {
-    return text.replace(/\[\[([^\]]+)\]\]/g, (m, title) => {
+  function inline(text, resolveLink, resolveAttachment) {
+    let out = text.replace(/\[\[([^\]]+)\]\]/g, (m, title) => {
       const href = resolveLink ? resolveLink(title.trim()) : null;
       return href ? `[${title.trim()}](${href})` : title.trim();
     });
+    if (resolveAttachment) {
+      out = out.replace(/\]\(att:(\d+)\)/g, (m, id) => {
+        const path = resolveAttachment(Number(id));
+        return path ? `](${path})` : m;
+      });
+    }
+    return out;
   }
 
   function metaLines(db, node, note) {
@@ -136,6 +143,16 @@
     }
     const files = [];
 
+    // Anhänge: Dateiname aus Nummer und bereinigtem Namen, Pfad relativ zur jeweiligen Markdown-Datei.
+    const attachments = DB().allAttachments(db);
+    const attName = a => {
+      const ext = (a.name.match(/\.[a-z0-9]{2,5}$/i) || [''])[0].toLowerCase();
+      const base = slugify(a.name.replace(/\.[a-z0-9]{2,5}$/i, '')) || 'anhang';
+      return `${a.id}-${base}${ext}`;
+    };
+    const attById = new Map(attachments.map(a => [a.id, attName(a)]));
+    const attFrom = prefix => id => attById.has(id) ? `${prefix}attachments/${attById.get(id)}` : null;
+
     if (mode === 'folder') {
       const hrefFromIndex = n => `notes/${n.slug}.md`;
       const hrefFromNote = n => `${n.slug}.md`;
@@ -148,7 +165,7 @@
       for (const n of nodes) {
         const note = DB().getNote(db, n.id);
         const lines = [`# ${n.title.trim() || 'Ohne Titel'}`, '', ...metaLines(db, n, note), ''];
-        const body = bodyToMarkdown(note.body, resolveFromNote);
+        const body = bodyToMarkdown(note.body, resolveFromNote, attFrom('../'));
         if (body) lines.push(body, '');
         if (n.children.length) {
           lines.push('---', '', '**Unternotizen**', '');
@@ -168,12 +185,13 @@
         const note = DB().getNote(db, n.id);
         const level = Math.min(6, n.depth + 1);
         doc.push('---', '', `<a id="${n.slug}"></a>`, '', `${'#'.repeat(level)} ${n.title.trim() || 'Ohne Titel'}`, '', ...metaLines(db, n, note), '');
-        const body = bodyToMarkdown(note.body, resolve);
+        const body = bodyToMarkdown(note.body, resolve, attFrom(''));
         if (body) doc.push(body, '');
       }
       files.push({ path: `${slugify(DB().getMapTitle(db))}.md`, data: doc.join('\n') });
     }
 
+    for (const a of attachments) files.push({ path: `attachments/${attById.get(a.id)}`, data: a.data });
     if (options.svg) files.push({ path: 'mindmap.svg', data: options.svg });
     if (options.png) files.push({ path: 'mindmap.png', data: options.png });
     return files;

@@ -146,6 +146,8 @@
     const viewport = svgEl('g', { class: 'mm-viewport' }, svg);
     const edgesG = svgEl('g', { class: 'mm-edges' }, viewport);
     const nodesG = svgEl('g', { class: 'mm-nodes' }, viewport);
+    const overlayG = svgEl('g', { class: 'mm-overlay' }, viewport);
+    const dropLine = svgEl('line', { class: 'mm-drop-line', visibility: 'hidden' }, overlayG);
 
     const inst = {
       k: 1, tx: 0, ty: 0,
@@ -359,6 +361,17 @@
 
     function clearDropTarget() {
       for (const g of nodesG.querySelectorAll('.mm-drop-target')) g.classList.remove('mm-drop-target');
+      dropLine.setAttribute('visibility', 'hidden');
+    }
+
+    /** Zeigt die Einfügemarke oberhalb ('before') oder unterhalb ('after') eines Knotens. */
+    function showDropLine(n, where) {
+      const y = where === 'before' ? n.y - GAP_Y / 2 : n.y + n.h + GAP_Y / 2;
+      dropLine.setAttribute('x1', n.x - 6);
+      dropLine.setAttribute('x2', n.x + n.w + 6);
+      dropLine.setAttribute('y1', y);
+      dropLine.setAttribute('y2', y);
+      dropLine.setAttribute('visibility', 'visible');
     }
 
     // Kein setPointerCapture: das würde auch click/dblclick auf das SVG umlenken.
@@ -384,11 +397,24 @@
       const targetEl = under && under.closest ? under.closest('.mm-node') : null;
       const targetId = targetEl ? targetEl.dataset.id : null;
       const valid = !!targetId && targetId !== drag.id && !isAncestorOrSelf(drag.id, targetId);
-      if (targetId !== drag.targetId) {
+      // Ablagezone: oberes Viertel = davor, unteres Viertel = danach, sonst als Unternotiz. Wurzel: nur Unternotiz.
+      let where = 'child';
+      if (valid && targetId !== 'root') {
+        const rect = targetEl.querySelector('rect').getBoundingClientRect();
+        const rel = (e.clientY - rect.top) / Math.max(rect.height, 1);
+        if (rel < 0.25) where = 'before';
+        else if (rel > 0.75) where = 'after';
+      }
+      if (targetId !== drag.targetId || where !== drag.where) {
         clearDropTarget();
-        if (valid) targetEl.classList.add('mm-drop-target');
+        if (valid) {
+          const tn = nodeOf(targetId);
+          if (where === 'child') targetEl.classList.add('mm-drop-target');
+          else if (tn) showDropLine(tn, where);
+        }
       }
       drag.targetId = targetId;
+      drag.where = where;
       drag.valid = valid;
     }
 
@@ -409,7 +435,7 @@
       clearDropTarget();
       const n = nodeOf(d.id);
       if (d.valid && handlers.onReparent) {
-        handlers.onReparent(Number(d.id), d.targetId === 'root' ? null : Number(d.targetId));
+        handlers.onReparent(Number(d.id), d.targetId === 'root' ? null : Number(d.targetId), d.where || 'child');
       } else if (n) {
         d.el.setAttribute('transform', `translate(${n.x} ${n.y})`);
       }
@@ -420,7 +446,7 @@
       if (e.target.closest('.mm-toggle')) return;
       const nodeEl = e.target.closest('.mm-node');
       if (nodeEl) {
-        drag = { type: 'node', id: nodeEl.dataset.id, el: nodeEl, startX: e.clientX, startY: e.clientY, moved: false, targetId: null, valid: false };
+        drag = { type: 'node', id: nodeEl.dataset.id, el: nodeEl, startX: e.clientX, startY: e.clientY, moved: false, targetId: null, where: null, valid: false };
       } else {
         drag = { type: 'pan', startX: e.clientX, startY: e.clientY, tx0: inst.tx, ty0: inst.ty, moved: false };
       }

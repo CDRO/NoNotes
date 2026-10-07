@@ -65,12 +65,16 @@
         }
       }
 
-      // Bild ![alt](src)
+      // Bild ![alt](src) – auch Anhänge att:ID
       if (ch === '!' && src[i + 1] === '[') {
         const m = /^!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/.exec(src.slice(i));
         if (m) {
-          const url = safeUrl(m[2]);
-          if (url) out += `<img src="${escapeHtml(url)}" alt="${escapeHtml(m[1])}"${m[3] ? ` title="${escapeHtml(m[3])}"` : ''}>`;
+          const att = /^att:(\d+)$/.exec(m[2]);
+          let url = null;
+          if (att) url = ctx.resolveAttachment ? ctx.resolveAttachment(Number(att[1])) : null;
+          else url = safeUrl(m[2]);
+          if (url) out += `<img src="${escapeHtml(url)}" alt="${escapeHtml(m[1])}"${m[3] ? ` title="${escapeHtml(m[3])}"` : ''}${att ? ` class="md-att" data-attachment-id="${att[1]}"` : ''}>`;
+          else if (att) out += `<span class="md-missing" title="Anhang ${att[1]} fehlt">[Bild „${text(m[1] || 'Anhang')}“ fehlt]</span>`;
           else emit(m[0]);
           i += m[0].length;
           continue;
@@ -126,7 +130,7 @@
 
   function render(markdown, options) {
     options = options || {};
-    const ctx = { text: makeText(options.highlight), resolveTitle: options.resolveTitle };
+    const ctx = { text: makeText(options.highlight), resolveTitle: options.resolveTitle, resolveAttachment: options.resolveAttachment };
     const lines = String(markdown || '').replace(/\r\n?/g, '\n').split('\n');
     const out = [];
     let i = 0;
@@ -170,7 +174,7 @@
         const answers = [];
         let j = i + 1;
         while (j < lines.length) {
-          const a = /^\s*!\s?(.*)$/.exec(lines[j]);
+          const a = /^\s*!(?!\[)\s?(.*)$/.exec(lines[j]);
           if (!a) break;
           answers.push(a[1]);
           j++;
@@ -183,7 +187,7 @@
       }
 
       // Antwort ohne Frage davor: als Hinweis darstellen
-      const loneAnswer = /^\s*!\s?(.*)$/.exec(line);
+      const loneAnswer = /^\s*!(?!\[)\s?(.*)$/.exec(line);
       if (loneAnswer) {
         flushParagraph();
         out.push(`<div class="md-a md-a-lone">${renderInline(loneAnswer[1].trim(), ctx)}</div>`);

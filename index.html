@@ -129,6 +129,7 @@
           <div class="editor-tools">
             <button type="button" id="questionBtn" class="ghost" title="Zeile als Frage markieren (Ctrl+Shift+F)">? Frage</button>
             <button type="button" id="answerBtn" class="ghost" title="Zeile als Antwort markieren (Ctrl+Shift+A)">! Antwort</button>
+            <button type="button" id="attachBtn" class="ghost" title="Bild einfügen (auch per Einfügen aus der Zwischenablage oder Ablegen auf dem Text)">🖼 Bild</button>
             <span class="tools-hint" id="noteQuestions"></span>
             <div class="segmented small" id="modeSwitch" role="tablist" aria-label="Darstellung">
               <button type="button" role="tab" data-mode="edit" aria-selected="true" title="Bearbeiten (Ctrl+E)">Bearbeiten</button>
@@ -136,6 +137,7 @@
               <button type="button" role="tab" data-mode="preview" aria-selected="false" title="Vorschau (Ctrl+E)">Vorschau</button>
             </div>
           </div>
+          <div class="attachments" id="attachments" aria-label="Anhänge" hidden></div>
           <div class="editor-body" id="editorBody">
             <textarea id="body" class="body" placeholder="Notiz… (Markdown; Zeile mit ? = Frage, darunter Zeilen mit ! = Antwort; [[Titel]] verweist auf eine Notiz)" aria-label="Inhalt" spellcheck="true"></textarea>
             <div id="preview" class="preview md" aria-label="Vorschau" tabindex="0"></div>
@@ -171,6 +173,7 @@
   <div id="boot" class="boot">Lade NoNotes…</div>
 
   <input type="file" id="importInput" accept=".sqlite,.sqlite3,.db,application/vnd.sqlite3,application/x-sqlite3" hidden>
+  <input type="file" id="attachInput" accept="image/*" multiple hidden>
 
   <script src="js/version.js"></script>
   <script src="vendor/sql.js/sql-asm.js"></script>

@@ -23,7 +23,7 @@ const { chromium } = loadPlaywright();
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '4'; // muss zu js/db.js passen
+const SCHEMA_VERSION = '5'; // muss zu js/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 function watchErrors(page) {
@@ -52,14 +52,25 @@ const idOfNode = (page, title) => page.evaluate(t => {
 
 const nodeBox = async (page, id) => page.locator(`.mm-node[data-id="${id}"] rect`).boundingBox();
 
-async function dragNode(page, fromId, toId) {
+async function dragNode(page, fromId, toId, where) {
   const a = await nodeBox(page, fromId);
   const b = await nodeBox(page, toId);
+  const rel = where === 'before' ? 0.1 : where === 'after' ? 0.9 : 0.5;
   await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
   await page.mouse.down();
   await page.mouse.move(a.x + a.width / 2 + 20, a.y + a.height / 2 + 20, { steps: 4 });
-  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 12 });
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height * rel, { steps: 12 });
   await page.mouse.up();
+}
+
+async function newRootNote(page, title) {
+  await page.click('#mindmap', { position: { x: 30, y: 700 } });
+  await page.keyboard.press('Tab');
+  await page.waitForSelector('#renameInput:not([hidden])');
+  await page.keyboard.type(title);
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(t => [...document.querySelectorAll('.mm-node text')].some(x => x.textContent === t), title);
+  return idOfNode(page, title);
 }
 
 
@@ -640,6 +651,125 @@ async function main() {
     assert.deepEqual(errors9, [], 'keine Konsolenfehler beim Export');
     await ctx9.close();
     step('Export: eine Datei mit Anhängen als ZIP');
+
+    // ---------- 10. Umsortieren per Drag & Drop (vor/nach Geschwistern) ----------
+    const ctx10 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
+    const { page: page10, errors: errors10 } = await openApp(ctx10);
+    const idA = await newRootNote(page10, 'Alpha');
+    const idB = await newRootNote(page10, 'Beta');
+    // Unternotize von Alpha
+    await page10.click(`.mm-node[data-id="${idA}"]`);
+    await page10.keyboard.press('Tab');
+    await page10.waitForSelector('#renameInput:not([hidden])');
+    await page10.keyboard.type('Gamma');
+    await page10.keyboard.press('Enter');
+    await page10.waitForFunction(() => [...document.querySelectorAll('.mm-node text')].some(x => x.textContent === 'Gamma'));
+    const idC = await idOfNode(page10, 'Gamma');
+    const orderOf = async () => {
+      await page10.click('#menuBtn');
+      const [dl] = await Promise.all([page10.waitForEvent('download'), page10.click('#downloadBtn')]);
+      const pth = path.join(tmp, 'order.sqlite');
+      await dl.saveAs(pth);
+      const d = new SQL.Database(new Uint8Array(fs.readFileSync(pth)));
+      const rows = d.exec('SELECT title, parent_id, sort_order FROM notes WHERE deleted_at IS NULL ORDER BY parent_id, sort_order')[0].values;
+      d.close();
+      return rows;
+    };
+    assert.deepEqual(await orderOf(), [['Alpha', null, 0], ['Beta', null, 1], ['Gamma', Number(idA), 0]]);
+    await dragNode(page10, idB, idA, 'before');
+    await page10.waitForFunction(() => document.querySelector('#status').dataset.state !== 'saving');
+    await waitSaved(page10);
+    assert.deepEqual(await orderOf(), [['Beta', null, 0], ['Alpha', null, 1], ['Gamma', Number(idA), 0]], 'Beta vor Alpha');
+    await dragNode(page10, idC, idB, 'after');
+    await waitSaved(page10);
+    assert.deepEqual(await orderOf(), [['Beta', null, 0], ['Gamma', null, 1], ['Alpha', null, 2]], 'Gamma aus dem Ast heraus hinter Beta');
+    await dragNode(page10, idA, idB, 'child');
+    await waitSaved(page10);
+    assert.deepEqual(await orderOf(), [['Beta', null, 0], ['Gamma', null, 1], ['Alpha', Number(idB), 0]], 'Mitte bleibt Unternotiz');
+    assert.deepEqual(errors10, []);
+    await ctx10.close();
+    step('Mindmap: Umsortieren per Drag & Drop vor, nach und als Unternotiz');
+
+    // ---------- 11. Bild-Anhänge ----------
+    const ctx11 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
+    await ctx11.addInitScript(() => {
+      window.__exported = {};
+      const concat = chunks => { const n = chunks.reduce((s, c) => s + c.length, 0); const out = new Uint8Array(n); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; } return out; };
+      const makeDir = prefix => ({ kind: 'directory', name: 'Export', getDirectoryHandle: async n => makeDir(prefix + n + '/'), getFileHandle: async n => ({ kind: 'file', name: n, createWritable: async () => { const chunks = []; return { write: async d => { chunks.push(new Uint8Array(d)); }, close: async () => { window.__exported[prefix + n] = Array.from(concat(chunks)); }, abort: async () => {} }; } }) });
+      window.showDirectoryPicker = async () => makeDir('');
+    });
+    const { page: page11, errors: errors11 } = await openApp(ctx11, 'list');
+    await page11.click('#newBtn');
+    await page11.fill('#title', 'Skizzen');
+    await page11.fill('#body', 'Vorher.');
+    await waitSaved(page11);
+    const smallPng = path.join(tmp, 'klein.png');
+    fs.writeFileSync(smallPng, await page11.screenshot({ clip: { x: 0, y: 0, width: 40, height: 30 } }));
+    await page11.setInputFiles('#attachInput', smallPng);
+    await page11.waitForFunction(() => /!\[klein\]\(att:\d+\)/.test(document.querySelector('#body').value));
+    await page11.waitForFunction(() => document.querySelectorAll('#attachments .attachment').length === 1);
+    await waitSaved(page11);
+    // Grosses Bild aus der Zwischenablage wird verkleinert
+    await page11.evaluate(async () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 2000; canvas.height = 1200;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#4a90e2'; ctx.fillRect(0, 0, 2000, 1200);
+      ctx.fillStyle = '#fff'; ctx.font = '120px sans-serif'; ctx.fillText('gross', 100, 600);
+      const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+      const file = new File([blob], 'gross.png', { type: 'image/png' });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
+      document.querySelector('#body').dispatchEvent(ev);
+    });
+    await page11.waitForFunction(() => document.querySelectorAll('#attachments .attachment').length === 2);
+    await waitSaved(page11);
+    assert.match(await page11.inputValue('#body'), /!\[gross\]\(att:\d+\)/);
+    // Vorschau zeigt die Bilder
+    await page11.click('#modeSwitch button[data-mode="preview"]');
+    await page11.waitForFunction(() => {
+      const imgs = [...document.querySelectorAll('#preview img.md-att')];
+      return imgs.length === 2 && imgs.every(i => i.complete && i.naturalWidth > 0);
+    });
+    const widths = await page11.evaluate(() => [...document.querySelectorAll('#preview img.md-att')].map(i => i.naturalWidth));
+    assert.deepEqual(widths, [40, 1600], 'kleines Bild bleibt, grosses wird auf 1600 Pixel verkleinert');
+    await page11.click('#modeSwitch button[data-mode="edit"]');
+    step('Anhänge: Datei, Zwischenablage, Verkleinern, Vorschau');
+
+    // Export nimmt Anhänge mit
+    await page11.click('#menuBtn');
+    await page11.click('#exportBtn');
+    await page11.waitForSelector('#exportDialog[open]');
+    await page11.click('#exportDirBtn');
+    await page11.waitForFunction(() => /Export gespeichert/.test(document.querySelector('#status').textContent));
+    const exp11 = await page11.evaluate(() => Object.keys(window.__exported));
+    const attFiles = exp11.filter(n => n.startsWith('attachments/'));
+    assert.equal(attFiles.length, 2, 'beide Anhänge exportiert');
+    const skizzen = await page11.evaluate(() => new TextDecoder().decode(new Uint8Array(window.__exported['notes/skizzen.md'])));
+    assert.match(skizzen, /!\[klein\]\(\.\.\/attachments\/\d+-klein\.png\)/, 'Verweis zeigt auf den Anhangsordner');
+    step('Anhänge: Export in den Ordner attachments/');
+
+    // Anhang entfernen
+    page11.once('dialog', d => d.accept());
+    await page11.click('#attachments .attachment:first-child button.danger');
+    await page11.waitForFunction(() => document.querySelectorAll('#attachments .attachment').length === 1);
+    await waitSaved(page11);
+    await page11.click('#modeSwitch button[data-mode="preview"]');
+    await page11.waitForSelector('#preview .md-missing');
+    await page11.click('#modeSwitch button[data-mode="edit"]');
+    await page11.click('#menuBtn');
+    const [dl11] = await Promise.all([page11.waitForEvent('download'), page11.click('#downloadBtn')]);
+    const dl11Path = path.join(tmp, 'anhaenge.sqlite');
+    await dl11.saveAs(dl11Path);
+    const db11 = new SQL.Database(new Uint8Array(fs.readFileSync(dl11Path)));
+    assert.equal(db11.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], SCHEMA_VERSION);
+    assert.equal(db11.exec('SELECT count(*) FROM attachments')[0].values[0][0], 1);
+    assert.equal(db11.exec('SELECT mime FROM attachments')[0].values[0][0], 'image/png');
+    db11.close();
+    assert.deepEqual(errors11, [], 'keine Konsolenfehler bei Anhängen');
+    await ctx11.close();
+    step('Anhänge: Löschen, fehlender Verweis, Ablage in SQLite');
 
     console.log('\nSmoke-Test bestanden.');
   } finally {

@@ -35,6 +35,7 @@
     modeSwitch: $('#modeSwitch'), preview: $('#preview'),
     exportBtn: $('#exportBtn'), exportDialog: $('#exportDialog'), exportForm: $('#exportForm'),
     exportDirBtn: $('#exportDirBtn'), exportZipBtn: $('#exportZipBtn'), exportHint: $('#exportHint'),
+    attachBtn: $('#attachBtn'), attachInput: $('#attachInput'), attachments: $('#attachments'),
     mapView: $('#mapView'), mapNewBtn: $('#mapNewBtn'), mapFitBtn: $('#mapFitBtn'),
     mapZoomInBtn: $('#mapZoomInBtn'), mapZoomOutBtn: $('#mapZoomOutBtn'),
     mindmap: $('#mindmap'), renameInput: $('#renameInput'), contextMenu: $('#contextMenu'),
@@ -67,6 +68,7 @@
     mapMatches: [],       // ids der Treffer in der Mindmap (Reihenfolge wie Liste)
     mapMatchIndex: -1,
     mapSearchTimer: null,
+    attachmentUrls: new Map(), // id → Objekt-URL für die Anzeige
     // Speichern: jede Änderung erhöht editSeq; savedSeq ist der zuletzt vollständig gesicherte Stand.
     editSeq: 0,
     savedSeq: 0,
@@ -195,7 +197,7 @@
       onSelect: id => { state.mapSelection = id; },
       onOpen: id => openNote(id),
       onOpenRoot: () => beginRename('root'),
-      onReparent: (id, parentId) => reparentNote(id, parentId),
+      onReparent: (id, parentId, where) => moveNoteTo(id, parentId, where),
       onToggleCollapse: id => toggleCollapse(id),
       onContextMenu: (id, x, y) => showNodeMenu(id, x, y),
     });
@@ -290,6 +292,7 @@
   // ---------- Datenbank austauschen ----------
 
   function replaceDb(newDb) {
+    for (const id of [...state.attachmentUrls.keys()]) forgetAttachmentUrl(id);
     if (state.db) { try { state.db.close(); } catch (e) { /* egal */ } }
     state.db = newDb;
     state.currentId = null;
@@ -745,6 +748,7 @@
     renderCrumbs(note);
     renderNoteQuestions(note.body);
     renderTags(DB.getTags(state.db, note.id));
+    renderAttachments(note.id, !!note.deleted_at);
     const trashed = !!note.deleted_at;
     el.trashBar.hidden = !trashed;
     el.editor.classList.toggle('readonly', trashed);
@@ -755,6 +759,7 @@
     el.childBtn.hidden = trashed;
     el.questionBtn.disabled = trashed;
     el.answerBtn.disabled = trashed;
+    el.attachBtn.disabled = trashed;
     if (state.editorMode !== 'edit') renderPreview();
   }
 
@@ -800,6 +805,153 @@
     saveTags(currentTags().filter(t => t.toLowerCase() !== name.toLowerCase()));
   }
 
+  // ---------- Anhänge ----------
+
+  const MAX_ATTACHMENT_BYTES = 400 * 1024;
+  const MAX_ATTACHMENT_EDGE = 1600;
+
+  function attachmentUrl(id) {
+    if (state.attachmentUrls.has(id)) return state.attachmentUrls.get(id);
+    const row = DB.getAttachment(state.db, id);
+    if (!row) return null;
+    const url = URL.createObjectURL(new Blob([row.data], { type: row.mime }));
+    state.attachmentUrls.set(id, url);
+    return url;
+  }
+
+  function forgetAttachmentUrl(id) {
+    const url = state.attachmentUrls.get(id);
+    if (url) { URL.revokeObjectURL(url); state.attachmentUrls.delete(id); }
+  }
+
+  function renderAttachments(noteId, readonly) {
+    const rows = DB.listAttachments(state.db, noteId);
+    el.attachments.hidden = rows.length === 0;
+    el.attachments.replaceChildren(...rows.map(a => {
+      const fig = document.createElement('figure');
+      fig.className = 'attachment';
+      fig.dataset.id = String(a.id);
+      const img = document.createElement('img');
+      img.src = attachmentUrl(a.id) || '';
+      img.alt = a.name;
+      img.title = 'In den Text einfügen';
+      img.addEventListener('click', () => insertAttachmentRef(a));
+      const name = document.createElement('div');
+      name.className = 'name';
+      name.textContent = a.name;
+      name.title = `${a.name} · ${Math.round(a.size / 1024)} KB`;
+      const row = document.createElement('div');
+      row.className = 'row';
+      const ins = document.createElement('button');
+      ins.type = 'button';
+      ins.textContent = 'Einfügen';
+      ins.addEventListener('click', () => insertAttachmentRef(a));
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'danger';
+      del.textContent = 'Löschen';
+      del.addEventListener('click', () => removeAttachment(a));
+      if (readonly) { ins.disabled = true; del.disabled = true; }
+      row.append(ins, del);
+      fig.append(img, name, row);
+      return fig;
+    }));
+  }
+
+  function insertAtCursor(text) {
+    const ta = el.body;
+    const start = ta.selectionStart || 0;
+    const end = ta.selectionEnd || start;
+    const before = ta.value.slice(0, start);
+    const after = ta.value.slice(end);
+    const needsNl = before.length && !before.endsWith('\n') ? '\n' : '';
+    const insert = needsNl + text + (after.startsWith('\n') || !after.length ? '' : '\n');
+    ta.value = before + insert + after;
+    const pos = before.length + insert.length;
+    ta.focus();
+    ta.setSelectionRange(pos, pos);
+    onEdit();
+  }
+
+  function insertAttachmentRef(a) {
+    const alt = a.name.replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[\[\]]/g, '');
+    insertAtCursor(`![${alt}](att:${a.id})`);
+  }
+
+  function removeAttachment(a) {
+    if (!confirm(`Bild „${a.name}“ aus dieser Notiz entfernen? Verweise im Text zeigen danach ins Leere.`)) return;
+    DB.deleteAttachment(state.db, a.id);
+    forgetAttachmentUrl(a.id);
+    renderAttachments(state.currentId, false);
+    markEdited();
+    if (state.editorMode !== 'edit') renderPreview();
+  }
+
+  /** Verkleinert grosse Bilder, damit die Datenbank handlich bleibt. */
+  async function prepareImage(file) {
+    const mime = file.type || 'application/octet-stream';
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (!mime.startsWith('image/') || mime === 'image/svg+xml' || mime === 'image/gif') return { name: file.name, mime, bytes };
+    if (bytes.length <= MAX_ATTACHMENT_BYTES) {
+      // Nur verkleinern, wenn das Bild auch sehr gross ist.
+      const dims = await imageSize(file).catch(() => null);
+      if (!dims || Math.max(dims.w, dims.h) <= MAX_ATTACHMENT_EDGE) return { name: file.name, mime, bytes };
+    }
+    try {
+      const bitmap = await createImageBitmap(file);
+      const scale = Math.min(1, MAX_ATTACHMENT_EDGE / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close && bitmap.close();
+      const keepPng = mime === 'image/png' && bytes.length <= 2 * MAX_ATTACHMENT_BYTES;
+      const outMime = keepPng ? 'image/png' : 'image/jpeg';
+      const blob = await new Promise((res, rej) => canvas.toBlob(b => b ? res(b) : rej(new Error('Bild konnte nicht verkleinert werden.')), outMime, 0.85));
+      const out = new Uint8Array(await blob.arrayBuffer());
+      if (out.length >= bytes.length) return { name: file.name, mime, bytes };
+      const name = outMime === 'image/jpeg' ? file.name.replace(/\.[a-z0-9]{2,5}$/i, '') + '.jpg' : file.name;
+      return { name, mime: outMime, bytes: out };
+    } catch (e) {
+      console.warn('Bild verkleinern', e);
+      return { name: file.name, mime, bytes };
+    }
+  }
+
+  function imageSize(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve({ w: img.naturalWidth, h: img.naturalHeight }); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('kein Bild')); };
+      img.src = url;
+    });
+  }
+
+  async function addAttachments(files) {
+    if (state.currentId == null) return;
+    const note = DB.getNote(state.db, state.currentId);
+    if (!note || note.deleted_at) return;
+    const images = [...files].filter(f => f && f.type && f.type.startsWith('image/'));
+    if (!images.length) { setStatus('Nur Bilder können angehängt werden.', 'error'); return; }
+    setStatus(images.length === 1 ? 'Bild wird eingefügt…' : `${images.length} Bilder werden eingefügt…`, 'saving');
+    try {
+      for (const file of images) {
+        const prepared = await prepareImage(file);
+        const id = DB.addAttachment(state.db, state.currentId, {
+          name: prepared.name || `bild-${Date.now()}.png`, mime: prepared.mime, bytes: prepared.bytes,
+        });
+        insertAttachmentRef({ id, name: prepared.name || 'bild' });
+      }
+      renderAttachments(state.currentId, false);
+      markEdited();
+    } catch (e) {
+      console.error(e);
+      setStatus('Bild konnte nicht eingefügt werden: ' + e.message, 'error');
+    }
+  }
+
   // ---------- Vorschau ----------
 
   function setEditorMode(mode) {
@@ -824,6 +976,7 @@
     el.preview.innerHTML = M.render(el.body.value, {
       highlight: state.query.trim() || null,
       resolveTitle: title => { const id = index.get(title.trim().toLowerCase()); return id == null ? null : id; },
+      resolveAttachment: id => attachmentUrl(id),
     });
   }
 
@@ -1254,12 +1407,23 @@
     renderAll();
   }
 
-  function reparentNote(id, parentId) {
+  /** Ablage aus der Mindmap: als Unternotiz des Ziels oder direkt vor/nach dem Ziel. */
+  function moveNoteTo(id, targetId, where) {
     try {
-      DB.setParent(state.db, id, parentId);
-      if (parentId != null) {
-        const info = state.map.nodeInfo(parentId);
-        if (info && info.collapsed) DB.setCollapsed(state.db, parentId, false);
+      if (where === 'before' || where === 'after') {
+        if (targetId == null) return;
+        DB.moveNote(state.db, id, targetId, where);
+        const target = DB.getNote(state.db, targetId);
+        if (target && target.parent_id != null) {
+          const info = state.map.nodeInfo(target.parent_id);
+          if (info && info.collapsed) DB.setCollapsed(state.db, target.parent_id, false);
+        }
+      } else {
+        DB.setParent(state.db, id, targetId);
+        if (targetId != null) {
+          const info = state.map.nodeInfo(targetId);
+          if (info && info.collapsed) DB.setCollapsed(state.db, targetId, false);
+        }
       }
       state.mapSelection = id;
       markEdited();
@@ -1578,6 +1742,21 @@
       if (b) setEditorMode(b.dataset.mode);
     });
     el.preview.addEventListener('click', onPreviewClick);
+    el.attachBtn.addEventListener('click', () => { el.attachInput.value = ''; el.attachInput.click(); });
+    el.attachInput.addEventListener('change', () => { addAttachments(el.attachInput.files); el.attachInput.value = ''; });
+    el.body.addEventListener('paste', e => {
+      const items = e.clipboardData && e.clipboardData.items ? [...e.clipboardData.items] : [];
+      const files = items.filter(i => i.kind === 'file' && i.type.startsWith('image/')).map(i => i.getAsFile()).filter(Boolean);
+      if (files.length) { e.preventDefault(); addAttachments(files); }
+    });
+    el.body.addEventListener('dragover', e => {
+      if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); el.body.classList.add('drop-target'); }
+    });
+    el.body.addEventListener('dragleave', () => el.body.classList.remove('drop-target'));
+    el.body.addEventListener('drop', e => {
+      el.body.classList.remove('drop-target');
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) { e.preventDefault(); addAttachments(e.dataTransfer.files); }
+    });
     el.tagInput.addEventListener('keydown', e => {
       if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTagFromInput(); }
       else if (e.key === 'Backspace' && !el.tagInput.value) {

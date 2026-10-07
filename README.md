@@ -85,8 +85,8 @@ Die Notizen bilden einen Baum um einen zentralen Knoten, dessen Titel du per Dop
 | Notiz öffnen | Doppelklick auf den Knoten oder `Enter`. Der Editor öffnet sich im Vollbild, `Esc` oder «Zurück» schliesst ihn. |
 | Neue Notiz | **Neue Notiz** oder `Tab`: hängt eine Unternotiz an den ausgewählten Knoten (ohne Auswahl an die Wurzel) und fragt gleich den Titel ab. |
 | Umbenennen | `F2` oder Rechtsklick → Umbenennen. |
-| Umhängen | Knoten mit der Maus auf einen anderen Knoten oder die Wurzel ziehen. |
-| Reihenfolge | `Alt+↑` / `Alt+↓` oder Rechtsklick → Nach oben / Nach unten. |
+| Umhängen | Knoten mit der Maus auf die Mitte eines anderen Knotens oder auf die Wurzel ziehen. |
+| Reihenfolge | Knoten auf den oberen oder unteren Rand eines Geschwisterknotens ziehen (grüne Einfügemarke), oder `Alt+↑` / `Alt+↓`, oder Rechtsklick → Nach oben / Nach unten. |
 | Ein-/Ausklappen | Kleiner Kreis am Knoten (zeigt eingeklappt die Anzahl der verborgenen Notizen) oder Rechtsklick. |
 | Löschen | `Entf` oder Rechtsklick → Löschen. Unternotizen rücken zum übergeordneten Knoten auf. |
 | Navigieren | Pfeiltasten wandern durch den Baum. Mausrad zoomt, Ziehen der Fläche verschiebt, `0` oder **Einpassen** zeigt alles. |
@@ -133,6 +133,11 @@ einen Index darüber.
   der Vorschau öffnet sie, bei fehlendem Ziel wird sie auf Wunsch als Unternotiz angelegt.
 - Die Darstellung wechselt zwischen **Bearbeiten**, **Geteilt** (Text und Vorschau
   nebeneinander) und **Vorschau**, auch mit `Ctrl+E`. Die Einstellung wird gemerkt.
+- **Bilder** hängst du mit **🖼 Bild**, per Einfügen aus der Zwischenablage (`Ctrl+V`) oder
+  durch Ablegen auf dem Text an. Sie liegen in der Datenbank, im Text steht `![Name](att:ID)`,
+  die Vorschau zeigt sie. Grosse Bilder werden auf 1600 Pixel Kantenlänge verkleinert.
+  Der Streifen über dem Text zeigt alle Anhänge der Notiz mit Einfügen und Löschen.
+  Beim Export landen sie im Ordner `attachments/`.
 - Oberste Zeile ist der Titel, `Enter` springt in den Text.
 - Der Pfad über dem Titel zeigt, wo die Notiz im Baum hängt; die Einträge sind anklickbar.
 - **+ Unternotiz** legt direkt eine Unternotiz an.
@@ -158,7 +163,7 @@ Language Mode zur Verfügung. Dort sind weder `HttpListener` noch der Zugriff au
 File System Access API alles mit, um direkt in die Datenbankdatei zu schreiben, und
 sql.js liefert SQLite als reines JavaScript.
 
-Schema (Version 4). Ältere Datenbanken werden beim Öffnen automatisch migriert.
+Schema (Version 5). Ältere Datenbanken werden beim Öffnen automatisch migriert.
 
 ```sql
 CREATE TABLE notes (
@@ -185,6 +190,10 @@ CREATE TABLE questions (          -- Index über die ?/!-Zeilen, wird aus dem Te
 );
 CREATE TABLE tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE);
 CREATE TABLE note_tags (note_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMARY KEY (note_id, tag_id));
+CREATE TABLE attachments (          -- Bilder, im Text als ![Name](att:ID) referenziert
+  id INTEGER PRIMARY KEY AUTOINCREMENT, note_id INTEGER NOT NULL, name TEXT NOT NULL,
+  mime TEXT NOT NULL, size INTEGER NOT NULL, data BLOB NOT NULL, created_at TEXT NOT NULL
+);
 ```
 
 ## Entwicklung
@@ -194,7 +203,8 @@ Für die App selbst ist nichts zu bauen: Dateien ändern, `index.html` neu laden
 Der Smoke-Test öffnet die App wie ein Benutzer per `file://` in headless Chromium und
 prüft Anlegen, Suchen, Speichern, Neuladen, Herunterladen, Importieren, Löschen, das
 Schreiben in die Datenbankdatei, die Mindmap-Bedienung, die Fragen, Markdown-Vorschau, Tags,
-Papierkorb, Suche, den Export (Ordner und ZIP) und die Migration alter Datenbanken:
+Papierkorb, Suche, Umsortieren per Drag & Drop, Bild-Anhänge, den Export (Ordner und ZIP)
+und die Migration alter Datenbanken:
 
 ```bash
 npm install

@@ -6,7 +6,7 @@
   'use strict';
 
   const QUESTION_RE = /^\s*\?\s?(.*)$/;
-  const ANSWER_RE = /^\s*!\s?(.*)$/;
+  const ANSWER_RE = /^\s*!(?!\[)\s?(.*)$/; // "![" ist ein Bild, keine Antwort
 
   function normalize(text) {
     return text.toLowerCase().replace(/\s+/g, ' ').trim();
@@ -66,8 +66,8 @@
     let end = text.indexOf('\n', caret);
     if (end < 0) end = text.length;
     const line = text.slice(start, end);
-    const re = prefix === '?' ? /^(\s*)\?\s?/ : /^(\s*)!\s?/;
-    const other = prefix === '?' ? /^(\s*)!\s?/ : /^(\s*)\?\s?/;
+    const re = prefix === '?' ? /^(\s*)\?\s?/ : /^(\s*)!(?!\[)\s?/;
+    const other = prefix === '?' ? /^(\s*)!(?!\[)\s?/ : /^(\s*)\?\s?/;
     let newLine;
     if (re.test(line)) {
       newLine = line.replace(re, '$1');

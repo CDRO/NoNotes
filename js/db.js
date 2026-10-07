@@ -3,7 +3,7 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 4;
+  const SCHEMA_VERSION = 5;
   const DEFAULT_MAP_TITLE = 'Meine Notizen';
 
   function nowIso() { return new Date().toISOString(); }
@@ -93,6 +93,16 @@
         tag_id  INTEGER NOT NULL,
         PRIMARY KEY (note_id, tag_id)
       );
+      CREATE TABLE attachments (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        note_id    INTEGER NOT NULL,
+        name       TEXT NOT NULL,
+        mime       TEXT NOT NULL,
+        size       INTEGER NOT NULL,
+        data       BLOB NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_attachments_note ON attachments (note_id);
     `);
     setMeta(db, 'schema_version', SCHEMA_VERSION);
     setMeta(db, 'created_at', nowIso());
@@ -153,6 +163,22 @@
         );
       `);
       version = 4;
+    }
+
+    if (version < 5) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS attachments (
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          note_id    INTEGER NOT NULL,
+          name       TEXT NOT NULL,
+          mime       TEXT NOT NULL,
+          size       INTEGER NOT NULL,
+          data       BLOB NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_attachments_note ON attachments (note_id);
+      `);
+      version = 5;
     }
 
     setMeta(db, 'schema_version', SCHEMA_VERSION);
@@ -311,6 +337,28 @@
       [pid, nextSortOrder(db, pid), nowIso(), id]);
   }
 
+  /** Hängt eine Notiz direkt vor oder nach eine andere Notiz (gleicher Elternknoten wie der Anker).
+   *  where: 'before' | 'after'. */
+  function moveNote(db, id, anchorId, where) {
+    if (id === anchorId) return;
+    const anchor = getNote(db, anchorId);
+    if (!anchor || anchor.deleted_at) throw new Error('Zielnotiz nicht gefunden.');
+    const pid = anchor.parent_id == null ? null : anchor.parent_id;
+    if (pid != null && isDescendantOf(db, pid, id)) {
+      throw new Error('Eine Notiz kann nicht unter sich selbst hängen.');
+    }
+    const siblings = selectAll(db,
+      pid == null
+        ? 'SELECT id FROM notes WHERE parent_id IS NULL AND deleted_at IS NULL ORDER BY sort_order, id'
+        : 'SELECT id FROM notes WHERE parent_id = ? AND deleted_at IS NULL ORDER BY sort_order, id',
+      pid == null ? undefined : [pid]).map(r => r.id).filter(sid => sid !== id);
+    const idx = siblings.indexOf(anchorId);
+    if (idx < 0) throw new Error('Zielnotiz nicht gefunden.');
+    siblings.splice(where === 'after' ? idx + 1 : idx, 0, id);
+    db.run('UPDATE notes SET parent_id = ?, updated_at = ? WHERE id = ?', [pid, nowIso(), id]);
+    siblings.forEach((sid, i) => db.run('UPDATE notes SET sort_order = ? WHERE id = ?', [i, sid]));
+  }
+
   /** Verschiebt eine Notiz unter ihren Geschwistern nach oben (-1) oder unten (+1). */
   function moveAmongSiblings(db, id, direction) {
     const note = getNote(db, id);
@@ -356,8 +404,42 @@
     db.run('UPDATE notes SET parent_id = (SELECT parent_id FROM notes WHERE id = ?) WHERE parent_id = ?', [id, id]);
     db.run('DELETE FROM questions WHERE note_id = ?', [id]);
     db.run('DELETE FROM note_tags WHERE note_id = ?', [id]);
+    db.run('DELETE FROM attachments WHERE note_id = ?', [id]);
     db.run('DELETE FROM notes WHERE id = ?', [id]);
     pruneTags(db);
+  }
+
+  // ---------- Anhänge ----------
+
+  function addAttachment(db, noteId, file) {
+    db.run('INSERT INTO attachments (note_id, name, mime, size, data, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [noteId, file.name || 'bild', file.mime || 'application/octet-stream', file.bytes.length, file.bytes, nowIso()]);
+    return scalar(db, 'SELECT last_insert_rowid()');
+  }
+
+  function listAttachments(db, noteId) {
+    return selectAll(db, 'SELECT id, note_id, name, mime, size, created_at FROM attachments WHERE note_id = ? ORDER BY id', [noteId]);
+  }
+
+  function getAttachment(db, id) {
+    const row = selectOne(db, 'SELECT * FROM attachments WHERE id = ?', [id]);
+    if (row && !(row.data instanceof Uint8Array)) row.data = new Uint8Array(row.data || []);
+    return row;
+  }
+
+  function deleteAttachment(db, id) {
+    db.run('DELETE FROM attachments WHERE id = ?', [id]);
+  }
+
+  /** Alle Anhänge lebender Notizen (mit Daten), für den Export. */
+  function allAttachments(db) {
+    return selectAll(db,
+      `SELECT a.* FROM attachments a JOIN notes n ON n.id = a.note_id WHERE n.deleted_at IS NULL ORDER BY a.id`)
+      .map(r => { if (!(r.data instanceof Uint8Array)) r.data = new Uint8Array(r.data || []); return r; });
+  }
+
+  function attachmentsSize(db) {
+    return scalar(db, 'SELECT coalesce(sum(size), 0) FROM attachments') || 0;
   }
 
   // ---------- Papierkorb ----------
@@ -542,6 +624,7 @@
     updateNote,
     renameNote,
     setParent,
+    moveNote,
     moveAmongSiblings,
     setCollapsed,
     setAllCollapsed,
@@ -566,6 +649,12 @@
     setTags,
     listAllTags,
     normalizeTag,
+    addAttachment,
+    listAttachments,
+    getAttachment,
+    deleteAttachment,
+    allAttachments,
+    attachmentsSize,
     exportBytes,
   };
 })(window);
