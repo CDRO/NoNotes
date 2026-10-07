@@ -177,8 +177,10 @@ async function main() {
     assert.equal(await page4.locator('#createFileBtn').isHidden(), true, 'Menü ist zu');
     await page4.click('#menuBtn');
     await page4.click('#createFileBtn');
+    // Nicht auf den Status warten (der stand seit dem Start auf "gespeichert"), sondern auf die Folgen.
+    await page4.waitForFunction(() => /Test\.sqlite/.test(document.querySelector('#storageInfo .label').textContent));
+    await page4.waitForFunction(() => window.__writes.length >= 1);
     await waitSaved(page4);
-    assert.match(await page4.locator('#storageInfo .label').innerText(), /Test\.sqlite/);
     const writes1 = await page4.evaluate(() => window.__writes.length);
     assert.ok(writes1 >= 1, 'Datei wurde beim Anlegen geschrieben');
     const magic = await page4.evaluate(() => String.fromCharCode(...window.__writes.at(-1).subarray(0, 15)));
@@ -186,6 +188,7 @@ async function main() {
 
     await page4.click('#newBtn');
     await page4.fill('#title', 'In Datei');
+    await page4.waitForFunction(n => window.__writes.length > n, writes1);
     await waitSaved(page4);
     const writes2 = await page4.evaluate(() => window.__writes.length);
     assert.ok(writes2 > writes1, 'jede Änderung landet in der Datei');

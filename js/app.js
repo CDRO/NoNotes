@@ -321,18 +321,21 @@
     state.fileHandle = handle;
     state.filePermission = 'granted';
     state.editedSinceStart = false;
+    state.handleRemembered = false;
+    // Erst die Oberfläche und das Schreiben, dann das Merken: der Benutzer sieht sofort, was gilt.
+    hideBanner();
+    updateStorageInfo();
+    renderAll();
+    state.editSeq++;
+    const written = persistNow();
     try {
       await Store.browserStore.saveHandle(handle);
       state.handleRemembered = true;
     } catch (e) {
       console.warn('Datei-Handle kann nicht gemerkt werden', e);
-      state.handleRemembered = false;
     }
-    hideBanner();
     updateStorageInfo();
-    renderAll();
-    state.editSeq++;
-    await persistNow();
+    await written;
   }
 
   async function createFile() {
