@@ -3,7 +3,7 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 2;
+  const SCHEMA_VERSION = 3;
   const DEFAULT_MAP_TITLE = 'Meine Notizen';
 
   function nowIso() { return new Date().toISOString(); }
@@ -73,6 +73,17 @@
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+      CREATE TABLE questions (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        note_id     INTEGER NOT NULL,
+        text        TEXT NOT NULL,
+        norm        TEXT NOT NULL,
+        answer      TEXT,
+        line_no     INTEGER NOT NULL,
+        created_at  TEXT NOT NULL,
+        answered_at TEXT
+      );
+      CREATE INDEX idx_questions_note ON questions (note_id);
     `);
     setMeta(db, 'schema_version', SCHEMA_VERSION);
     setMeta(db, 'created_at', nowIso());
@@ -100,6 +111,24 @@
         .forEach((row, i) => db.run('UPDATE notes SET sort_order = ? WHERE id = ?', [i, row.id]));
       if (getMeta(db, 'map_title') == null) setMeta(db, 'map_title', DEFAULT_MAP_TITLE);
       version = 2;
+    }
+
+    if (version < 3) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS questions (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          note_id     INTEGER NOT NULL,
+          text        TEXT NOT NULL,
+          norm        TEXT NOT NULL,
+          answer      TEXT,
+          line_no     INTEGER NOT NULL,
+          created_at  TEXT NOT NULL,
+          answered_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_questions_note ON questions (note_id);
+      `);
+      for (const row of selectAll(db, 'SELECT id, body FROM notes')) syncQuestions(db, row.id, row.body);
+      version = 3;
     }
 
     setMeta(db, 'schema_version', SCHEMA_VERSION);
@@ -157,7 +186,9 @@
   /** Alle lebenden Notizen als flache Liste für den Baum. */
   function getTree(db) {
     return selectAll(db,
-      `SELECT id, title, parent_id, sort_order, collapsed FROM notes
+      `SELECT id, title, parent_id, sort_order, collapsed,
+              (SELECT count(*) FROM questions q WHERE q.note_id = notes.id AND q.answer IS NULL) AS badge
+         FROM notes
         WHERE deleted_at IS NULL ORDER BY parent_id, sort_order, id`);
   }
 
@@ -199,6 +230,7 @@
   function updateNote(db, id, title, body) {
     const ts = nowIso();
     db.run('UPDATE notes SET title = ?, body = ?, updated_at = ? WHERE id = ?', [title, body, ts, id]);
+    syncQuestions(db, id, body);
     return ts;
   }
 
@@ -273,7 +305,84 @@
   /** Entfernt eine Notiz endgültig (z. B. eine gerade erst angelegte, leere). */
   function purgeNote(db, id) {
     db.run('UPDATE notes SET parent_id = (SELECT parent_id FROM notes WHERE id = ?) WHERE parent_id = ?', [id, id]);
+    db.run('DELETE FROM questions WHERE note_id = ?', [id]);
     db.run('DELETE FROM notes WHERE id = ?', [id]);
+  }
+
+  // ---------- Fragen ----------
+
+  /** Gleicht den Fragen-Index einer Notiz mit ihrem Text ab. Bestehende Einträge werden über den
+   *  normalisierten Text wiedererkannt, damit Anlagedatum und Nummer erhalten bleiben. */
+  function syncQuestions(db, noteId, body) {
+    const Q = global.NoNotesQuestions;
+    if (!Q) return;
+    const parsed = Q.parse(body);
+    const existing = selectAll(db, 'SELECT * FROM questions WHERE note_id = ? ORDER BY line_no, id', [noteId]);
+    const unused = existing.slice();
+    const ts = nowIso();
+    for (const q of parsed) {
+      const idx = unused.findIndex(e => e.norm === q.norm);
+      if (idx >= 0) {
+        const e = unused.splice(idx, 1)[0];
+        let answeredAt = e.answered_at;
+        if (q.answer && !e.answer) answeredAt = ts;
+        if (!q.answer) answeredAt = null;
+        if (e.text !== q.text || e.answer !== q.answer || e.line_no !== q.lineIndex || e.answered_at !== answeredAt) {
+          db.run('UPDATE questions SET text = ?, answer = ?, line_no = ?, answered_at = ? WHERE id = ?',
+            [q.text, q.answer, q.lineIndex, answeredAt, e.id]);
+        }
+      } else {
+        db.run('INSERT INTO questions (note_id, text, norm, answer, line_no, created_at, answered_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [noteId, q.text, q.norm, q.answer, q.lineIndex, ts, q.answer ? ts : null]);
+      }
+    }
+    for (const e of unused) db.run('DELETE FROM questions WHERE id = ?', [e.id]);
+  }
+
+  /** Fragen über alle lebenden Notizen. status: 'open' | 'answered' | 'all'. */
+  function listQuestions(db, options) {
+    const status = (options && options.status) || 'open';
+    const q = ((options && options.query) || '').trim().toLowerCase();
+    const where = ['n.deleted_at IS NULL'];
+    const params = [];
+    if (status === 'open') where.push('q.answer IS NULL');
+    else if (status === 'answered') where.push('q.answer IS NOT NULL');
+    if (q) {
+      const like = '%' + escapeLike(q) + '%';
+      where.push("(nn_lower(q.text) LIKE ? ESCAPE '\\' OR nn_lower(q.answer) LIKE ? ESCAPE '\\' OR nn_lower(n.title) LIKE ? ESCAPE '\\')");
+      params.push(like, like, like);
+    }
+    return selectAll(db,
+      `SELECT q.id, q.note_id, q.text, q.norm, q.answer, q.line_no, q.created_at, q.answered_at,
+              n.title AS note_title, n.updated_at AS note_updated_at
+         FROM questions q JOIN notes n ON n.id = q.note_id
+        WHERE ${where.join(' AND ')}
+        ORDER BY (q.answer IS NOT NULL), n.updated_at DESC, n.id, q.line_no`, params);
+  }
+
+  function countQuestions(db) {
+    const row = selectOne(db,
+      `SELECT sum(q.answer IS NULL) AS open, count(*) AS total
+         FROM questions q JOIN notes n ON n.id = q.note_id WHERE n.deleted_at IS NULL`);
+    return { open: Number(row && row.open || 0), total: Number(row && row.total || 0) };
+  }
+
+  function getQuestion(db, id) {
+    return selectOne(db, 'SELECT * FROM questions WHERE id = ?', [id]);
+  }
+
+  /** Schreibt die Antwort als "!"-Zeilen unter die Frage in der Notiz. Leerer Text entfernt die Antwort. */
+  function answerQuestion(db, questionId, answerText) {
+    const Q = global.NoNotesQuestions;
+    const row = getQuestion(db, questionId);
+    if (!row) throw new Error('Frage nicht gefunden.');
+    const note = getNote(db, row.note_id);
+    if (!note) throw new Error('Notiz nicht gefunden.');
+    const q = Q.locate(note.body, row);
+    if (!q) throw new Error('Die Frage steht nicht mehr so im Text.');
+    const body = Q.writeAnswer(note.body, q, answerText);
+    updateNote(db, note.id, note.title, body);
+    return note.id;
   }
 
   function countNotes(db) {
@@ -317,6 +426,11 @@
     setMapTitle,
     getMeta,
     setMeta,
+    syncQuestions,
+    listQuestions,
+    countQuestions,
+    getQuestion,
+    answerQuestion,
     exportBytes,
   };
 })(window);

@@ -1,8 +1,9 @@
 # NoNotes
 
 Eine kleine Notiz-App, die **ohne Server, ohne Installation und ohne Adminrechte** läuft.
-Sie öffnet sich als Datei im Browser, ordnet die Notizen als **Mindmap** an und speichert
-alles in einer echten **SQLite-Datenbank**. Alles, was sie braucht, liegt im entpackten Ordner.
+Sie öffnet sich als Datei im Browser, ordnet die Notizen als **Mindmap** an, sammelt
+**offene Fragen** aus allen Notizen an einem Ort und speichert alles in einer echten
+**SQLite-Datenbank**. Alles, was sie braucht, liegt im entpackten Ordner.
 
 Gebaut für Rechner mit stark eingeschränkten Rechten: Es wird kein Dienst gestartet,
 kein Port geöffnet, kein Programm installiert. PowerShell ist optional und auch im
@@ -79,6 +80,27 @@ Die Notizen bilden einen Baum um einen zentralen Knoten, dessen Titel du per Dop
 Der Umschalter oben wechselt zur klassischen Liste mit Suche und Editor nebeneinander.
 Die Suche filtert Titel und Inhalt, auch mit Umlauten und unabhängig von Gross-/Kleinschreibung.
 
+### Fragen
+
+Eine Zeile, die mit `?` beginnt, ist eine Frage. Direkt darunter stehende Zeilen, die mit `!`
+beginnen, sind die Antwort. Der Notiztext bleibt die einzige Wahrheit, die App führt nur
+einen Index darüber.
+
+```
+? Wie hoch ist das Budget?
+! 20'000 CHF laut Mail von Anna
+```
+
+- Im Editor setzen **? Frage** und **! Antwort** (oder `Ctrl+Shift+F` / `Ctrl+Shift+A`) das
+  Zeichen auf der aktuellen Zeile oder nehmen es wieder weg.
+- Die Ansicht **Fragen** listet alle Fragen aller Notizen, nach Notiz gruppiert. Standardfilter
+  ist *Offen*; *Alle* und *Beantwortet* holen den Rest zurück, die Suche filtert nach Text.
+- **Beantworten** schreibt die Antwort als `!`-Zeile direkt unter die Frage in die Notiz.
+  **Antwort bearbeiten** ändert sie, ein leerer Text macht die Frage wieder offen.
+- **Zur Notiz** öffnet die Notiz im Vollbild und springt zur Zeile der Frage.
+- In der Mindmap zeigt eine Marke am Knoten die Anzahl offener Fragen; eingeklappte Äste
+  zählen ihren ganzen Teilbaum. Der Reiter *Fragen* trägt die Gesamtzahl.
+
 ### Editor
 
 - Oberste Zeile ist der Titel, `Enter` springt in den Text.
@@ -93,6 +115,7 @@ Die Suche filtert Titel und Inhalt, auch mit Umlauten und unabhängig von Gross-
 | --- | --- |
 | Oberfläche | `index.html`, `css/app.css`, `js/app.js` – reines HTML/CSS/JS, keine Frameworks, kein Build |
 | Mindmap | `js/mindmap.js`: eigenes Layout (links/rechts ausbalanciert), SVG, Zoom, Ziehen, Tastatur |
+| Fragen | `js/questions.js`: Parser für `?`/`!`-Zeilen; Index in der Tabelle `questions`, bei jeder Änderung abgeglichen |
 | Datenbank | [sql.js](https://github.com/sql-js/sql.js) (SQLite nach JavaScript kompiliert) in `vendor/sql.js/`; Schema und Abfragen in `js/db.js` |
 | Persistenz | `js/storage.js`: IndexedDB (ersatzweise localStorage) plus File System Access API für die Datei |
 | Start | `start.ps1` (nur Cmdlets, läuft im Constrained Language Mode), `start.cmd` |
@@ -103,7 +126,7 @@ Language Mode zur Verfügung. Dort sind weder `HttpListener` noch der Zugriff au
 File System Access API alles mit, um direkt in die Datenbankdatei zu schreiben, und
 sql.js liefert SQLite als reines JavaScript.
 
-Schema (Version 2). Ältere Datenbanken werden beim Öffnen automatisch migriert.
+Schema (Version 3). Ältere Datenbanken werden beim Öffnen automatisch migriert.
 
 ```sql
 CREATE TABLE notes (
@@ -118,6 +141,16 @@ CREATE TABLE notes (
   deleted_at TEXT             -- gesetzt = im Papierkorb
 );
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);  -- schema_version, created_at, map_title
+CREATE TABLE questions (          -- Index über die ?/!-Zeilen, wird aus dem Text abgeleitet
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  note_id     INTEGER NOT NULL,
+  text        TEXT NOT NULL,
+  norm        TEXT NOT NULL,      -- normalisiert, zum Wiedererkennen nach Änderungen
+  answer      TEXT,               -- NULL = offen
+  line_no     INTEGER NOT NULL,
+  created_at  TEXT NOT NULL,
+  answered_at TEXT
+);
 ```
 
 ## Entwicklung
@@ -126,7 +159,7 @@ Für die App selbst ist nichts zu bauen: Dateien ändern, `index.html` neu laden
 
 Der Smoke-Test öffnet die App wie ein Benutzer per `file://` in headless Chromium und
 prüft Anlegen, Suchen, Speichern, Neuladen, Herunterladen, Importieren, Löschen, das
-Schreiben in die Datenbankdatei, die Mindmap-Bedienung und die Migration alter Datenbanken:
+Schreiben in die Datenbankdatei, die Mindmap-Bedienung, die Fragen und die Migration alter Datenbanken:
 
 ```bash
 npm install

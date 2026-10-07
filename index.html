@@ -22,6 +22,7 @@
       <div class="segmented" role="tablist" aria-label="Ansicht">
         <button type="button" id="viewMapBtn" role="tab" data-view="map" aria-selected="true">Mindmap</button>
         <button type="button" id="viewListBtn" role="tab" data-view="list" aria-selected="false">Liste</button>
+        <button type="button" id="viewQuestionsBtn" role="tab" data-view="questions" aria-selected="false">Fragen</button>
       </div>
 
       <div class="status" id="status" aria-live="polite" data-state=""></div>
@@ -60,6 +61,21 @@
         <input type="text" id="renameInput" class="rename-input" aria-label="Titel bearbeiten" hidden>
       </section>
 
+      <!-- Fragen -->
+      <section class="questions-view" id="questionsView" aria-label="Fragen">
+        <div class="q-toolbar">
+          <div class="segmented" id="qFilter" role="tablist" aria-label="Filter">
+            <button type="button" role="tab" data-status="open" aria-selected="true">Offen</button>
+            <button type="button" role="tab" data-status="all" aria-selected="false">Alle</button>
+            <button type="button" role="tab" data-status="answered" aria-selected="false">Beantwortet</button>
+          </div>
+          <input type="search" id="qSearch" placeholder="Fragen durchsuchen…" aria-label="Fragen durchsuchen" autocomplete="off">
+          <span class="q-count" id="qCount"></span>
+        </div>
+        <div class="q-list" id="qList"></div>
+        <div class="empty" id="qEmpty" hidden></div>
+      </section>
+
       <!-- Liste -->
       <aside class="sidebar" id="sidebar" aria-label="Notizliste">
         <div class="sidebar-tools">
@@ -85,7 +101,12 @@
             <button type="button" id="deleteBtn" class="ghost danger">Löschen</button>
           </div>
           <input type="text" id="title" class="title" placeholder="Titel" aria-label="Titel" autocomplete="off" spellcheck="true">
-          <textarea id="body" class="body" placeholder="Notiz…" aria-label="Inhalt" spellcheck="true"></textarea>
+          <div class="editor-tools">
+            <button type="button" id="questionBtn" class="ghost" title="Zeile als Frage markieren (Ctrl+Shift+F)">? Frage</button>
+            <button type="button" id="answerBtn" class="ghost" title="Zeile als Antwort markieren (Ctrl+Shift+A)">! Antwort</button>
+            <span class="tools-hint" id="noteQuestions"></span>
+          </div>
+          <textarea id="body" class="body" placeholder="Notiz… (Zeile mit ? = Frage, darunter Zeilen mit ! = Antwort)" aria-label="Inhalt" spellcheck="true"></textarea>
         </div>
       </section>
     </main>
@@ -99,6 +120,7 @@
 
   <script src="js/version.js"></script>
   <script src="vendor/sql.js/sql-asm.js"></script>
+  <script src="js/questions.js"></script>
   <script src="js/db.js"></script>
   <script src="js/storage.js"></script>
   <script src="js/mindmap.js"></script>

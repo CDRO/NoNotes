@@ -75,7 +75,14 @@
       n.visibleChildren.forEach(sizeNode);
     };
     const countDescendants = n => n.children.reduce((s, c) => s + 1 + countDescendants(c), 0);
+    const totalBadge = n => n.badge + n.children.reduce((s, c) => s + totalBadge(c), 0);
     sizeNode(root);
+    // Eingeklappte Äste zeigen die offenen Fragen des ganzen Teilbaums.
+    const setBadges = n => {
+      n.shownBadge = n.isRoot ? 0 : (n.collapsed ? totalBadge(n) : n.badge);
+      n.visibleChildren.forEach(setBadges);
+    };
+    setBadges(root);
 
     const heights = new Map();
     const subtreeH = n => {
@@ -198,13 +205,13 @@
         tt.textContent = n.collapsed ? String(n.hiddenCount) : '–';
         svgEl('title', null, t).textContent = n.collapsed ? 'Ausklappen' : 'Einklappen';
       }
-      if (n.badge > 0) {
+      if (n.shownBadge > 0) {
         const bx = n.dir < 0 ? 0 : n.w;
         const b = svgEl('g', { class: 'mm-badge', transform: `translate(${bx} 0)` }, g);
         svgEl('circle', { r: 9 }, b);
         const bt = svgEl('text', { 'text-anchor': 'middle', 'dominant-baseline': 'central' }, b);
-        bt.textContent = n.badge > 99 ? '99+' : String(n.badge);
-        svgEl('title', null, b).textContent = n.badge === 1 ? '1 offene Frage' : `${n.badge} offene Fragen`;
+        bt.textContent = n.shownBadge > 99 ? '99+' : String(n.shownBadge);
+        svgEl('title', null, b).textContent = n.shownBadge === 1 ? '1 offene Frage' : `${n.shownBadge} offene Fragen`;
       }
       return g;
     }

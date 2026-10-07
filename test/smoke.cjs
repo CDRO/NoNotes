@@ -23,6 +23,7 @@ const { chromium } = loadPlaywright();
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 
 const READY = 'body[data-ready="true"]';
+const SCHEMA_VERSION = '3'; // muss zu js/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 function watchErrors(page) {
@@ -125,7 +126,7 @@ async function main() {
     const db = new SQL.Database(new Uint8Array(bytes));
     assert.equal(db.exec('SELECT count(*) FROM notes')[0].values[0][0], 2);
     assert.deepEqual(db.exec('SELECT title FROM notes ORDER BY title')[0].values.map(r => r[0]), ['Erste Notiz', 'Zweite']);
-    assert.equal(db.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], '2');
+    assert.equal(db.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], SCHEMA_VERSION);
     db.close();
     step('Kopie herunterladen ergibt gültige SQLite-Datei mit beiden Notizen');
 
@@ -302,7 +303,7 @@ async function main() {
     assert.equal(parents['Budget'], Number(projektId));
     assert.equal(parents['Termine'], null);
     assert.equal(db5.exec("SELECT value FROM meta WHERE key='map_title'")[0].values[0][0], 'Mein Projekt');
-    assert.equal(db5.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], '2');
+    assert.equal(db5.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], SCHEMA_VERSION);
     db5.close();
     step('Mindmap: Baum und Titel landen in der SQLite-Datei');
 
@@ -336,6 +337,84 @@ async function main() {
     assert.deepEqual(errors6, []);
     await ctx6.close();
     step('Migration: Schema v1 wird geöffnet und als Baum gezeigt');
+
+    // ---------- 7. Fragen: Syntax, zentrale Liste, Filter, Beantworten, Marke am Knoten ----------
+    const ctx7 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
+    const { page: page7, errors: errors7 } = await openApp(ctx7, 'list');
+    await page7.click('#newBtn');
+    await page7.fill('#title', 'Planung');
+    await page7.fill('#body', 'Intro\n? Wie hoch ist das Budget?\n? Wer liefert?\n! Firma Muster\nEnde');
+    await waitSaved(page7);
+    assert.match(await page7.locator('#noteQuestions').innerText(), /1 offene Frage von 2/);
+    assert.match(await page7.locator('#viewQuestionsBtn').innerText(), /Fragen\s*1/);
+    step('Fragen: Syntax wird erkannt und gezählt');
+
+    // Marke am Knoten in der Mindmap
+    await page7.click('#viewMapBtn');
+    await page7.waitForSelector('body.view-map');
+    const planungId = await idOfNode(page7, 'Planung');
+    assert.equal(await page7.locator(`.mm-node[data-id="${planungId}"] .mm-badge text`).textContent(), '1');
+    step('Fragen: Anzahl offener Fragen am Mindmap-Knoten');
+
+    // Zentrale Liste
+    await page7.click('#viewQuestionsBtn');
+    await page7.waitForSelector('body.view-questions');
+    assert.equal(await page7.locator('.q-item').count(), 1, 'Standardfilter zeigt nur offene Fragen');
+    assert.match(await page7.locator('.q-item .q-text').innerText(), /Wie hoch ist das Budget\?/);
+    await page7.click('#qFilter button[data-status="all"]');
+    await page7.waitForFunction(() => document.querySelectorAll('.q-item').length === 2);
+    await page7.click('#qFilter button[data-status="answered"]');
+    await page7.waitForFunction(() => document.querySelectorAll('.q-item').length === 1);
+    assert.match(await page7.locator('.q-item .q-answer').innerText(), /Firma Muster/);
+    await page7.fill('#qSearch', 'budget');
+    await page7.waitForFunction(() => document.querySelectorAll('.q-item').length === 0);
+    await page7.fill('#qSearch', '');
+    await page7.waitForFunction(() => document.querySelectorAll('.q-item').length === 1, null, {}); // Entprellung durch
+    await page7.click('#qFilter button[data-status="open"]');
+    await page7.waitForFunction(() => document.querySelectorAll('.q-item').length === 1 && /Budget/.test(document.querySelector('.q-item .q-text').textContent));
+    step('Fragen: zentrale Liste mit Filter und Suche');
+
+    // Zentral beantworten schreibt die Antwort in die Notiz
+    await page7.click('.q-item button:has-text("Beantworten")');
+    await page7.fill('.q-item .q-form textarea', '20k CHF');
+    await page7.click('.q-item .q-form button[type="submit"]');
+    await page7.waitForFunction(() => document.querySelectorAll('.q-item').length === 0);
+    await waitSaved(page7);
+    await page7.click('#qFilter button[data-status="answered"]');
+    await page7.waitForFunction(() => document.querySelectorAll('.q-item').length === 2);
+    assert.equal(await page7.locator('#viewQuestionsBtn .count').count(), 0, 'keine offene Frage mehr');
+    // Zur Notiz springen: Vollbild-Editor aus der Fragenansicht
+    await page7.locator('.q-item').first().locator('button:has-text("Zur Notiz")').click();
+    await page7.waitForSelector('body.editor-open');
+    assert.equal(await page7.inputValue('#body'), 'Intro\n? Wie hoch ist das Budget?\n! 20k CHF\n? Wer liefert?\n! Firma Muster\nEnde');
+    step('Fragen: zentral beantworten landet als "!"-Zeile in der Notiz');
+
+    // Editor-Knopf markiert die aktuelle Zeile als Frage und wieder zurück
+    await page7.evaluate(() => { const b = document.querySelector('#body'); const pos = b.value.indexOf('Ende'); b.focus(); b.setSelectionRange(pos, pos); });
+    await page7.click('#questionBtn');
+    await page7.waitForFunction(() => document.querySelector('#body').value.endsWith('\n? Ende'));
+    assert.match(await page7.locator('#noteQuestions').innerText(), /1 offene Frage von 3/);
+    await page7.keyboard.press('Control+Shift+F');
+    await page7.waitForFunction(() => document.querySelector('#body').value.endsWith('\nEnde'));
+    await waitSaved(page7);
+    await page7.keyboard.press('Escape');
+    await page7.waitForSelector('body:not(.editor-open)');
+    assert.equal(await page7.locator('body.view-questions').count(), 1, 'zurück in der Fragenansicht');
+    step('Fragen: Zeile per Knopf und Tastenkürzel markieren');
+
+    // Index liegt in der Datenbank
+    await page7.click('#menuBtn');
+    const [dl7] = await Promise.all([page7.waitForEvent('download'), page7.click('#downloadBtn')]);
+    const dl7Path = path.join(tmp, 'fragen.sqlite');
+    await dl7.saveAs(dl7Path);
+    const db7 = new SQL.Database(new Uint8Array(fs.readFileSync(dl7Path)));
+    assert.equal(db7.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], SCHEMA_VERSION);
+    const qrows = db7.exec('SELECT text, answer FROM questions ORDER BY line_no')[0].values;
+    assert.deepEqual(qrows, [['Wie hoch ist das Budget?', '20k CHF'], ['Wer liefert?', 'Firma Muster']]);
+    db7.close();
+    assert.deepEqual(errors7, [], 'keine Konsolenfehler in der Fragenansicht');
+    await ctx7.close();
+    step('Fragen: Index steht in der SQLite-Datei');
 
     console.log('\nSmoke-Test bestanden.');
   } finally {

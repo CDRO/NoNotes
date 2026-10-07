@@ -5,6 +5,7 @@
   const DB = window.NoNotesDB;
   const Store = window.NoNotesStorage;
   const Mindmap = window.NoNotesMindmap;
+  const Q = window.NoNotesQuestions;
 
   const DEFAULT_FILENAME = 'NoNotes.sqlite';
   const SAVE_DELAY_MS = 600;
@@ -18,7 +19,10 @@
     menuBtn: $('#menuBtn'), menu: $('#menu'), menuHint: $('#menuHint'),
     createFileBtn: $('#createFileBtn'), openFileBtn: $('#openFileBtn'), disconnectBtn: $('#disconnectBtn'),
     downloadBtn: $('#downloadBtn'), importBtn: $('#importBtn'), importInput: $('#importInput'),
-    viewMapBtn: $('#viewMapBtn'), viewListBtn: $('#viewListBtn'),
+    viewMapBtn: $('#viewMapBtn'), viewListBtn: $('#viewListBtn'), viewQuestionsBtn: $('#viewQuestionsBtn'),
+    questionsView: $('#questionsView'), qFilter: $('#qFilter'), qSearch: $('#qSearch'),
+    qList: $('#qList'), qEmpty: $('#qEmpty'), qCount: $('#qCount'),
+    questionBtn: $('#questionBtn'), answerBtn: $('#answerBtn'), noteQuestions: $('#noteQuestions'),
     mapView: $('#mapView'), mapNewBtn: $('#mapNewBtn'), mapFitBtn: $('#mapFitBtn'),
     mapZoomInBtn: $('#mapZoomInBtn'), mapZoomOutBtn: $('#mapZoomOutBtn'),
     mindmap: $('#mindmap'), renameInput: $('#renameInput'), contextMenu: $('#contextMenu'),
@@ -38,6 +42,11 @@
     mapDirty: true,
     mapSelection: null,   // 'root' | Zahl | null
     rename: null,         // { id, isNew }
+    qStatus: 'open',
+    qQuery: '',
+    qSearchTimer: null,
+    qAnswering: null,     // id der Frage, deren Antwortfeld offen ist
+    qDraft: null,         // Entwurf im offenen Antwortfeld (überlebt ein Neuzeichnen)
     // Speichern: jede Änderung erhöht editSeq; savedSeq ist der zuletzt vollständig gesicherte Stand.
     editSeq: 0,
     savedSeq: 0,
@@ -178,7 +187,7 @@
 
     el.boot.hidden = true;
     el.app.hidden = false;
-    setView(view === 'list' ? 'list' : 'map');
+    setView(view === 'list' || view === 'questions' ? view : 'map');
     renderAll();
     updateStorageInfo();
     if (state.fileHandle && state.filePermission !== 'granted') showConnectBanner();
@@ -463,8 +472,10 @@
     state.view = view;
     document.body.classList.toggle('view-map', view === 'map');
     document.body.classList.toggle('view-list', view === 'list');
+    document.body.classList.toggle('view-questions', view === 'questions');
     el.viewMapBtn.setAttribute('aria-selected', String(view === 'map'));
     el.viewListBtn.setAttribute('aria-selected', String(view === 'list'));
+    el.viewQuestionsBtn.setAttribute('aria-selected', String(view === 'questions'));
     try { localStorage.setItem(VIEW_KEY, view); } catch (e) { /* egal */ }
     document.body.classList.remove('editor-open');
     hideContextMenu();
@@ -472,10 +483,19 @@
     if (view === 'map') {
       renderMap();
       el.mindmap.focus({ preventScroll: true });
+    } else if (view === 'questions') {
+      renderQuestions();
     } else {
       renderList();
       renderEditor();
     }
+  }
+
+  /** Zeichnet die aktive Ansicht neu (nach Schliessen des Editors oder Änderungen). */
+  function renderCurrentView() {
+    if (state.view === 'map') renderMap();
+    else if (state.view === 'questions') renderQuestions();
+    else { renderList(); renderEditor(); }
   }
 
   // ---------- Darstellung ----------
@@ -485,6 +505,21 @@
     renderEditor();
     renderCount();
     renderMap();
+    renderQuestionCounts();
+    if (state.view === 'questions') renderQuestions();
+  }
+
+  function renderQuestionCounts() {
+    const c = DB.countQuestions(state.db);
+    el.viewQuestionsBtn.replaceChildren();
+    el.viewQuestionsBtn.append('Fragen');
+    if (c.open > 0) {
+      const b = document.createElement('span');
+      b.className = 'count';
+      b.textContent = String(c.open);
+      b.title = c.open === 1 ? '1 offene Frage' : `${c.open} offene Fragen`;
+      el.viewQuestionsBtn.appendChild(b);
+    }
   }
 
   function renderMap() {
@@ -545,6 +580,15 @@
     if (document.activeElement !== el.body) el.body.value = note.body;
     renderMeta(note.created_at, note.updated_at);
     renderCrumbs(note);
+    renderNoteQuestions(note.body);
+  }
+
+  function renderNoteQuestions(body) {
+    const parsed = Q.parse(body);
+    const open = parsed.filter(q => !q.answer).length;
+    el.noteQuestions.textContent = parsed.length === 0 ? ''
+      : open === 0 ? `${parsed.length === 1 ? '1 Frage' : parsed.length + ' Fragen'}, alle beantwortet`
+      : `${open === 1 ? '1 offene Frage' : open + ' offene Fragen'} von ${parsed.length}`;
   }
 
   function renderMeta(createdAt, updatedAt) {
@@ -605,17 +649,29 @@
   }
 
   /** Öffnet eine Notiz im Editor: in der Liste rechts, aus der Mindmap als Vollbild. */
-  function openNote(id) {
+  function openNote(id, opts) {
     hideContextMenu();
     state.currentId = id;
-    if (state.view === 'map') {
-      state.mapSelection = id;
+    if (state.view !== 'list') {
+      if (state.view === 'map') state.mapSelection = id;
       document.body.classList.add('editor-open');
       renderEditor();
       (el.title.value ? el.body : el.title).focus();
     } else {
       selectNote(id, true);
     }
+    if (opts && typeof opts.line === 'number') jumpToLine(opts.line);
+  }
+
+  function jumpToLine(lineIndex) {
+    const body = el.body.value;
+    const start = Q.offsetOfLine(body, lineIndex);
+    let end = body.indexOf('\n', start);
+    if (end < 0) end = body.length;
+    el.body.focus();
+    el.body.setSelectionRange(start, end);
+    const lineHeight = parseFloat(getComputedStyle(el.body).lineHeight) || 24;
+    el.body.scrollTop = Math.max(0, lineIndex * lineHeight - el.body.clientHeight / 3);
   }
 
   function closeEditor() {
@@ -625,6 +681,8 @@
       if (state.currentId != null) state.mapSelection = state.currentId;
       renderMap();
       el.mindmap.focus({ preventScroll: true });
+    } else if (state.view === 'questions') {
+      renderQuestions();
     }
   }
 
@@ -679,7 +737,184 @@
     const ts = DB.updateNote(state.db, state.currentId, el.title.value, el.body.value);
     renderMeta(DB.getNote(state.db, state.currentId).created_at, ts);
     updateListItem(state.currentId, el.title.value, el.body.value, ts);
+    renderNoteQuestions(el.body.value);
+    renderQuestionCounts();
     markEdited();
+  }
+
+  /** Markiert die Zeile unter dem Cursor als Frage ("?") oder Antwort ("!") bzw. hebt es auf. */
+  function toggleLine(prefix) {
+    if (state.currentId == null) return;
+    const caret = el.body.selectionStart || 0;
+    const r = Q.toggleLinePrefix(el.body.value, caret, prefix);
+    el.body.value = r.body;
+    el.body.focus();
+    el.body.setSelectionRange(r.caret, r.caret);
+    onEdit();
+  }
+
+  // ---------- Fragen-Ansicht ----------
+
+  function setQuestionFilter(status) {
+    clearTimeout(state.qSearchTimer);
+    state.qQuery = el.qSearch.value;
+    state.qStatus = status;
+    for (const b of el.qFilter.querySelectorAll('button[data-status]')) {
+      b.setAttribute('aria-selected', String(b.dataset.status === status));
+    }
+    renderQuestions();
+  }
+
+  function renderQuestions() {
+    if (state.view !== 'questions') return;
+    // Entwurf eines offenen Antwortfelds sichern, damit ein Neuzeichnen nichts verschluckt.
+    const openTa = state.qAnswering != null ? el.qList.querySelector(`.q-item[data-id="${state.qAnswering}"] .q-form textarea`) : null;
+    if (openTa) state.qDraft = openTa.value;
+    const rows = DB.listQuestions(state.db, { status: state.qStatus, query: state.qQuery });
+    const counts = DB.countQuestions(state.db);
+    el.qCount.textContent = `${rows.length} von ${counts.total} · ${counts.open} offen`;
+
+    const groups = new Map();
+    for (const r of rows) {
+      if (!groups.has(r.note_id)) groups.set(r.note_id, { title: r.note_title, items: [] });
+      groups.get(r.note_id).items.push(r);
+    }
+
+    const frag = document.createDocumentFragment();
+    for (const [noteId, g] of groups) {
+      const section = document.createElement('section');
+      section.className = 'q-group';
+      const h = document.createElement('h3');
+      h.className = 'q-note';
+      const nb = document.createElement('button');
+      nb.type = 'button';
+      nb.textContent = g.title.trim() || 'Ohne Titel';
+      nb.title = 'Notiz öffnen';
+      nb.addEventListener('click', () => openNote(noteId));
+      h.appendChild(nb);
+      const cnt = document.createElement('span');
+      cnt.textContent = g.items.length === 1 ? '1 Frage' : `${g.items.length} Fragen`;
+      h.appendChild(cnt);
+      section.appendChild(h);
+      for (const r of g.items) section.appendChild(renderQuestionItem(r));
+      frag.appendChild(section);
+    }
+    el.qList.replaceChildren(frag);
+    el.qEmpty.hidden = rows.length > 0;
+    el.qEmpty.textContent = state.qQuery ? 'Keine Treffer.'
+      : state.qStatus === 'open' ? 'Keine offenen Fragen. Eine Zeile, die mit „?“ beginnt, wird zur Frage.'
+      : state.qStatus === 'answered' ? 'Noch keine beantworteten Fragen.'
+      : 'Noch keine Fragen. Eine Zeile, die mit „?“ beginnt, wird zur Frage.';
+  }
+
+  function renderQuestionItem(r) {
+    const item = document.createElement('article');
+    item.className = 'q-item ' + (r.answer ? 'answered' : 'open');
+    item.dataset.id = String(r.id);
+
+    const head = document.createElement('div');
+    head.className = 'q-head';
+    const mark = document.createElement('span');
+    mark.className = 'q-mark';
+    mark.textContent = r.answer ? '✓' : '?';
+    const text = document.createElement('div');
+    text.className = 'q-text';
+    text.textContent = r.text;
+    head.append(mark, text);
+    item.appendChild(head);
+
+    if (r.answer) {
+      const a = document.createElement('div');
+      a.className = 'q-answer';
+      a.textContent = r.answer;
+      item.appendChild(a);
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'q-actions';
+    const answerBtn = document.createElement('button');
+    answerBtn.type = 'button';
+    answerBtn.className = r.answer ? '' : 'primary';
+    answerBtn.textContent = r.answer ? 'Antwort bearbeiten' : 'Beantworten';
+    answerBtn.addEventListener('click', () => openAnswerForm(item, r));
+    const gotoBtn = document.createElement('button');
+    gotoBtn.type = 'button';
+    gotoBtn.className = 'ghost';
+    gotoBtn.textContent = 'Zur Notiz';
+    gotoBtn.addEventListener('click', () => openNote(r.note_id, { line: r.line_no }));
+    actions.append(answerBtn, gotoBtn);
+    const meta = document.createElement('span');
+    meta.className = 'q-meta';
+    meta.textContent = r.answer && r.answered_at ? `Beantwortet ${fmtDate(r.answered_at)}` : `Gestellt ${fmtDate(r.created_at)}`;
+    actions.appendChild(meta);
+    item.appendChild(actions);
+
+    const form = document.createElement('form');
+    form.className = 'q-form';
+    form.hidden = true;
+    const ta = document.createElement('textarea');
+    ta.placeholder = 'Antwort…';
+    ta.setAttribute('aria-label', 'Antwort');
+    const row = document.createElement('div');
+    row.className = 'row';
+    const save = document.createElement('button');
+    save.type = 'submit';
+    save.className = 'primary';
+    save.textContent = 'Speichern';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.textContent = 'Abbrechen';
+    cancel.addEventListener('click', () => { form.hidden = true; actions.hidden = false; state.qAnswering = null; state.qDraft = null; });
+    row.append(save, cancel);
+    form.append(ta, row);
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      saveAnswer(r.id, ta.value);
+    });
+    ta.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveAnswer(r.id, ta.value); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel.click(); }
+    });
+    item.appendChild(form);
+
+    if (state.qAnswering === r.id) openAnswerForm(item, r);
+    return item;
+  }
+
+  function openAnswerForm(item, r) {
+    const form = item.querySelector('.q-form');
+    const actions = item.querySelector('.q-actions');
+    const ta = form.querySelector('textarea');
+    const reopened = state.qAnswering === r.id && state.qDraft != null;
+    state.qAnswering = r.id;
+    ta.value = reopened ? state.qDraft : (r.answer || '');
+    form.hidden = false;
+    actions.hidden = true;
+    if (!reopened || document.activeElement === document.body) ta.focus();
+  }
+
+  function saveAnswer(questionId, text) {
+    try {
+      const noteId = DB.answerQuestion(state.db, questionId, text);
+      state.qAnswering = null;
+      state.qDraft = null;
+      markEdited();
+      renderQuestionCounts();
+      renderQuestions();
+      if (state.currentId === noteId) renderEditor();
+      setStatus(text.trim() ? 'Antwort gespeichert' : 'Antwort entfernt', 'dirty');
+    } catch (e) {
+      setStatus('Antwort konnte nicht gespeichert werden: ' + e.message, 'error');
+    }
+  }
+
+  function onQuestionSearchInput() {
+    clearTimeout(state.qSearchTimer);
+    state.qSearchTimer = setTimeout(() => {
+      if (el.qSearch.value === state.qQuery) return;
+      state.qQuery = el.qSearch.value;
+      renderQuestions();
+    }, SEARCH_DELAY_MS);
   }
 
   function deleteNoteById(id) {
@@ -970,6 +1205,21 @@
   function wireEvents() {
     el.viewMapBtn.addEventListener('click', () => setView('map'));
     el.viewListBtn.addEventListener('click', () => setView('list'));
+    el.viewQuestionsBtn.addEventListener('click', () => setView('questions'));
+    el.qFilter.addEventListener('click', e => {
+      const b = e.target.closest('button[data-status]');
+      if (b) setQuestionFilter(b.dataset.status);
+    });
+    el.qSearch.addEventListener('input', onQuestionSearchInput);
+    el.questionBtn.addEventListener('click', () => toggleLine('?'));
+    el.answerBtn.addEventListener('click', () => toggleLine('!'));
+    el.body.addEventListener('keydown', e => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey) {
+        const k = e.key.toLowerCase();
+        if (k === 'f') { e.preventDefault(); toggleLine('?'); }
+        else if (k === 'a') { e.preventDefault(); toggleLine('!'); }
+      }
+    });
 
     el.newBtn.addEventListener('click', newNote);
     el.mapNewBtn.addEventListener('click', () => newNoteInMap(selectionAsParent()));
