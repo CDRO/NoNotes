@@ -153,6 +153,7 @@
       k: 1, tx: 0, ty: 0,
       root: null, byId: new Map(), placed: [], bounds: null,
       selectedId: null,
+      multi: new Set(),
       needsFit: true,
     };
 
@@ -185,6 +186,7 @@
       const g = svgEl('g', {
         class: 'mm-node' + (n.isRoot ? ' mm-root' : '') + (String(n.id) === String(inst.selectedId) ? ' mm-selected' : '')
           + (n.match ? ' mm-match' : '') + (n.matchInside ? ' mm-match-inside' : '')
+          + (!n.isRoot && inst.multi.has(n.id) ? ' mm-multi' : '')
           + (svg.classList.contains('has-matches') && !n.isRoot && !n.match && !n.matchInside ? ' mm-dim' : ''),
         'data-id': n.id,
         transform: `translate(${n.x} ${n.y})`,
@@ -418,7 +420,7 @@
       drag.valid = valid;
     }
 
-    function onPointerUp() {
+    function onPointerUp(e) {
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerUp);
@@ -427,8 +429,9 @@
       drag = null;
       if (d.type !== 'node') return;
       if (!d.moved) {
-        setSelected(d.id);
-        if (handlers.onSelect) handlers.onSelect(d.id === 'root' ? 'root' : Number(d.id));
+        const toggle = !!(e && (e.ctrlKey || e.metaKey || e.shiftKey)) && d.id !== 'root';
+        if (!toggle) setSelected(d.id);
+        if (handlers.onSelect) handlers.onSelect(d.id === 'root' ? 'root' : Number(d.id), { toggle });
         return;
       }
       d.el.classList.remove('mm-dragging');
@@ -493,8 +496,15 @@
       zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX, e.clientY);
     }, { passive: false });
 
+    function setMulti(ids) {
+      inst.multi = new Set([...(ids || [])].map(Number));
+      for (const g of nodesG.children) {
+        g.classList.toggle('mm-multi', g.dataset.id !== 'root' && inst.multi.has(Number(g.dataset.id)));
+      }
+    }
+
     return {
-      render, fit, setSelected, neighbor, screenRectOf, ensureVisible,
+      render, fit, setSelected, setMulti, neighbor, screenRectOf, ensureVisible,
       zoomIn: () => zoomBy(1.25),
       zoomOut: () => zoomBy(1 / 1.25),
       requestFit: () => { inst.needsFit = true; },

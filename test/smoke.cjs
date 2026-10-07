@@ -771,6 +771,101 @@ async function main() {
     await ctx11.close();
     step('Anhänge: Löschen, fehlender Verweis, Ablage in SQLite');
 
+    // ---------- 12. Drucken: Teilbaum, Auswahl, alles, Fragen und Antworten ----------
+    const ctx12 = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'de-CH' });
+    await ctx12.addInitScript(() => {
+      window.__printed = [];
+      window.print = () => { window.__printed.push(document.getElementById('printArea').innerHTML); };
+    });
+    const { page: page12, errors: errors12 } = await openApp(ctx12);
+    const idP = await newRootNote(page12, 'Projekt');
+    await page12.click(`.mm-node[data-id="${idP}"]`);
+    await page12.keyboard.press('Tab');
+    await page12.waitForSelector('#renameInput:not([hidden])');
+    await page12.keyboard.type('Budget');
+    await page12.keyboard.press('Enter');
+    await page12.waitForFunction(() => [...document.querySelectorAll('.mm-node text')].some(x => x.textContent === 'Budget'));
+    const idBu = await idOfNode(page12, 'Budget');
+    const idG = await newRootNote(page12, 'Garten');
+    await page12.dblclick(`.mm-node[data-id="${idBu}"]`);
+    await page12.waitForSelector('body.editor-open');
+    await page12.fill('#body', 'Kosten.\n? Offerten da?\n? Versicherung?\n! Ja, 80 %');
+    await waitSaved(page12);
+    await page12.keyboard.press('Escape');
+    await page12.waitForSelector('body:not(.editor-open)');
+    const printedCount = () => page12.evaluate(() => window.__printed.length);
+    const printed = i => page12.evaluate(i => window.__printed[i], i);
+
+    // Teilbaum über das Kontextmenü
+    await page12.click(`.mm-node[data-id="${idP}"]`, { button: 'right' });
+    await page12.click('#contextMenu button:has-text("Drucken…")');
+    await page12.waitForSelector('#printDialog[open]');
+    assert.equal(await page12.locator('#printForm input[name="printScope"]:checked').inputValue(), 'subtree');
+    assert.match(await page12.locator('#printScopeSubtree').innerText(), /„Projekt“ mit Unternotizen \(2\)/);
+    await page12.click('#printGoBtn');
+    await page12.waitForFunction(() => window.__printed.length === 1);
+    const doc1 = await printed(0);
+    assert.ok(doc1.includes('<h1>Projekt</h1>'), 'Titel des Teilbaums');
+    assert.ok(doc1.includes(`id="print-note-${idBu}"`) && doc1.includes('Budget'), 'Unternotiz enthalten');
+    assert.ok(doc1.includes('<svg') && doc1.includes('Projekt'), 'Mindmap-Bild enthalten');
+    assert.ok(!doc1.includes('Garten'), 'fremder Ast nicht enthalten');
+    assert.ok(doc1.includes('md-q open') && doc1.includes('md-q answered'), 'Fragen gerendert');
+    await page12.waitForFunction(() => !document.body.classList.contains('printing'));
+    step('Drucken: Notiz mit Unternotizen aus dem Kontextmenü');
+
+    // Auswahl mit Ctrl+Klick
+    await page12.click(`.mm-node[data-id="${idG}"]`, { modifiers: ['Control'] });
+    await page12.click(`.mm-node[data-id="${idBu}"]`, { modifiers: ['Control'] });
+    await page12.waitForSelector('#multiBar:not([hidden])');
+    assert.equal(await page12.locator('#multiCount').innerText(), '2 Notizen ausgewählt');
+    assert.equal(await page12.locator('.mm-node.mm-multi').count(), 2);
+    await page12.click('#multiPrintBtn');
+    await page12.waitForSelector('#printDialog[open]');
+    assert.equal(await page12.locator('#printForm input[name="printScope"]:checked').inputValue(), 'selection');
+    await page12.click('#printGoBtn');
+    await page12.waitForFunction(() => window.__printed.length === 2);
+    const doc2 = await printed(1);
+    assert.ok(doc2.includes('<h2>Garten</h2>') && doc2.includes('<h2>Budget</h2>'), 'beide ausgewählten Notizen');
+    assert.ok(!doc2.includes('<h2>Projekt</h2>'), 'nicht ausgewählte Notiz fehlt');
+    await page12.click('#multiClearBtn');
+    await page12.waitForFunction(() => document.getElementById('multiBar').hidden);
+    assert.equal(await page12.locator('.mm-node.mm-multi').count(), 0);
+    step('Drucken: ausgewählte Notizen');
+
+    // Alles per Ctrl+P
+    await page12.click('#mindmap', { position: { x: 30, y: 700 } });
+    await page12.keyboard.press('Control+p');
+    await page12.waitForSelector('#printDialog[open]');
+    await page12.check('#printForm input[value="all"]');
+    await page12.click('#printGoBtn');
+    await page12.waitForFunction(() => window.__printed.length === 3);
+    const doc3 = await printed(2);
+    assert.ok(doc3.includes('print-toc') && doc3.includes('<h2>Projekt</h2>') && doc3.includes('<h3>Budget</h3>') && doc3.includes('<h2>Garten</h2>'), 'alle Notizen mit Inhaltsverzeichnis und Ebenen');
+    step('Drucken: alle Notizen per Ctrl+P');
+
+    // Fragen und Antworten
+    await page12.click('#viewQuestionsBtn');
+    await page12.waitForSelector('body.view-questions');
+    await page12.click('#qPrintBtn');
+    await page12.waitForSelector('#qaPrintDialog[open]');
+    assert.match(await page12.locator('#qaScopeFiltered').innerText(), /offene Fragen \(1\)/);
+    await page12.click('#qaPrintGoBtn');
+    await page12.waitForFunction(() => window.__printed.length === 4);
+    const doc4 = await printed(3);
+    assert.ok(doc4.includes('Fragen und Antworten') && doc4.includes('Offerten da?') && doc4.includes('print-lines'), 'offene Frage mit Linien');
+    assert.ok(!doc4.includes('Versicherung?'), 'beantwortete Frage nicht im Offen-Filter');
+    await page12.keyboard.press('Control+p');
+    await page12.waitForSelector('#qaPrintDialog[open]');
+    await page12.check('#qaPrintForm input[value="all"]');
+    await page12.click('#qaPrintGoBtn');
+    await page12.waitForFunction(() => window.__printed.length === 5);
+    const doc5 = await printed(4);
+    assert.ok(doc5.includes('Versicherung?') && doc5.includes('print-a') && doc5.includes('Ja, 80 %'), 'Antwort gedruckt');
+    assert.ok(doc5.includes('<h2>Budget</h2>'), 'nach Notiz gruppiert');
+    assert.deepEqual(errors12, [], 'keine Konsolenfehler beim Drucken');
+    await ctx12.close();
+    step('Drucken: Fragen und Antworten mit Filter');
+
     console.log('\nSmoke-Test bestanden.');
   } finally {
     await browser.close();

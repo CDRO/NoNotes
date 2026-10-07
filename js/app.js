@@ -9,6 +9,7 @@
   const M = window.NoNotesMarkdown;
   const Zip = window.NoNotesZip;
   const Exporter = window.NoNotesExport;
+  const Printer = window.NoNotesPrint;
 
   const DEFAULT_FILENAME = 'NoNotes.sqlite';
   const SAVE_DELAY_MS = 600;
@@ -36,6 +37,15 @@
     exportBtn: $('#exportBtn'), exportDialog: $('#exportDialog'), exportForm: $('#exportForm'),
     exportDirBtn: $('#exportDirBtn'), exportZipBtn: $('#exportZipBtn'), exportHint: $('#exportHint'),
     attachBtn: $('#attachBtn'), attachInput: $('#attachInput'), attachments: $('#attachments'),
+    mapPrintBtn: $('#mapPrintBtn'), qPrintBtn: $('#qPrintBtn'), printBtn: $('#printBtn'),
+    multiBar: $('#multiBar'), multiCount: $('#multiCount'), multiPrintBtn: $('#multiPrintBtn'), multiClearBtn: $('#multiClearBtn'),
+    printDialog: $('#printDialog'), printForm: $('#printForm'), printGoBtn: $('#printGoBtn'),
+    printScopeCurrent: $('#printScopeCurrent'), printScopeSubtree: $('#printScopeSubtree'),
+    printScopeSelection: $('#printScopeSelection'), printScopeAll: $('#printScopeAll'),
+    printSelectionChildren: $('#printSelectionChildren'), printIncludeMap: $('#printIncludeMap'),
+    printIncludeToc: $('#printIncludeToc'), printPageBreaks: $('#printPageBreaks'),
+    qaPrintDialog: $('#qaPrintDialog'), qaPrintForm: $('#qaPrintForm'), qaPrintGoBtn: $('#qaPrintGoBtn'),
+    qaScopeFiltered: $('#qaScopeFiltered'), qaGrouped: $('#qaGrouped'), qaLines: $('#qaLines'),
     mapView: $('#mapView'), mapNewBtn: $('#mapNewBtn'), mapFitBtn: $('#mapFitBtn'),
     mapZoomInBtn: $('#mapZoomInBtn'), mapZoomOutBtn: $('#mapZoomOutBtn'),
     mindmap: $('#mindmap'), renameInput: $('#renameInput'), contextMenu: $('#contextMenu'),
@@ -69,6 +79,8 @@
     mapMatchIndex: -1,
     mapSearchTimer: null,
     attachmentUrls: new Map(), // id → Objekt-URL für die Anzeige
+    multi: new Set(),          // Mehrfachauswahl (Mindmap und Liste)
+    printNoteId: null,         // Notiz, auf die sich der Druckdialog bezieht
     // Speichern: jede Änderung erhöht editSeq; savedSeq ist der zuletzt vollständig gesicherte Stand.
     editSeq: 0,
     savedSeq: 0,
@@ -194,7 +206,10 @@
     }
 
     state.map = Mindmap.create(el.mindmap, {
-      onSelect: id => { state.mapSelection = id; },
+      onSelect: (id, opts) => {
+        if (opts && opts.toggle && typeof id === 'number') { toggleMulti(id); return; }
+        state.mapSelection = id;
+      },
       onOpen: id => openNote(id),
       onOpenRoot: () => beginRename('root'),
       onReparent: (id, parentId, where) => moveNoteTo(id, parentId, where),
@@ -571,6 +586,7 @@
       renderList();
       renderEditor();
     }
+    renderMulti();
   }
 
   /** Zeichnet die aktive Ansicht neu (nach Schliessen des Editors oder Änderungen). */
@@ -647,9 +663,123 @@
       state.mapMatchIndex = -1;
       el.mapMatches.hidden = true;
     }
+    pruneMulti();
     state.map.render(DB.getTree(state.db), { mapTitle: DB.getMapTitle(state.db), matchIds });
     state.map.setSelected(state.mapSelection);
+    state.map.setMulti(state.multi);
     state.mapDirty = false;
+  }
+
+  // ---------- Mehrfachauswahl ----------
+
+  function pruneMulti() {
+    for (const id of [...state.multi]) {
+      const n = DB.getNote(state.db, id);
+      if (!n || n.deleted_at) state.multi.delete(id);
+    }
+  }
+
+  function toggleMulti(id) {
+    if (state.multi.has(id)) state.multi.delete(id); else state.multi.add(id);
+    renderMulti();
+  }
+
+  function clearMulti() {
+    state.multi.clear();
+    renderMulti();
+  }
+
+  function renderMulti() {
+    const n = state.multi.size;
+    el.multiBar.hidden = n === 0 || state.view === 'questions';
+    el.multiCount.textContent = n === 1 ? '1 Notiz ausgewählt' : `${n} Notizen ausgewählt`;
+    if (state.map) state.map.setMulti(state.multi);
+    for (const li of el.list.children) li.classList.toggle('multi', state.multi.has(Number(li.dataset.id)));
+  }
+
+  // ---------- Drucken ----------
+
+  function subtreeCount(id) {
+    const nodes = Exporter.treeOrder(state.db);
+    const byId = new Map(nodes.map(n => [n.id, n]));
+    const count = n => 1 + n.children.reduce((s, c) => s + count(c), 0);
+    const start = byId.get(id);
+    return start ? count(start) : 0;
+  }
+
+  /** Öffnet den Druckdialog. opts: { noteId, scope } */
+  function openPrintDialog(opts) {
+    opts = opts || {};
+    hideContextMenu();
+    closeMenu();
+    const noteId = opts.noteId != null ? opts.noteId : (state.currentId != null && !isHiddenNote(state.currentId) ? state.currentId : (typeof state.mapSelection === 'number' ? state.mapSelection : null));
+    state.printNoteId = noteId;
+    pruneMulti();
+    const note = noteId != null ? DB.getNote(state.db, noteId) : null;
+    const title = note ? (note.title.trim() || 'Ohne Titel') : null;
+    const sub = noteId != null ? subtreeCount(noteId) : 0;
+    const total = DB.countNotes(state.db);
+    const radios = Object.fromEntries([...el.printForm.querySelectorAll('input[name="printScope"]')].map(r => [r.value, r]));
+
+    radios.current.disabled = !note;
+    radios.subtree.disabled = !note || sub <= 1;
+    radios.selection.disabled = state.multi.size === 0;
+    el.printScopeCurrent.textContent = note ? `Diese Notiz: „${title}“` : 'Diese Notiz';
+    el.printScopeSubtree.textContent = note ? `„${title}“ mit Unternotizen (${sub})` : 'Diese Notiz mit Unternotizen';
+    el.printScopeSelection.textContent = state.multi.size ? `Ausgewählte Notizen (${state.multi.size})` : 'Ausgewählte Notizen (keine Auswahl)';
+    el.printScopeAll.textContent = `Alle Notizen (${total})`;
+
+    let scope = opts.scope;
+    if (!scope || radios[scope].disabled) {
+      scope = state.multi.size ? 'selection' : note ? (sub > 1 ? 'subtree' : 'current') : 'all';
+    }
+    radios[scope].checked = true;
+    if (typeof el.printDialog.showModal === 'function') el.printDialog.showModal();
+    else el.printDialog.setAttribute('open', '');
+  }
+
+  function isHiddenNote(id) {
+    const n = DB.getNote(state.db, id);
+    return !n || !!n.deleted_at;
+  }
+
+  function runPrint() {
+    const scope = (el.printForm.querySelector('input[name="printScope"]:checked') || {}).value || 'all';
+    const html = Printer.buildNotesDocument(state.db, {
+      scope: scope === 'current' || scope === 'subtree' ? scope : scope,
+      noteId: state.printNoteId,
+      ids: [...state.multi],
+      withChildren: scope === 'subtree' || (scope === 'selection' && el.printSelectionChildren.checked),
+      includeMap: el.printIncludeMap.checked,
+      includeToc: el.printIncludeToc.checked,
+      pageBreaks: el.printPageBreaks.checked,
+      resolveAttachment: id => attachmentUrl(id),
+    });
+    if (el.printDialog.open) el.printDialog.close();
+    Printer.print(html);
+  }
+
+  function openQaPrintDialog() {
+    hideContextMenu();
+    closeMenu();
+    const shown = DB.listQuestions(state.db, { status: state.qStatus, query: state.qQuery, tag: state.qTag }).length;
+    const label = state.qStatus === 'open' ? 'offene' : state.qStatus === 'answered' ? 'beantwortete' : 'alle';
+    el.qaScopeFiltered.textContent = `Wie angezeigt: ${label} Fragen${state.qTag ? `, Tag „${state.qTag}“` : ''}${state.qQuery.trim() ? `, Suche „${state.qQuery.trim()}“` : ''} (${shown})`;
+    if (typeof el.qaPrintDialog.showModal === 'function') el.qaPrintDialog.showModal();
+    else el.qaPrintDialog.setAttribute('open', '');
+  }
+
+  function runQaPrint() {
+    const scope = (el.qaPrintForm.querySelector('input[name="qaScope"]:checked') || {}).value || 'filtered';
+    const html = Printer.buildQuestionsDocument(state.db, {
+      status: scope === 'filtered' ? state.qStatus : scope,
+      tag: scope === 'filtered' ? state.qTag : '',
+      query: scope === 'filtered' ? state.qQuery.trim() : '',
+      grouped: el.qaGrouped.checked,
+      lines: el.qaLines.checked,
+    });
+    if (el.qaPrintDialog.open) el.qaPrintDialog.close();
+    Printer.print(html);
   }
 
   /** Springt zum nächsten Treffer der Mindmap-Suche. */
@@ -689,7 +819,7 @@
     const frag = document.createDocumentFragment();
     for (const n of notes) {
       const li = document.createElement('li');
-      li.className = 'note-item' + (n.id === state.currentId ? ' active' : '') + (trash ? ' trashed' : '');
+      li.className = 'note-item' + (n.id === state.currentId ? ' active' : '') + (trash ? ' trashed' : '') + (state.multi.has(n.id) ? ' multi' : '');
       li.dataset.id = String(n.id);
       li.tabIndex = 0;
       li.setAttribute('role', 'option');
@@ -1362,6 +1492,7 @@
     if (neighbour) nextInList = Number(neighbour.dataset.id);
 
     DB.deleteNote(state.db, id);
+    state.multi.delete(id);
 
     if (state.currentId === id) {
       state.currentId = state.view === 'list' ? nextInList : null;
@@ -1587,6 +1718,8 @@
         { label: 'Alles ausklappen', action: () => setAllCollapsed(false) },
         { label: 'Alles einklappen', action: () => setAllCollapsed(true) },
         { label: 'Einpassen', key: '0', action: () => state.map.fit() },
+        'sep',
+        { label: 'Alles drucken…', action: () => openPrintDialog({ scope: 'all' }) },
       ], x, y);
       return;
     }
@@ -1600,6 +1733,7 @@
       items.push({ label: info.collapsed ? 'Ausklappen' : 'Einklappen', action: () => toggleCollapse(id) });
     }
     items.push(
+      { label: 'Drucken…', action: () => openPrintDialog({ noteId: id, scope: 'subtree' }) },
       { label: 'Nach oben', key: 'Alt+↑', action: () => { state.mapSelection = id; moveSelected(-1); } },
       { label: 'Nach unten', key: 'Alt+↓', action: () => { state.mapSelection = id; moveSelected(1); } },
       'sep',
@@ -1743,6 +1877,13 @@
     });
     el.preview.addEventListener('click', onPreviewClick);
     el.attachBtn.addEventListener('click', () => { el.attachInput.value = ''; el.attachInput.click(); });
+    el.printBtn.addEventListener('click', () => openPrintDialog({ noteId: state.currentId }));
+    el.mapPrintBtn.addEventListener('click', () => openPrintDialog({}));
+    el.multiPrintBtn.addEventListener('click', () => openPrintDialog({ scope: 'selection' }));
+    el.multiClearBtn.addEventListener('click', clearMulti);
+    el.printGoBtn.addEventListener('click', runPrint);
+    el.qPrintBtn.addEventListener('click', openQaPrintDialog);
+    el.qaPrintGoBtn.addEventListener('click', runQaPrint);
     el.attachInput.addEventListener('change', () => { addAttachments(el.attachInput.files); el.attachInput.value = ''; });
     el.body.addEventListener('paste', e => {
       const items = e.clipboardData && e.clipboardData.items ? [...e.clipboardData.items] : [];
@@ -1772,7 +1913,9 @@
 
     el.list.addEventListener('click', e => {
       const li = e.target.closest('li[data-id]');
-      if (li) selectNote(Number(li.dataset.id), false);
+      if (!li) return;
+      if (e.ctrlKey || e.metaKey) { toggleMulti(Number(li.dataset.id)); return; }
+      selectNote(Number(li.dataset.id), false);
     });
     el.list.addEventListener('keydown', e => {
       const li = e.target.closest('li[data-id]');
@@ -1807,9 +1950,15 @@
       const mod = e.ctrlKey || e.metaKey;
       if (mod && !e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); persistNow(); }
       else if (mod && !e.shiftKey && e.key.toLowerCase() === 'e' && state.currentId != null && !el.editorPane.hidden) { e.preventDefault(); cycleEditorMode(); }
+      else if (mod && !e.shiftKey && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        if (state.view === 'questions' && !isEditorOpen()) openQaPrintDialog();
+        else openPrintDialog({ noteId: isEditorOpen() || state.view === 'list' ? state.currentId : undefined });
+      }
       else if (e.altKey && e.key.toLowerCase() === 'n') { e.preventDefault(); newNote(); }
       else if (e.key === 'Escape') {
-        if (state.rename || el.exportDialog.open) return;
+        if (state.rename || el.exportDialog.open || el.printDialog.open || el.qaPrintDialog.open) return;
+        if (state.multi.size && !isEditorOpen() && el.menu.hidden && el.contextMenu.hidden) { clearMulti(); return; }
         if (!el.contextMenu.hidden) { hideContextMenu(); return; }
         if (!el.menu.hidden) { closeMenu(); return; }
         if (isEditorOpen()) { closeEditor(); return; }

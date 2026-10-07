@@ -1,0 +1,190 @@
+/* NoNotes – Druck: baut aus Notizen bzw. Fragen ein Druckdokument und öffnet den Druckdialog.
+   Der Druckbereich (#printArea) wird nur beim Drucken sichtbar, der Rest der App ausgeblendet. */
+(function (global) {
+  'use strict';
+
+  const DB = () => global.NoNotesDB;
+  const M = () => global.NoNotesMarkdown;
+  const Mindmap = () => global.NoNotesMindmap;
+  const Exporter = () => global.NoNotesExport;
+
+  const fmtDateTime = new Intl.DateTimeFormat('de-CH', { dateStyle: 'medium', timeStyle: 'short' });
+  const fmtDate = iso => { const d = new Date(iso); return isNaN(d) ? '' : fmtDateTime.format(d); };
+  const esc = s => M().escapeHtml(s);
+
+  /** Teilbaum-IDs (inklusive Wurzelknoten) aus der Baumreihenfolge. */
+  function subtreeIds(nodes, id) {
+    const byId = new Map(nodes.map(n => [n.id, n]));
+    const out = [];
+    const walk = n => { out.push(n.id); n.children.forEach(walk); };
+    const start = byId.get(id);
+    if (start) walk(start);
+    return out;
+  }
+
+  /** Löst die gewünschte Auswahl in eine geordnete Liste von Knoten (Baumreihenfolge) auf. */
+  function resolveNotes(db, options) {
+    const nodes = Exporter().treeOrder(db);
+    let wanted;
+    if (options.scope === 'all') {
+      wanted = new Set(nodes.map(n => n.id));
+    } else {
+      const ids = options.scope === 'selection' ? (options.ids || []) : [options.noteId];
+      wanted = new Set();
+      for (const id of ids) {
+        if (id == null) continue;
+        if (options.withChildren) subtreeIds(nodes, id).forEach(x => wanted.add(x));
+        else wanted.add(id);
+      }
+    }
+    const list = nodes.filter(n => wanted.has(n.id));
+    // Überschriftenebene relativ zur gedruckten Menge
+    const level = new Map();
+    for (const n of list) {
+      const parentLevel = n.parentNode && level.has(n.parentNode.id) ? level.get(n.parentNode.id) : 0;
+      level.set(n.id, Math.min(6, parentLevel + 1));
+      n.printLevel = level.get(n.id);
+    }
+    return list;
+  }
+
+  function mapSvgFor(db, list, scope) {
+    const rows = DB().getTree(db);
+    if (scope === 'all') return Mindmap().toSvgString(rows, { mapTitle: DB().getMapTitle(db), expandAll: true });
+    const included = new Set(list.map(n => n.id));
+    const subset = rows.filter(r => included.has(r.id)).map(r => Object.assign({}, r, {
+      parent_id: r.parent_id != null && included.has(r.parent_id) ? r.parent_id : null,
+    }));
+    return Mindmap().toSvgString(subset, { mapTitle: DB().getMapTitle(db), expandAll: true });
+  }
+
+  function metaHtml(db, n, note) {
+    const parts = [];
+    const path = [];
+    let p = n.parentNode;
+    while (p) { path.unshift(p.title.trim() || 'Ohne Titel'); p = p.parentNode; }
+    if (path.length) parts.push(`Pfad: ${esc(path.join(' › '))}`);
+    parts.push(`Erstellt ${esc(fmtDate(note.created_at))} · Geändert ${esc(fmtDate(note.updated_at))}`);
+    const tags = DB().getTags(db, n.id);
+    if (tags.length) parts.push(`Tags: ${esc(tags.join(', '))}`);
+    return `<p class="print-meta">${parts.join(' · ')}</p>`;
+  }
+
+  /** HTML für den Druck von Notizen.
+   *  options: { scope: 'current'|'subtree'|'selection'|'all', noteId, ids, withChildren,
+   *             includeMap, includeToc, pageBreaks, resolveAttachment } */
+  function buildNotesDocument(db, options) {
+    const list = resolveNotes(db, options);
+    const mapTitle = DB().getMapTitle(db);
+    const index = DB().titleIndex(db);
+    const included = new Set(list.map(n => n.id));
+    const title = options.scope === 'all' ? mapTitle
+      : list.length === 1 ? (list[0].title.trim() || 'Ohne Titel')
+      : options.scope === 'subtree' && list.length ? (list[0].title.trim() || 'Ohne Titel')
+      : `${mapTitle}: ${list.length} Notizen`;
+
+    const parts = [];
+    parts.push(`<header class="print-head"><h1>${esc(title)}</h1><p class="print-meta">${esc(mapTitle)} · Gedruckt ${esc(fmtDate(new Date().toISOString()))} · ${list.length === 1 ? '1 Notiz' : list.length + ' Notizen'}</p></header>`);
+    if (options.includeMap && list.length) {
+      parts.push(`<figure class="print-map">${mapSvgFor(db, list, options.scope)}</figure>`);
+    }
+    if (options.includeToc && list.length > 1) {
+      parts.push('<nav class="print-toc"><h2>Inhalt</h2><ul>' + list.map(n =>
+        `<li style="margin-left:${(n.printLevel - 1) * 14}px"><a href="#print-note-${n.id}">${esc(n.title.trim() || 'Ohne Titel')}</a></li>`).join('') + '</ul></nav>');
+    }
+    list.forEach((n, i) => {
+      const note = DB().getNote(db, n.id);
+      const level = Math.min(6, n.printLevel + 1);
+      let body = M().render(note.body, {
+        resolveTitle: t => { const id = index.get(t.trim().toLowerCase()); return id == null ? null : id; },
+        resolveAttachment: options.resolveAttachment,
+      });
+      body = body.replace(/href="#" class="md-wiki" data-title="([^"]*)" data-note-id="(\d+)"/g, (m, t, id) =>
+        included.has(Number(id)) ? `href="#print-note-${id}" class="md-wiki" data-title="${t}" data-note-id="${id}"` : `class="md-wiki plain" data-title="${t}" data-note-id="${id}"`);
+      parts.push(`<section class="print-note${options.pageBreaks && i > 0 ? ' page-break' : ''}" id="print-note-${n.id}">` +
+        `<h${level}>${esc(note.title.trim() || 'Ohne Titel')}</h${level}>` + metaHtml(db, n, note) +
+        `<div class="md">${body}</div></section>`);
+    });
+    if (!list.length) parts.push('<p class="print-meta">Keine Notizen ausgewählt.</p>');
+    return parts.join('\n');
+  }
+
+  /** HTML für den Druck von Fragen und Antworten.
+   *  options: { status: 'open'|'answered'|'all', tag, query, lines, grouped } */
+  function buildQuestionsDocument(db, options) {
+    const rows = DB().listQuestions(db, { status: options.status || 'all', tag: options.tag || '', query: options.query || '' });
+    const mapTitle = DB().getMapTitle(db);
+    const nodes = Exporter().treeOrder(db);
+    const byId = new Map(nodes.map(n => [n.id, n]));
+    const pathOf = id => {
+      const parts = [];
+      let p = byId.get(id) ? byId.get(id).parentNode : null;
+      while (p) { parts.unshift(p.title.trim() || 'Ohne Titel'); p = p.parentNode; }
+      return parts;
+    };
+    const filterText = [
+      options.status === 'open' ? 'offene Fragen' : options.status === 'answered' ? 'beantwortete Fragen' : 'alle Fragen',
+      options.tag ? `Tag „${options.tag}“` : null,
+      options.query ? `Suche „${options.query}“` : null,
+    ].filter(Boolean).join(', ');
+    const open = rows.filter(r => !r.answer).length;
+
+    const item = r => {
+      const answered = !!r.answer;
+      const ruled = !answered && options.lines ? '<div class="print-lines"><span></span><span></span><span></span></div>' : '';
+      return `<div class="print-q ${answered ? 'answered' : 'open'}">` +
+        `<span class="print-mark">${answered ? '✓' : '?'}</span>` +
+        `<div class="print-q-body"><div class="print-q-text">${esc(r.text)}</div>` +
+        (answered ? `<div class="print-a">${esc(r.answer).replace(/\n/g, '<br>')}</div>` : ruled) +
+        `<div class="print-q-meta">${answered && r.answered_at ? 'Beantwortet ' + esc(fmtDate(r.answered_at)) : 'Gestellt ' + esc(fmtDate(r.created_at))}</div></div></div>`;
+    };
+
+    const parts = [];
+    parts.push(`<header class="print-head"><h1>Fragen und Antworten</h1><p class="print-meta">${esc(mapTitle)} · ${esc(filterText)} · ${rows.length} ${rows.length === 1 ? 'Frage' : 'Fragen'}, davon ${open} offen · Gedruckt ${esc(fmtDate(new Date().toISOString()))}</p></header>`);
+    if (!rows.length) {
+      parts.push('<p class="print-meta">Keine Fragen in dieser Auswahl.</p>');
+      return parts.join('\n');
+    }
+    if (options.grouped === false) {
+      parts.push('<section class="print-qgroup">' + rows.map(r => item(r)).join('') + '</section>');
+    } else {
+      const groups = new Map();
+      for (const r of rows) {
+        if (!groups.has(r.note_id)) groups.set(r.note_id, { title: r.note_title, items: [] });
+        groups.get(r.note_id).items.push(r);
+      }
+      for (const [noteId, g] of groups) {
+        const path = pathOf(noteId);
+        parts.push(`<section class="print-qgroup"><h2>${esc(g.title.trim() || 'Ohne Titel')}</h2>` +
+          (path.length ? `<p class="print-meta">${esc(path.join(' › '))}</p>` : '') +
+          g.items.map(r => item(r)).join('') + '</section>');
+      }
+    }
+    return parts.join('\n');
+  }
+
+  /** Zeigt das Dokument im Druckbereich und öffnet den Druckdialog des Browsers. */
+  function print(html) {
+    let area = document.getElementById('printArea');
+    if (!area) {
+      area = document.createElement('div');
+      area.id = 'printArea';
+      document.body.appendChild(area);
+    }
+    area.innerHTML = html;
+    document.body.classList.add('printing');
+    const cleanup = () => {
+      document.body.classList.remove('printing');
+      window.removeEventListener('afterprint', cleanup);
+    };
+    window.addEventListener('afterprint', cleanup);
+    try {
+      window.print();
+    } finally {
+      // Browser blockieren in print(); danach aufräumen, falls afterprint ausbleibt.
+      setTimeout(cleanup, 500);
+    }
+  }
+
+  global.NoNotesPrint = { buildNotesDocument, buildQuestionsDocument, print, resolveNotes };
+})(window);

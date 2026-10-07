@@ -57,6 +57,7 @@
           <button type="button" id="mapFitBtn" title="Alles einpassen (0)">Einpassen</button>
           <button type="button" id="mapZoomOutBtn" title="Verkleinern (−)" aria-label="Verkleinern">−</button>
           <button type="button" id="mapZoomInBtn" title="Vergrössern (+)" aria-label="Vergrössern">+</button>
+          <button type="button" id="mapPrintBtn" title="Drucken (Ctrl+P)">Drucken…</button>
           <input type="search" id="mapSearch" class="map-search" placeholder="Suchen…" aria-label="Notizen durchsuchen" autocomplete="off">
           <span class="map-matches" id="mapMatches" hidden></span>
           <span class="map-hint">Doppelklick öffnet · Rechtsklick für Aktionen · Ziehen hängt um</span>
@@ -75,6 +76,7 @@
           </div>
           <input type="search" id="qSearch" placeholder="Fragen durchsuchen…" aria-label="Fragen durchsuchen" autocomplete="off">
           <select id="qTagFilter" aria-label="Nach Tag filtern"><option value="">Alle Tags</option></select>
+          <button type="button" id="qPrintBtn" title="Fragen und Antworten drucken (Ctrl+P)">Drucken…</button>
           <span class="q-count" id="qCount"></span>
         </div>
         <div class="q-list" id="qList"></div>
@@ -112,6 +114,7 @@
             <button type="button" id="backBtn" class="ghost back-btn" title="Zurück (Esc)">← Zurück</button>
             <nav class="crumbs" id="crumbs" aria-label="Pfad"></nav>
             <span class="meta" id="noteMeta"></span>
+            <button type="button" id="printBtn" class="ghost" title="Diese Notiz drucken (Ctrl+P)">Drucken</button>
             <button type="button" id="childBtn" class="ghost" title="Unternotiz anlegen">+ Unternotiz</button>
             <button type="button" id="deleteBtn" class="ghost danger">Löschen</button>
           </div>
@@ -149,6 +152,61 @@
 
   <div id="contextMenu" class="context-menu" role="menu" hidden></div>
 
+  <div id="multiBar" class="multi-bar" role="status" hidden>
+    <span id="multiCount"></span>
+    <button type="button" id="multiPrintBtn" class="primary">Drucken…</button>
+    <button type="button" id="multiClearBtn">Auswahl aufheben</button>
+  </div>
+
+  <dialog id="printDialog" class="dialog" aria-labelledby="printTitle">
+    <form method="dialog" id="printForm">
+      <h2 id="printTitle">Drucken</h2>
+      <fieldset class="dialog-fieldset">
+        <legend>Umfang</legend>
+        <label class="option compact"><input type="radio" name="printScope" value="current"><span id="printScopeCurrent">Diese Notiz</span></label>
+        <label class="option compact"><input type="radio" name="printScope" value="subtree"><span id="printScopeSubtree">Diese Notiz mit Unternotizen</span></label>
+        <label class="option compact"><input type="radio" name="printScope" value="selection"><span id="printScopeSelection">Ausgewählte Notizen</span></label>
+        <label class="suboption"><input type="checkbox" id="printSelectionChildren"> Unternotizen der Auswahl mitdrucken</label>
+        <label class="option compact"><input type="radio" name="printScope" value="all"><span id="printScopeAll">Alle Notizen</span></label>
+      </fieldset>
+      <fieldset class="dialog-fieldset">
+        <legend>Darstellung</legend>
+        <label class="suboption"><input type="checkbox" id="printIncludeMap" checked> Mindmap-Bild voranstellen</label>
+        <label class="suboption"><input type="checkbox" id="printIncludeToc" checked> Inhaltsverzeichnis</label>
+        <label class="suboption"><input type="checkbox" id="printPageBreaks"> Jede Notiz auf einer neuen Seite</label>
+      </fieldset>
+      <div class="row">
+        <button type="button" id="printGoBtn" class="primary">Drucken</button>
+        <button type="submit" value="cancel" class="ghost">Abbrechen</button>
+      </div>
+      <p class="hint">Im Druckdialog des Browsers lässt sich auch «Als PDF speichern» wählen.</p>
+    </form>
+  </dialog>
+
+  <dialog id="qaPrintDialog" class="dialog" aria-labelledby="qaPrintTitle">
+    <form method="dialog" id="qaPrintForm">
+      <h2 id="qaPrintTitle">Fragen und Antworten drucken</h2>
+      <fieldset class="dialog-fieldset">
+        <legend>Umfang</legend>
+        <label class="option compact"><input type="radio" name="qaScope" value="filtered" checked><span id="qaScopeFiltered">Wie angezeigt</span></label>
+        <label class="option compact"><input type="radio" name="qaScope" value="open"><span>Nur offene Fragen</span></label>
+        <label class="option compact"><input type="radio" name="qaScope" value="answered"><span>Nur beantwortete Fragen</span></label>
+        <label class="option compact"><input type="radio" name="qaScope" value="all"><span>Alle Fragen</span></label>
+      </fieldset>
+      <fieldset class="dialog-fieldset">
+        <legend>Darstellung</legend>
+        <label class="suboption"><input type="checkbox" id="qaGrouped" checked> Nach Notiz gruppieren</label>
+        <label class="suboption"><input type="checkbox" id="qaLines" checked> Linien für handschriftliche Antworten bei offenen Fragen</label>
+      </fieldset>
+      <div class="row">
+        <button type="button" id="qaPrintGoBtn" class="primary">Drucken</button>
+        <button type="submit" value="cancel" class="ghost">Abbrechen</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="printArea" class="print-area" aria-hidden="true"></div>
+
   <dialog id="exportDialog" class="dialog" aria-labelledby="exportTitle">
     <form method="dialog" id="exportForm">
       <h2 id="exportTitle">Als Markdown exportieren</h2>
@@ -184,6 +242,7 @@
   <script src="js/mindmap.js"></script>
   <script src="js/zip.js"></script>
   <script src="js/export.js"></script>
+  <script src="js/print.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

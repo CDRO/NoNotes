@@ -2,8 +2,8 @@
 
 Eine kleine Notiz-App, die **ohne Server, ohne Installation und ohne Adminrechte** läuft.
 Sie öffnet sich als Datei im Browser, ordnet die Notizen als **Mindmap** an, sammelt
-**offene Fragen** aus allen Notizen an einem Ort, versteht **Markdown** und **Tags**,
-**exportiert** alles samt Mindmap-Bild als Markdown und speichert in einer echten
+**offene Fragen** aus allen Notizen an einem Ort, versteht **Markdown**, **Tags** und
+**Bilder**, **druckt** und **exportiert** alles samt Mindmap-Bild und speichert in einer echten
 **SQLite-Datenbank**. Alles, was sie braucht, liegt im entpackten Ordner.
 
 Gebaut für Rechner mit stark eingeschränkten Rechten: Es wird kein Dienst gestartet,
@@ -58,6 +58,20 @@ Weitere Funktionen im Menü **Datenbank**:
 
 Fremde SQLite-Dateien werden beim Öffnen und Importieren abgelehnt.
 
+### Drucken
+
+**Drucken…** gibt es in der Mindmap-Leiste, im Editor, im Kontextmenü eines Knotens und
+mit `Ctrl+P`. Der Dialog fragt den Umfang: nur diese Notiz, diese Notiz mit allen
+Unternotizen, die ausgewählten Notizen (wahlweise mit Unternotizen) oder alle Notizen.
+Dazu wählbar: Mindmap-Bild voranstellen (bei Teilmengen nur der gedruckte Ausschnitt),
+Inhaltsverzeichnis, jede Notiz auf einer neuen Seite. Gedruckt wird die gerenderte Ansicht
+mit Markdown, Bildern, Fragen und Antworten. Im Druckdialog des Browsers lässt sich
+«Als PDF speichern» wählen.
+
+In der Ansicht **Fragen** druckt **Drucken…** (oder `Ctrl+P`) ein Fragen-und-Antworten-Dokument:
+wie angezeigt, nur offene, nur beantwortete oder alle Fragen, nach Notiz gruppiert, auf Wunsch
+mit Linien für handschriftliche Antworten bei offenen Fragen.
+
 ### Export als Markdown
 
 `Datenbank → Als Markdown exportieren…` bietet zwei Formen, jeweils mit dem Bild der
@@ -90,6 +104,7 @@ Die Notizen bilden einen Baum um einen zentralen Knoten, dessen Titel du per Dop
 | Ein-/Ausklappen | Kleiner Kreis am Knoten (zeigt eingeklappt die Anzahl der verborgenen Notizen) oder Rechtsklick. |
 | Löschen | `Entf` oder Rechtsklick → Löschen. Unternotizen rücken zum übergeordneten Knoten auf. |
 | Navigieren | Pfeiltasten wandern durch den Baum. Mausrad zoomt, Ziehen der Fläche verschiebt, `0` oder **Einpassen** zeigt alles. |
+| Mehrere auswählen | `Ctrl`+Klick (oder `Shift`+Klick) sammelt Knoten; die Leiste unten zeigt die Anzahl, bietet **Drucken…** und **Auswahl aufheben** (`Esc`). In der Liste geht `Ctrl`+Klick ebenso. |
 
 ### Liste, Suche, Tags, Papierkorb
 
@@ -153,6 +168,7 @@ einen Index darüber.
 | Fragen | `js/questions.js`: Parser für `?`/`!`-Zeilen; Index in der Tabelle `questions`, bei jeder Änderung abgeglichen |
 | Markdown | `js/markdown.js`: eigener Renderer, escaped allen Text, erlaubt nur sichere Link-Schemata |
 | Export | `js/export.js` baut die Dateien, `js/zip.js` ist ein kleiner ZIP-Writer; das Bild liefert `NoNotesMindmap.toSvgString`, PNG über ein Canvas |
+| Druck | `js/print.js` baut das Druckdokument in `#printArea`; `@media print` blendet den Rest der App aus |
 | Datenbank | [sql.js](https://github.com/sql-js/sql.js) (SQLite nach JavaScript kompiliert) in `vendor/sql.js/`; Schema und Abfragen in `js/db.js` |
 | Persistenz | `js/storage.js`: IndexedDB (ersatzweise localStorage) plus File System Access API für die Datei |
 | Start | `start.ps1` (nur Cmdlets, läuft im Constrained Language Mode), `start.cmd` |
@@ -203,8 +219,8 @@ Für die App selbst ist nichts zu bauen: Dateien ändern, `index.html` neu laden
 Der Smoke-Test öffnet die App wie ein Benutzer per `file://` in headless Chromium und
 prüft Anlegen, Suchen, Speichern, Neuladen, Herunterladen, Importieren, Löschen, das
 Schreiben in die Datenbankdatei, die Mindmap-Bedienung, die Fragen, Markdown-Vorschau, Tags,
-Papierkorb, Suche, Umsortieren per Drag & Drop, Bild-Anhänge, den Export (Ordner und ZIP)
-und die Migration alter Datenbanken:
+Papierkorb, Suche, Umsortieren per Drag & Drop, Bild-Anhänge, den Export (Ordner und ZIP),
+das Drucken (mit gestubbtem `window.print`) und die Migration alter Datenbanken:
 
 ```bash
 npm install
