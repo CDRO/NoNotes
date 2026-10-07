@@ -481,5 +481,67 @@
     };
   }
 
-  global.NoNotesMindmap = { create };
+  // ---------- Eigenständiges SVG für den Export ----------
+
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  /** Rendert die Mindmap als eigenständige SVG-Zeichenkette (helles Farbschema, Stile eingebettet).
+   *  rows wie bei render(); options.mapTitle, options.expandAll (eingeklappte Äste aufklappen). */
+  function toSvgString(rows, options) {
+    options = options || {};
+    const prepared = options.expandAll ? rows.map(r => Object.assign({}, r, { collapsed: 0 })) : rows;
+    const { root, byId } = buildTree(prepared, options.mapTitle || '');
+    for (const n of byId.values()) { n.match = false; n.matchInside = false; }
+    const { placed, bounds } = layoutTree(root);
+    const pad = 32;
+    const width = Math.ceil(bounds.maxX - bounds.minX + 2 * pad);
+    const height = Math.ceil(bounds.maxY - bounds.minY + 2 * pad);
+    const ox = -bounds.minX + pad;
+    const oy = -bounds.minY + pad;
+
+    const c = {
+      bg: '#ffffff', panel: '#ffffff', text: '#1c1e22', muted: '#6b7280', border: '#d7dbe2',
+      accent: '#2563eb', accentContrast: '#ffffff', warn: '#b45309',
+    };
+    const parts = [];
+    parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" font-family="${esc(FONT_FAMILY.replace(/"/g, "'"))}">`);
+    parts.push(`<title>${esc(options.mapTitle || 'Mindmap')}</title>`);
+    parts.push(`<rect width="100%" height="100%" fill="${c.bg}"/>`);
+    parts.push(`<g transform="translate(${ox} ${oy})">`);
+    for (const n of placed) {
+      for (const ch of n.visibleChildren) {
+        const dir = ch.dir;
+        const px = dir > 0 ? n.x + n.w : n.x;
+        const py = n.y + n.h / 2;
+        const cx = dir > 0 ? ch.x : ch.x + ch.w;
+        const cy = ch.y + ch.h / 2;
+        const mx = (px + cx) / 2;
+        parts.push(`<path d="M ${px} ${py} C ${mx} ${py}, ${mx} ${cy}, ${cx} ${cy}" fill="none" stroke="${c.muted}" stroke-opacity="0.55" stroke-width="2"/>`);
+      }
+    }
+    for (const n of placed) {
+      const fill = n.isRoot ? c.accent : c.panel;
+      const stroke = n.isRoot ? c.accent : c.border;
+      const textFill = n.isRoot ? c.accentContrast : c.text;
+      const font = n.isRoot ? '700 16px' : '600 14px';
+      parts.push(`<g transform="translate(${n.x} ${n.y})">`);
+      parts.push(`<rect width="${n.w}" height="${n.h}" rx="${n.isRoot ? 12 : 9}" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>`);
+      parts.push(`<text x="${n.w / 2}" y="${n.h / 2}" text-anchor="middle" dominant-baseline="central" fill="${textFill}" style="font: ${font} ${esc(FONT_FAMILY.replace(/"/g, "'"))}">${esc(n.label)}</text>`);
+      if (!n.isRoot && n.collapsed && n.children.length) {
+        const tx = n.dir > 0 ? n.w + 11 : -11;
+        parts.push(`<g transform="translate(${tx} ${n.h / 2})"><circle r="10" fill="#e3ecfd" stroke="${c.accent}" stroke-width="1.5"/><text text-anchor="middle" dominant-baseline="central" fill="${c.text}" style="font: 600 11px ${esc(FONT_FAMILY.replace(/"/g, "'"))}">${n.hiddenCount}</text></g>`);
+      }
+      if (n.shownBadge > 0) {
+        const bx = n.dir < 0 ? 0 : n.w;
+        parts.push(`<g transform="translate(${bx} 0)"><circle r="9" fill="${c.warn}"/><text text-anchor="middle" dominant-baseline="central" fill="#fff" style="font: 700 11px ${esc(FONT_FAMILY.replace(/"/g, "'"))}">${n.shownBadge > 99 ? '99+' : n.shownBadge}</text></g>`);
+      }
+      parts.push('</g>');
+    }
+    parts.push('</g></svg>');
+    return parts.join('\n');
+  }
+
+  global.NoNotesMindmap = { create, toSvgString };
 })(window);

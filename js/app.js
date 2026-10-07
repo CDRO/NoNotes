@@ -7,6 +7,8 @@
   const Mindmap = window.NoNotesMindmap;
   const Q = window.NoNotesQuestions;
   const M = window.NoNotesMarkdown;
+  const Zip = window.NoNotesZip;
+  const Exporter = window.NoNotesExport;
 
   const DEFAULT_FILENAME = 'NoNotes.sqlite';
   const SAVE_DELAY_MS = 600;
@@ -31,6 +33,8 @@
     editor: $('#editor'), trashBar: $('#trashBar'), restoreBtn: $('#restoreBtn'), purgeBtn: $('#purgeBtn'),
     tagChips: $('#tagChips'), tagInput: $('#tagInput'), tagSuggestions: $('#tagSuggestions'),
     modeSwitch: $('#modeSwitch'), preview: $('#preview'),
+    exportBtn: $('#exportBtn'), exportDialog: $('#exportDialog'), exportForm: $('#exportForm'),
+    exportDirBtn: $('#exportDirBtn'), exportZipBtn: $('#exportZipBtn'), exportHint: $('#exportHint'),
     mapView: $('#mapView'), mapNewBtn: $('#mapNewBtn'), mapFitBtn: $('#mapFitBtn'),
     mapZoomInBtn: $('#mapZoomInBtn'), mapZoomOutBtn: $('#mapZoomOutBtn'),
     mindmap: $('#mindmap'), renameInput: $('#renameInput'), contextMenu: $('#contextMenu'),
@@ -460,6 +464,55 @@
     Store.download(bytes, `NoNotes-${todayStamp()}.sqlite`);
     const dirty = state.editSeq !== state.savedSeq;
     setStatus('Kopie heruntergeladen', dirty ? 'dirty' : 'saved');
+  }
+
+  // ---------- Export ----------
+
+  function openExportDialog() {
+    closeMenu();
+    el.exportDirBtn.hidden = typeof window.showDirectoryPicker !== 'function';
+    el.exportHint.textContent = el.exportDirBtn.hidden
+      ? 'Dieser Browser kann nicht direkt in Ordner schreiben; das ZIP enthält dieselben Dateien.'
+      : '';
+    if (typeof el.exportDialog.showModal === 'function') el.exportDialog.showModal();
+    else el.exportDialog.setAttribute('open', '');
+  }
+
+  function closeExportDialog() {
+    if (el.exportDialog.open) el.exportDialog.close();
+  }
+
+  async function runExport(target) {
+    const mode = (el.exportForm.querySelector('input[name="exportMode"]:checked') || {}).value || 'folder';
+    el.exportHint.textContent = 'Export wird vorbereitet…';
+    el.exportDirBtn.disabled = true;
+    el.exportZipBtn.disabled = true;
+    try {
+      const svg = Exporter.renderSvg(state.db);
+      let png = null;
+      try { png = await Exporter.svgToPng(svg, 2); }
+      catch (e) { console.warn('PNG', e); }
+      const files = Exporter.buildFiles(state.db, { mode, svg, png, version: window.NONOTES_VERSION || 'dev' });
+      const n = files.length;
+      if (target === 'dir') {
+        const dir = await window.showDirectoryPicker({ mode: 'readwrite' });
+        await Exporter.writeToDirectory(dir, files);
+        closeExportDialog();
+        setStatus(`Export gespeichert: ${n} Dateien in „${dir.name}“` + (png ? '' : ' (ohne PNG)'), state.editSeq === state.savedSeq ? 'saved' : 'dirty');
+      } else {
+        const bytes = Zip.create(files);
+        Store.download(bytes, Exporter.suggestedZipName(state.db));
+        closeExportDialog();
+        setStatus(`Export als ZIP heruntergeladen (${n} Dateien)` + (png ? '' : ', ohne PNG'), state.editSeq === state.savedSeq ? 'saved' : 'dirty');
+      }
+    } catch (e) {
+      if (isAbort(e)) { el.exportHint.textContent = ''; return; }
+      console.error(e);
+      el.exportHint.textContent = 'Export fehlgeschlagen: ' + e.message;
+    } finally {
+      el.exportDirBtn.disabled = false;
+      el.exportZipBtn.disabled = false;
+    }
   }
 
   function startImport() {
@@ -1566,6 +1619,9 @@
     el.disconnectBtn.addEventListener('click', disconnectFile);
     el.downloadBtn.addEventListener('click', downloadCopy);
     el.importBtn.addEventListener('click', startImport);
+    el.exportBtn.addEventListener('click', openExportDialog);
+    el.exportDirBtn.addEventListener('click', () => runExport('dir'));
+    el.exportZipBtn.addEventListener('click', () => runExport('zip'));
     el.importInput.addEventListener('change', importFromInput);
 
     document.addEventListener('keydown', e => {
@@ -1574,7 +1630,7 @@
       else if (mod && !e.shiftKey && e.key.toLowerCase() === 'e' && state.currentId != null && !el.editorPane.hidden) { e.preventDefault(); cycleEditorMode(); }
       else if (e.altKey && e.key.toLowerCase() === 'n') { e.preventDefault(); newNote(); }
       else if (e.key === 'Escape') {
-        if (state.rename) return;
+        if (state.rename || el.exportDialog.open) return;
         if (!el.contextMenu.hidden) { hideContextMenu(); return; }
         if (!el.menu.hidden) { closeMenu(); return; }
         if (isEditorOpen()) { closeEditor(); return; }

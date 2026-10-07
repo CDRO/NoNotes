@@ -62,6 +62,31 @@ async function dragNode(page, fromId, toId) {
   await page.mouse.up();
 }
 
+
+/** Liest ein ZIP (Methode Store) und liefert { pfad: Buffer }. */
+function readZip(buf) {
+  let eocd = buf.length - 22;
+  while (eocd >= 0 && buf.readUInt32LE(eocd) !== 0x06054B50) eocd--;
+  assert.ok(eocd >= 0, 'ZIP-Endsignatur gefunden');
+  const count = buf.readUInt16LE(eocd + 10);
+  let cd = buf.readUInt32LE(eocd + 16);
+  const files = {};
+  for (let i = 0; i < count; i++) {
+    assert.equal(buf.readUInt32LE(cd), 0x02014B50, 'Zentralverzeichnis');
+    const nameLen = buf.readUInt16LE(cd + 28), extraLen = buf.readUInt16LE(cd + 30), commentLen = buf.readUInt16LE(cd + 32);
+    const size = buf.readUInt32LE(cd + 24);
+    const localOff = buf.readUInt32LE(cd + 42);
+    const name = buf.subarray(cd + 46, cd + 46 + nameLen).toString('utf8');
+    const lNameLen = buf.readUInt16LE(localOff + 26), lExtraLen = buf.readUInt16LE(localOff + 28);
+    const dataStart = localOff + 30 + lNameLen + lExtraLen;
+    files[name] = buf.subarray(dataStart, dataStart + size);
+    cd += 46 + nameLen + extraLen + commentLen;
+  }
+  return files;
+}
+
+const PNG_MAGIC = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+
 async function waitSaved(page) {
   await page.waitForFunction(SAVED, null, { timeout: 10000 });
 }
@@ -533,6 +558,88 @@ async function main() {
     assert.deepEqual(errors8, [], 'keine Konsolenfehler in Stufe 3');
     await ctx8.close();
     step('Papierkorb: verschieben, wiederherstellen, endgültig löschen');
+
+    // ---------- 9. Export als Markdown: Ordner (nachgebildet) und ZIP ----------
+    const ctx9 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
+    await ctx9.addInitScript(() => {
+      window.__exported = {};
+      const concat = chunks => { const n = chunks.reduce((s, c) => s + c.length, 0); const out = new Uint8Array(n); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; } return out; };
+      const makeDir = prefix => ({
+        kind: 'directory', name: 'Export',
+        getDirectoryHandle: async n => makeDir(prefix + n + '/'),
+        getFileHandle: async n => ({
+          kind: 'file', name: n,
+          createWritable: async () => {
+            const chunks = [];
+            return {
+              write: async d => { chunks.push(new Uint8Array(d)); },
+              close: async () => { window.__exported[prefix + n] = Array.from(concat(chunks)); },
+              abort: async () => {},
+            };
+          },
+        }),
+      });
+      window.showDirectoryPicker = async () => makeDir('');
+    });
+    const { page: page9, errors: errors9 } = await openApp(ctx9, 'list');
+    await page9.click('#newBtn');
+    await page9.fill('#title', 'Planung');
+    await page9.fill('#body', 'Siehe [[Budget]].\n? Offen?');
+    await page9.fill('#tagInput', 'projekt');
+    await page9.keyboard.press('Enter');
+    await waitSaved(page9);
+    await page9.click('#childBtn');
+    await page9.fill('#title', 'Budget');
+    await page9.fill('#body', '? Was kostet es?\n! 20k');
+    await waitSaved(page9);
+
+    await page9.click('#menuBtn');
+    await page9.click('#exportBtn');
+    await page9.waitForSelector('#exportDialog[open]');
+    await page9.click('#exportDirBtn');
+    await page9.waitForFunction(() => /Export gespeichert/.test(document.querySelector('#status').textContent));
+    const exported = await page9.evaluate(() => window.__exported);
+    const names = Object.keys(exported).sort();
+    assert.deepEqual(names, ['index.md', 'mindmap.png', 'mindmap.svg', 'notes/budget.md', 'notes/planung.md']);
+    const text = name => Buffer.from(exported[name]).toString('utf8');
+    const index = text('index.md');
+    assert.match(index, /^# Meine Notizen/);
+    assert.ok(index.includes('![Mindmap](mindmap.svg)'), 'Bild oben in der Übersicht');
+    assert.ok(index.includes('- [Planung](notes/planung.md)\n  - [Budget](notes/budget.md)'), 'Inhaltsverzeichnis in Baumreihenfolge');
+    assert.ok(index.includes('## Offene Fragen') && index.includes('- Offen? — aus [Planung](notes/planung.md)'), 'offene Fragen gelistet');
+    const planung = text('notes/planung.md');
+    assert.ok(planung.includes('Siehe [Budget](budget.md).'), '[[Titel]] wird zum Link');
+    assert.ok(planung.includes('> **Offene Frage:** Offen?'));
+    assert.ok(planung.includes('*Tags: projekt*'));
+    assert.ok(planung.includes('- [Budget](budget.md)'), 'Unternotizen verlinkt');
+    const budget = text('notes/budget.md');
+    assert.ok(budget.includes('*Pfad: Planung*'));
+    assert.ok(budget.includes('> **Frage (beantwortet):** Was kostet es?\n> **Antwort:** 20k'));
+    const svg = text('mindmap.svg');
+    assert.ok(svg.startsWith('<svg') && svg.includes('Planung') && svg.includes('Budget'), 'SVG enthält die Knoten');
+    assert.ok(Buffer.from(exported['mindmap.png']).subarray(0, 8).equals(PNG_MAGIC), 'PNG hat gültige Signatur');
+    step('Export: Ordner mit index.md, Notizen, SVG und PNG');
+
+    await page9.click('#menuBtn');
+    await page9.click('#exportBtn');
+    await page9.waitForSelector('#exportDialog[open]');
+    await page9.check('#exportForm input[value="single"]');
+    const [dl9] = await Promise.all([page9.waitForEvent('download'), page9.click('#exportZipBtn')]);
+    assert.match(dl9.suggestedFilename(), /^NoNotes-meine-notizen-\d{4}-\d{2}-\d{2}\.zip$/);
+    const zipPath = path.join(tmp, 'export.zip');
+    await dl9.saveAs(zipPath);
+    const zip = readZip(fs.readFileSync(zipPath));
+    assert.deepEqual(Object.keys(zip).sort(), ['meine-notizen.md', 'mindmap.png', 'mindmap.svg']);
+    const single = zip['meine-notizen.md'].toString('utf8');
+    assert.ok(single.includes('![Mindmap](mindmap.svg)'));
+    assert.ok(single.includes('- [Planung](#planung)\n  - [Budget](#budget)'));
+    assert.ok(single.includes('<a id="planung"></a>\n\n## Planung') && single.includes('<a id="budget"></a>\n\n### Budget'), 'Abschnitte nach Tiefe');
+    assert.ok(single.includes('Siehe [Budget](#budget).'));
+    assert.ok(zip['mindmap.png'].subarray(0, 8).equals(PNG_MAGIC));
+    assert.ok(zip['mindmap.svg'].toString('utf8').startsWith('<svg'));
+    assert.deepEqual(errors9, [], 'keine Konsolenfehler beim Export');
+    await ctx9.close();
+    step('Export: eine Datei mit Anhängen als ZIP');
 
     console.log('\nSmoke-Test bestanden.');
   } finally {

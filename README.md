@@ -2,9 +2,9 @@
 
 Eine kleine Notiz-App, die **ohne Server, ohne Installation und ohne Adminrechte** läuft.
 Sie öffnet sich als Datei im Browser, ordnet die Notizen als **Mindmap** an, sammelt
-**offene Fragen** aus allen Notizen an einem Ort, versteht **Markdown** und **Tags** und
-speichert alles in einer echten **SQLite-Datenbank**. Alles, was sie braucht, liegt im
-entpackten Ordner.
+**offene Fragen** aus allen Notizen an einem Ort, versteht **Markdown** und **Tags**,
+**exportiert** alles samt Mindmap-Bild als Markdown und speichert in einer echten
+**SQLite-Datenbank**. Alles, was sie braucht, liegt im entpackten Ordner.
 
 Gebaut für Rechner mit stark eingeschränkten Rechten: Es wird kein Dienst gestartet,
 kein Port geöffnet, kein Programm installiert. PowerShell ist optional und auch im
@@ -57,6 +57,21 @@ Weitere Funktionen im Menü **Datenbank**:
 - **Dateiverbindung trennen**: nur noch im Browser-Speicher arbeiten.
 
 Fremde SQLite-Dateien werden beim Öffnen und Importieren abgelehnt.
+
+### Export als Markdown
+
+`Datenbank → Als Markdown exportieren…` bietet zwei Formen, jeweils mit dem Bild der
+Mindmap (`mindmap.svg` und `mindmap.png`), das oben in der Übersicht eingebunden ist:
+
+- **Eine Datei pro Notiz**: `index.md` mit Mindmap, Inhaltsverzeichnis in Baumreihenfolge
+  und der Liste offener Fragen, dazu `notes/<titel>.md` pro Notiz mit Pfad, Datum, Tags,
+  Inhalt und Links zu den Unternotizen.
+- **Alles in einer Datei**: eine Markdown-Datei mit dem Bild oben, Inhaltsverzeichnis und
+  allen Notizen als Abschnitte (Tiefe = Überschriftenebene); die Bilder liegen als Anhänge daneben.
+
+Fragen und Antworten werden zu Zitatblöcken (`> **Offene Frage:** …`, `> **Antwort:** …`),
+`[[Titel]]` zu normalen Markdown-Links. Ziel ist wahlweise ein Ordner deiner Wahl (Edge und
+andere Chromium-Browser) oder ein ZIP zum Herunterladen.
 
 ## Bedienung
 
@@ -132,6 +147,7 @@ einen Index darüber.
 | Mindmap | `js/mindmap.js`: eigenes Layout (links/rechts ausbalanciert), SVG, Zoom, Ziehen, Tastatur |
 | Fragen | `js/questions.js`: Parser für `?`/`!`-Zeilen; Index in der Tabelle `questions`, bei jeder Änderung abgeglichen |
 | Markdown | `js/markdown.js`: eigener Renderer, escaped allen Text, erlaubt nur sichere Link-Schemata |
+| Export | `js/export.js` baut die Dateien, `js/zip.js` ist ein kleiner ZIP-Writer; das Bild liefert `NoNotesMindmap.toSvgString`, PNG über ein Canvas |
 | Datenbank | [sql.js](https://github.com/sql-js/sql.js) (SQLite nach JavaScript kompiliert) in `vendor/sql.js/`; Schema und Abfragen in `js/db.js` |
 | Persistenz | `js/storage.js`: IndexedDB (ersatzweise localStorage) plus File System Access API für die Datei |
 | Start | `start.ps1` (nur Cmdlets, läuft im Constrained Language Mode), `start.cmd` |
@@ -178,7 +194,7 @@ Für die App selbst ist nichts zu bauen: Dateien ändern, `index.html` neu laden
 Der Smoke-Test öffnet die App wie ein Benutzer per `file://` in headless Chromium und
 prüft Anlegen, Suchen, Speichern, Neuladen, Herunterladen, Importieren, Löschen, das
 Schreiben in die Datenbankdatei, die Mindmap-Bedienung, die Fragen, Markdown-Vorschau, Tags,
-Papierkorb, Suche und die Migration alter Datenbanken:
+Papierkorb, Suche, den Export (Ordner und ZIP) und die Migration alter Datenbanken:
 
 ```bash
 npm install
