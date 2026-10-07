@@ -1,0 +1,78 @@
+name: Testen und paketieren
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Smoke-Test und ZIP
+    runs-on: ubuntu-latest
+    steps:
+      - name: Code holen
+        uses: actions/checkout@v4
+
+      - name: Node einrichten
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Abhängigkeiten installieren (nur für den Test)
+        run: npm ci
+
+      - name: Chromium für Playwright installieren
+        run: npx playwright install --with-deps chromium
+
+      - name: Smoke-Test (App per file:// in Chromium)
+        run: npm test
+
+      - name: Version bestimmen
+        id: version
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="dev-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Version: ${VERSION}"
+
+      - name: Version in die App schreiben
+        run: |
+          printf "// Von GitHub Actions gesetzt.\nwindow.NONOTES_VERSION = '%s';\n" "${{ steps.version.outputs.version }}" > js/version.js
+          cat js/version.js
+
+      - name: ZIP bauen
+        run: |
+          set -euo pipefail
+          STAGE="dist/NoNotes"
+          mkdir -p "$STAGE"
+          cp -r index.html css js vendor start.ps1 start.cmd README.md "$STAGE/"
+          # Dateien aus dem Vendor-Ordner, die zur Laufzeit nicht gebraucht werden, bleiben draussen
+          rm -f "$STAGE"/vendor/sql.js/*.zip
+          (cd "$STAGE" && zip -r -X "../NoNotes-${{ steps.version.outputs.version }}.zip" .)
+          ls -la dist
+          unzip -l dist/NoNotes-*.zip
+
+      - name: ZIP als Artefakt bereitstellen
+        uses: actions/upload-artifact@v4
+        with:
+          name: NoNotes-${{ steps.version.outputs.version }}
+          path: dist/NoNotes-*.zip
+          if-no-files-found: error
+
+      - name: Release anlegen (nur bei Tag)
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/NoNotes-*.zip \
+            --title "NoNotes ${GITHUB_REF_NAME}" \
+            --generate-notes

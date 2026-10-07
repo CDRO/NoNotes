@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="NoNotes – lokale Notizen, gespeichert in einer SQLite-Datei. Läuft ohne Server direkt im Browser.">
+  <title>NoNotes</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Ctext x='16' y='22' font-family='system-ui,sans-serif' font-size='18' font-weight='700' fill='white' text-anchor='middle'%3EN%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body data-ready="false">
+
+  <div id="app" class="app" hidden>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">N</span>
+        <span>NoNotes</span>
+        <span class="version" id="version"></span>
+      </div>
+      <div class="status" id="status" aria-live="polite" data-state=""></div>
+      <div class="storage" id="storageInfo" title="">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="label"></span>
+      </div>
+      <div class="menu">
+        <button type="button" id="menuBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="menu">Datenbank ▾</button>
+        <div id="menu" class="menu-panel" role="menu" hidden>
+          <button type="button" id="createFileBtn" role="menuitem">Datenbankdatei anlegen…</button>
+          <button type="button" id="openFileBtn" role="menuitem">Datenbankdatei öffnen…</button>
+          <button type="button" id="disconnectBtn" role="menuitem">Dateiverbindung trennen</button>
+          <div class="sep" role="separator"></div>
+          <button type="button" id="downloadBtn" role="menuitem">Kopie herunterladen (.sqlite)</button>
+          <button type="button" id="importBtn" role="menuitem">Aus Datei importieren…</button>
+          <div class="sep" role="separator"></div>
+          <div class="hint" id="menuHint"></div>
+        </div>
+      </div>
+    </header>
+
+    <div id="banner" class="banner" role="status" hidden></div>
+
+    <main class="layout">
+      <aside class="sidebar" aria-label="Notizliste">
+        <div class="sidebar-tools">
+          <input type="search" id="search" placeholder="Suchen…" aria-label="Notizen durchsuchen" autocomplete="off">
+          <button type="button" id="newBtn" class="primary" title="Neue Notiz (Alt+N)">Neue Notiz</button>
+        </div>
+        <ul id="list" class="note-list" role="listbox" aria-label="Notizen"></ul>
+        <div id="listEmpty" class="empty" hidden></div>
+        <div class="sidebar-foot" id="count"></div>
+      </aside>
+
+      <section class="editor" aria-label="Editor">
+        <div id="editorEmpty" class="empty editor-empty">
+          Wähle links eine Notiz oder lege eine neue an.
+        </div>
+        <div id="editorPane" hidden>
+          <div class="editor-bar">
+            <button type="button" id="backBtn" class="ghost only-narrow">← Zurück</button>
+            <span class="meta" id="noteMeta"></span>
+            <button type="button" id="deleteBtn" class="ghost danger">Löschen</button>
+          </div>
+          <input type="text" id="title" class="title" placeholder="Titel" aria-label="Titel" autocomplete="off" spellcheck="true">
+          <textarea id="body" class="body" placeholder="Notiz…" aria-label="Inhalt" spellcheck="true"></textarea>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="boot" class="boot">Lade NoNotes…</div>
+
+  <input type="file" id="importInput" accept=".sqlite,.sqlite3,.db,application/vnd.sqlite3,application/x-sqlite3" hidden>
+
+  <script src="js/version.js"></script>
+  <script src="vendor/sql.js/sql-asm.js"></script>
+  <script src="js/db.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

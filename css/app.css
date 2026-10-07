@@ -1,0 +1,286 @@
+/* NoNotes – Stylesheet. Keine externen Schriften, läuft offline. */
+
+:root {
+  --bg: #f4f5f7;
+  --panel: #ffffff;
+  --text: #1c1e22;
+  --muted: #6b7280;
+  --border: #e2e5ea;
+  --accent: #2563eb;
+  --accent-contrast: #ffffff;
+  --danger: #b4350f;
+  --ok: #15803d;
+  --warn: #b45309;
+  --hover: #eef1f5;
+  --active: #e3ecfd;
+  --radius: 10px;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .06), 0 10px 28px rgba(0, 0, 0, .08);
+  --sidebar-w: 320px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101216;
+    --panel: #171a20;
+    --text: #e7e9ee;
+    --muted: #98a2b3;
+    --border: #262b34;
+    --accent: #6ea8fe;
+    --accent-contrast: #0b1220;
+    --danger: #fb923c;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --hover: #1e232c;
+    --active: #1d2a45;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 28px rgba(0, 0, 0, .5);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; margin: 0; }
+
+body {
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+[hidden] { display: none !important; }
+
+/* ---------- Grundgerüst ---------- */
+
+.app { display: flex; flex-direction: column; height: 100%; }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 16px; white-space: nowrap; }
+
+.logo {
+  width: 28px; height: 28px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  display: grid; place-items: center;
+  font-weight: 700;
+}
+
+.version { color: var(--muted); font-weight: 400; font-size: 12px; }
+
+.status {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status[data-state="dirty"] { color: var(--text); }
+.status[data-state="saving"] { color: var(--muted); }
+.status[data-state="error"] { color: var(--danger); font-weight: 600; }
+
+.storage { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+.storage .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.storage.connected .dot { background: var(--ok); }
+.storage.pending .dot { background: var(--warn); }
+.storage.connected .label { color: var(--text); }
+
+/* ---------- Menü ---------- */
+
+.menu { position: relative; }
+
+.menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 280px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  z-index: 20;
+}
+.menu-panel button {
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+.menu-panel button:hover { background: var(--hover); }
+.menu-panel .sep { height: 1px; background: var(--border); margin: 6px 0; }
+.menu-panel .hint { font-size: 12px; color: var(--muted); padding: 2px 10px 6px; line-height: 1.4; }
+
+/* ---------- Hinweisleiste ---------- */
+
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 16px;
+  background: var(--active);
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+.banner .actions { margin-left: auto; display: flex; gap: 8px; }
+
+/* ---------- Layout ---------- */
+
+.layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  min-height: 0;
+}
+
+.sidebar {
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.sidebar-tools { display: flex; gap: 8px; padding: 12px; border-bottom: 1px solid var(--border); }
+.sidebar-tools input { flex: 1; min-width: 0; }
+
+/* ---------- Formularelemente ---------- */
+
+input[type="search"], input[type="text"], textarea {
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+input::placeholder, textarea::placeholder { color: var(--muted); opacity: .8; }
+
+input:focus, textarea:focus, button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+button:hover { background: var(--hover); }
+button.primary { background: var(--accent); color: var(--accent-contrast); border-color: transparent; font-weight: 600; }
+button.primary:hover { filter: brightness(1.08); }
+button.ghost { border-color: transparent; background: transparent; }
+button.ghost:hover { background: var(--hover); }
+button.danger { color: var(--danger); }
+
+/* ---------- Notizliste ---------- */
+
+.note-list { list-style: none; margin: 0; padding: 6px; overflow: auto; flex: 1; }
+
+.note-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: grid;
+  gap: 2px;
+}
+.note-item:hover { background: var(--hover); }
+.note-item.active { background: var(--active); }
+.note-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note-snippet { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note-date { color: var(--muted); font-size: 12px; }
+
+.sidebar-foot { padding: 8px 12px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+
+.empty { color: var(--muted); padding: 24px 16px; text-align: center; line-height: 1.5; }
+
+/* ---------- Editor ---------- */
+
+.editor { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.editor-empty { margin: auto; }
+
+#editorPane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  min-width: 0;
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 16px 24px 20px;
+  gap: 10px;
+}
+
+.editor-bar { display: flex; align-items: center; gap: 10px; }
+.editor-bar .meta { color: var(--muted); font-size: 12px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.title, .body { width: 100%; min-width: 0; }
+
+.title {
+  font-size: 22px;
+  font-weight: 600;
+  background: transparent;
+  border-color: transparent;
+  padding-left: 6px;
+}
+.title:hover { border-color: var(--border); }
+.title:focus { background: var(--panel); border-color: var(--border); }
+
+.body {
+  flex: 1;
+  resize: none;
+  font-size: 16px;
+  line-height: 1.65;
+  background: var(--panel);
+  min-height: 200px;
+  padding: 14px 16px;
+}
+
+.only-narrow { display: none; }
+
+/* ---------- Ladebildschirm ---------- */
+
+.boot {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  padding: 24px;
+  text-align: center;
+  white-space: pre-wrap;
+}
+.boot.error { color: var(--danger); }
+
+/* ---------- Schmale Bildschirme ---------- */
+
+@media (max-width: 760px) {
+  .layout { grid-template-columns: 1fr; }
+  .only-narrow { display: inline-block; }
+  .editor { display: none; }
+  body.view-editor .editor { display: flex; }
+  body.view-editor .sidebar { display: none; }
+  .status { display: none; }
+  .storage .label { display: none; }
+  #editorPane { padding: 12px; }
+  .topbar { gap: 10px; }
+}
