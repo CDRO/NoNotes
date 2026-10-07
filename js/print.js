@@ -163,6 +163,43 @@
     return parts.join('\n');
   }
 
+  /** HTML für den Druck von Aufgaben als Checkliste.
+   *  options: { status: 'open'|'done'|'all', tag, query, groupBy: 'due'|'note' } */
+  function buildTasksDocument(db, options) {
+    const T = global.NoNotesTasks;
+    const rows = DB().listTasks(db, { status: options.status || 'all', tag: options.tag || '', query: options.query || '', sort: options.groupBy === 'note' ? 'note' : 'due' });
+    const mapTitle = DB().getMapTitle(db);
+    const today = T.todayIso();
+    const filterText = [
+      options.status === 'open' ? 'offene Aufgaben' : options.status === 'done' ? 'erledigte Aufgaben' : 'alle Aufgaben',
+      options.tag ? `Tag „${options.tag}“` : null,
+      options.query ? `Suche „${options.query}“` : null,
+    ].filter(Boolean).join(', ');
+    const open = rows.filter(r => !r.done).length;
+    const item = r => {
+      const u = r.done ? 'none' : T.urgency(r.due, today);
+      const meta = [r.due ? `bis ${T.formatDue(r.due)}` : null, options.groupBy === 'note' ? null : (r.note_title.trim() || 'Ohne Titel'), r.done && r.done_at ? `erledigt ${fmtDate(r.done_at)}` : null].filter(Boolean).join(' · ');
+      return `<div class="print-task ${r.done ? 'done' : 'open'}"><span class="print-box" aria-hidden="true"></span>` +
+        `<span class="print-task-text">${esc(r.text)}</span>` +
+        (meta ? `<span class="print-task-meta${u === 'overdue' ? ' overdue' : ''}">${esc(meta)}</span>` : '') + '</div>';
+    };
+    const parts = [];
+    parts.push(`<header class="print-head"><h1>Aufgaben</h1><p class="print-meta">${esc(mapTitle)} · ${esc(filterText)} · ${rows.length} ${rows.length === 1 ? 'Aufgabe' : 'Aufgaben'}, davon ${open} offen · Gedruckt ${esc(fmtDate(new Date().toISOString()))}</p></header>`);
+    if (!rows.length) { parts.push('<p class="print-meta">Keine Aufgaben in dieser Auswahl.</p>'); return parts.join('\n'); }
+    const groups = new Map();
+    const labels = { overdue: 'Überfällig', today: 'Heute', week: 'Diese Woche', later: 'Später', none: 'Ohne Termin', done: 'Erledigt' };
+    for (const r of rows) {
+      const key = options.groupBy === 'note' ? `n${r.note_id}` : (r.done ? 'done' : T.urgency(r.due, today));
+      const title = options.groupBy === 'note' ? (r.note_title.trim() || 'Ohne Titel') : labels[key];
+      if (!groups.has(key)) groups.set(key, { title, items: [] });
+      groups.get(key).items.push(r);
+    }
+    for (const g of groups.values()) {
+      parts.push(`<section class="print-qgroup"><h2>${esc(g.title)}</h2>${g.items.map(item).join('')}</section>`);
+    }
+    return parts.join('\n');
+  }
+
   /** Zeigt das Dokument im Druckbereich und öffnet den Druckdialog des Browsers. */
   function print(html) {
     let area = document.getElementById('printArea');
@@ -186,5 +223,5 @@
     }
   }
 
-  global.NoNotesPrint = { buildNotesDocument, buildQuestionsDocument, print, resolveNotes };
+  global.NoNotesPrint = { buildNotesDocument, buildQuestionsDocument, buildTasksDocument, print, resolveNotes };
 })(window);

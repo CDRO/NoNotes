@@ -143,7 +143,7 @@
 
   function render(markdown, options) {
     options = options || {};
-    const ctx = { text: makeText(options.highlight), resolveTitle: options.resolveTitle, resolveAttachment: options.resolveAttachment };
+    const ctx = { text: makeText(options.highlight), resolveTitle: options.resolveTitle, resolveAttachment: options.resolveAttachment, interactiveTasks: !!options.interactiveTasks };
     const lines = String(markdown || '').replace(/\r\n?/g, '\n').split('\n');
     const out = [];
     let i = 0;
@@ -249,7 +249,7 @@
       let task = null;
       const t = /^\[( |x|X)\]\s+(.*)$/.exec(text);
       if (t) { task = t[1] !== ' '; text = t[2]; }
-      items.push({ indent: m[1].length, ordered: /\d/.test(m[2]), text: renderInline(text, ctx), task });
+      items.push({ indent: m[1].length, ordered: /\d/.test(m[2]), text: renderInline(text, ctx), task, line: i });
       i++;
     }
 
@@ -268,8 +268,8 @@
       } else {
         html += '</li>';
       }
-      const box = item.task == null ? '' : `<input type="checkbox" disabled${item.task ? ' checked' : ''}> `;
-      html += `<li${item.task == null ? '' : ' class="task"'}>${box}${item.text}`;
+      const box = item.task == null ? '' : `<input type="checkbox"${ctx.interactiveTasks ? '' : ' disabled'}${item.task ? ' checked' : ''} aria-label="${item.task ? 'erledigt' : 'offen'}"> `;
+      html += `<li${item.task == null ? '' : ` class="task${item.task ? ' done' : ''}" data-line="${item.line}"`}>${box}${item.text}`;
     }
     while (stack.length) { html += '</li>'; close(); }
     out.push(html);

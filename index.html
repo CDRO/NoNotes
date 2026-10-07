@@ -23,6 +23,7 @@
         <button type="button" id="viewMapBtn" role="tab" data-view="map" aria-selected="true">Mindmap</button>
         <button type="button" id="viewListBtn" role="tab" data-view="list" aria-selected="false">Liste</button>
         <button type="button" id="viewQuestionsBtn" role="tab" data-view="questions" aria-selected="false">Fragen</button>
+        <button type="button" id="viewTasksBtn" role="tab" data-view="tasks" aria-selected="false">Aufgaben</button>
       </div>
 
       <div class="status" id="status" aria-live="polite" data-state=""></div>
@@ -84,6 +85,27 @@
         </div>
         <div class="q-list" id="qList"></div>
         <div class="empty" id="qEmpty" hidden></div>
+      </section>
+
+      <!-- Aufgaben -->
+      <section class="questions-view tasks-view" id="tasksView" aria-label="Aufgaben">
+        <div class="q-toolbar">
+          <div class="segmented" id="tFilter" role="tablist" aria-label="Filter">
+            <button type="button" role="tab" data-status="open" aria-selected="true">Offen</button>
+            <button type="button" role="tab" data-status="all" aria-selected="false">Alle</button>
+            <button type="button" role="tab" data-status="done" aria-selected="false">Erledigt</button>
+          </div>
+          <select id="tSort" aria-label="Sortierung">
+            <option value="due">Nach Fälligkeit</option>
+            <option value="note">Nach Notiz</option>
+          </select>
+          <input type="search" id="tSearch" placeholder="Aufgaben durchsuchen…" aria-label="Aufgaben durchsuchen" autocomplete="off">
+          <select id="tTagFilter" aria-label="Nach Tag filtern"><option value="">Alle Tags</option></select>
+          <button type="button" id="tPrintBtn" title="Aufgaben als Checkliste drucken (Ctrl+P)">Drucken…</button>
+          <span class="q-count" id="tCount"></span>
+        </div>
+        <div class="q-list" id="tList"></div>
+        <div class="empty" id="tEmpty" hidden></div>
       </section>
 
       <!-- Liste -->
@@ -235,6 +257,28 @@
     </form>
   </dialog>
 
+  <dialog id="taskPrintDialog" class="dialog" aria-labelledby="taskPrintTitle">
+    <form method="dialog" id="taskPrintForm">
+      <h2 id="taskPrintTitle">Aufgaben drucken</h2>
+      <fieldset class="dialog-fieldset">
+        <legend>Umfang</legend>
+        <label class="option compact"><input type="radio" name="taskScope" value="filtered" checked><span id="taskScopeFiltered">Wie angezeigt</span></label>
+        <label class="option compact"><input type="radio" name="taskScope" value="open"><span>Nur offene Aufgaben</span></label>
+        <label class="option compact"><input type="radio" name="taskScope" value="done"><span>Nur erledigte Aufgaben</span></label>
+        <label class="option compact"><input type="radio" name="taskScope" value="all"><span>Alle Aufgaben</span></label>
+      </fieldset>
+      <fieldset class="dialog-fieldset">
+        <legend>Gruppierung</legend>
+        <label class="option compact"><input type="radio" name="taskGroup" value="due" checked><span>Nach Fälligkeit (Überfällig, Heute, Diese Woche, Später, Ohne Termin)</span></label>
+        <label class="option compact"><input type="radio" name="taskGroup" value="note"><span>Nach Notiz</span></label>
+      </fieldset>
+      <div class="row">
+        <button type="button" id="taskPrintGoBtn" class="primary">Drucken</button>
+        <button type="submit" value="cancel" class="ghost">Abbrechen</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="helpDialog" class="dialog dialog-wide" aria-labelledby="helpTitle">
     <form method="dialog" class="help">
       <div class="help-head">
@@ -257,7 +301,7 @@
             <tr><td>Durchgestrichen</td><td><code>~~alt~~</code></td><td><del>alt</del></td></tr>
             <tr><td>Code</td><td><code>`befehl`</code>, Block mit <code>```</code> davor und danach</td><td><code>befehl</code></td></tr>
             <tr><td>Liste</td><td><code>- Punkt</code> oder <code>1. Punkt</code>, eingerückt für Unterpunkte</td><td>• Punkt</td></tr>
-            <tr><td>Aufgabe</td><td><code>- [ ] offen</code>, <code>- [x] erledigt</code></td><td>☐ offen · ☑ erledigt</td></tr>
+            <tr><td>Aufgabe</td><td><code>- [ ] offen</code>, <code>- [x] erledigt</code>, Termin am Ende: <code>- [ ] Offerte einholen @15.10.2026</code></td><td>☐ offen · ☑ erledigt. Erscheint in der Ansicht «Aufgaben», abhaken dort, in der Vorschau oder im Text.</td></tr>
             <tr><td>Zitat</td><td><code>&gt; Text</code></td><td><em>│ Text</em></td></tr>
             <tr><td>Link</td><td><code>[Google](https://google.com)</code>, Adressen wie <code>www.google.com</code> werden automatisch verlinkt</td><td><u>Google</u></td></tr>
             <tr><td>Bild aus dem Web</td><td><code>![Beschreibung](https://…/bild.png)</code></td><td>Bild</td></tr>
@@ -297,6 +341,7 @@
               <dt><kbd>Ctrl</kbd>+<kbd>S</kbd></dt><dd>Sofort speichern</dd>
               <dt><kbd>Ctrl</kbd>+<kbd>P</kbd></dt><dd>Drucken (in «Fragen»: Fragen und Antworten)</dd>
               <dt><kbd>Alt</kbd>+<kbd>N</kbd></dt><dd>Neue Notiz</dd>
+              <dt><kbd>/</kbd></dt><dd>Suche der aktuellen Ansicht starten</dd>
               <dt><kbd>F1</kbd></dt><dd>Diese Hilfe</dd>
             </dl>
           </div>
@@ -373,6 +418,7 @@
   <script src="js/version.js"></script>
   <script src="vendor/sql.js/sql-asm.js"></script>
   <script src="js/questions.js"></script>
+  <script src="js/tasks.js"></script>
   <script src="js/markdown.js"></script>
   <script src="js/editing.js"></script>
   <script src="js/db.js"></script>

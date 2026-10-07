@@ -23,7 +23,7 @@ const { chromium } = loadPlaywright();
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '5'; // muss zu js/db.js passen
+const SCHEMA_VERSION = '6'; // muss zu js/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 function watchErrors(page) {
@@ -930,6 +930,132 @@ async function main() {
     assert.deepEqual(errors13, [], 'keine Konsolenfehler in Toolleiste und Hilfe');
     await ctx13.close();
     step('Hilfe: Reiter Editor, Tastenkürzel, Datenablage; F1 und Menü');
+
+    // ---------- 14. Aufgaben: Syntax, zentrale Liste, Abhaken, Marker, Druck, Export, Suche per / ----------
+    const ctx14 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
+    await ctx14.addInitScript(() => {
+      window.__printed = [];
+      window.print = () => { window.__printed.push(document.getElementById('printArea').innerHTML); };
+      window.__exported = {};
+      const concat = chunks => { const n = chunks.reduce((s, c) => s + c.length, 0); const out = new Uint8Array(n); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; } return out; };
+      const makeDir = prefix => ({ kind: 'directory', name: 'Export', getDirectoryHandle: async n => makeDir(prefix + n + '/'), getFileHandle: async n => ({ kind: 'file', name: n, createWritable: async () => { const chunks = []; return { write: async d => { chunks.push(new Uint8Array(d)); }, close: async () => { window.__exported[prefix + n] = Array.from(concat(chunks)); }, abort: async () => {} }; } }) });
+      window.showDirectoryPicker = async () => makeDir('');
+    });
+    const { page: page14, errors: errors14 } = await openApp(ctx14, 'list');
+    await page14.click('#newBtn');
+    await page14.fill('#title', 'Umbau');
+    await page14.fill('#body', 'Plan\n- [ ] Elektriker anrufen @01.01.2020\n- [ ] Offerten einholen\n- [x] Baubewilligung\n? Frage?');
+    await page14.fill('#tagInput', 'projekt');
+    await page14.keyboard.press('Enter');
+    await waitSaved(page14);
+    assert.match(await page14.locator('#viewTasksBtn').innerText(), /Aufgaben\s*2/);
+    assert.equal(await page14.locator('#viewTasksBtn .count.overdue').count(), 1, 'überfällig hervorgehoben');
+    await page14.click('#viewMapBtn');
+    await page14.waitForSelector('body.view-map');
+    const umbauId = await idOfNode(page14, 'Umbau');
+    assert.equal(await page14.locator(`.mm-node[data-id="${umbauId}"] .mm-tbadge text`).textContent(), '2', 'Aufgaben-Marker am Knoten');
+    assert.equal(await page14.locator(`.mm-node[data-id="${umbauId}"] .mm-badge text`).textContent(), '1', 'Fragen-Marker bleibt');
+    step('Aufgaben: Syntax erkannt, Zähler und Marker');
+
+    await page14.click('#viewTasksBtn');
+    await page14.waitForSelector('body.view-tasks');
+    await page14.waitForFunction(() => document.querySelectorAll('.t-item').length === 2);
+    assert.deepEqual(await page14.locator('#tList .q-note').allInnerTexts().then(a => a.map(t => t.split('\n')[0].replace(/\s*\d+ Aufgaben?$/, '').trim())), ['Überfällig', 'Ohne Termin']);
+    assert.equal(await page14.locator('.t-item .due.overdue').count(), 1);
+    await page14.click('#tFilter button[data-status="all"]');
+    await page14.waitForFunction(() => document.querySelectorAll('.t-item').length === 3);
+    await page14.click('#tFilter button[data-status="done"]');
+    await page14.waitForFunction(() => document.querySelectorAll('.t-item').length === 1);
+    assert.match(await page14.locator('.t-item.done .q-text').innerText(), /Baubewilligung/);
+    await page14.click('#tFilter button[data-status="open"]');
+    await page14.waitForFunction(() => document.querySelectorAll('.t-item').length === 2);
+    await page14.fill('#tSearch', 'elektr');
+    await page14.waitForFunction(() => document.querySelectorAll('.t-item').length === 1);
+    await page14.fill('#tSearch', '');
+    await page14.waitForFunction(() => document.querySelectorAll('.t-item').length === 2);
+    await page14.selectOption('#tSort', 'note');
+    await page14.waitForFunction(() => document.querySelector('#tList .q-note button') && document.querySelector('#tList .q-note button').textContent === 'Umbau');
+    await page14.selectOption('#tSort', 'due');
+    step('Aufgaben: Liste mit Filter, Gruppen nach Fälligkeit, Suche, Sortierung');
+
+    // Abhaken in der Liste schreibt in den Text
+    await page14.locator('.t-item', { hasText: 'Offerten einholen' }).locator('.t-check').click();
+    await page14.waitForFunction(() => document.querySelectorAll('.t-item').length === 1);
+    await waitSaved(page14);
+    assert.match(await page14.locator('#viewTasksBtn').innerText(), /Aufgaben\s*1/);
+    await page14.locator('.t-item').first().locator('button:has-text("Zur Notiz")').click();
+    await page14.waitForSelector('body.editor-open');
+    assert.equal(await page14.inputValue('#body'), 'Plan\n- [ ] Elektriker anrufen @01.01.2020\n- [x] Offerten einholen\n- [x] Baubewilligung\n? Frage?');
+    // Kästchen in der Vorschau
+    await page14.click('#modeSwitch button[data-mode="preview"]');
+    await page14.waitForSelector('#preview li.task[data-line="2"] input');
+    await page14.click('#preview li.task[data-line="2"] input');
+    await page14.waitForFunction(() => document.querySelector('#body').value.includes('- [ ] Offerten einholen'));
+    await page14.click('#preview li.task[data-line="1"] input');
+    await page14.waitForFunction(() => document.querySelector('#body').value.includes('- [x] Elektriker anrufen'));
+    await waitSaved(page14);
+    await page14.click('#modeSwitch button[data-mode="edit"]');
+    await page14.keyboard.press('Escape');
+    await page14.waitForSelector('body:not(.editor-open)');
+    await page14.waitForFunction(() => document.querySelectorAll('.t-item').length === 1 && /Offerten/.test(document.querySelector('.t-item .q-text').textContent));
+    step('Aufgaben: Abhaken in Liste und Vorschau landet im Text');
+
+    // Suche per "/"
+    await page14.keyboard.press('/');
+    assert.equal(await page14.evaluate(() => document.activeElement && document.activeElement.id), 'tSearch');
+    await page14.keyboard.press('Escape');
+    await page14.click('#viewMapBtn');
+    await page14.waitForSelector('body.view-map');
+    await page14.click('#mindmap', { position: { x: 30, y: 700 } });
+    await page14.keyboard.press('/');
+    assert.equal(await page14.evaluate(() => document.activeElement && document.activeElement.id), 'mapSearch');
+    await page14.keyboard.type('umb');
+    await page14.waitForFunction(() => document.querySelectorAll('.mm-node.mm-match').length === 1, null, {});
+    assert.equal(await page14.inputValue('#mapSearch'), 'umb', 'der Schrägstrich landet nicht im Suchfeld');
+    await page14.fill('#mapSearch', '');
+    await page14.click('#viewListBtn');
+    await page14.waitForSelector('body.view-list');
+    await page14.locator('body').click({ position: { x: 640, y: 780 } });
+    await page14.keyboard.press('/');
+    assert.equal(await page14.evaluate(() => document.activeElement && document.activeElement.id), 'search');
+    step('Suche per "/" in Aufgaben, Mindmap und Liste');
+
+    // Druck als Checkliste
+    await page14.click('#viewTasksBtn');
+    await page14.waitForSelector('body.view-tasks');
+    await page14.click('#tPrintBtn');
+    await page14.waitForSelector('#taskPrintDialog[open]');
+    assert.match(await page14.locator('#taskScopeFiltered').innerText(), /offene Aufgaben \(1\)/);
+    await page14.check('#taskPrintForm input[name="taskScope"][value="all"]');
+    await page14.click('#taskPrintGoBtn');
+    await page14.waitForFunction(() => window.__printed.length === 1);
+    const tdoc = await page14.evaluate(() => window.__printed[0]);
+    assert.ok(tdoc.includes('<h1>Aufgaben</h1>') && tdoc.includes('print-box') && tdoc.includes('Offerten einholen') && tdoc.includes('<h2>Erledigt</h2>'), 'Checkliste mit Gruppen');
+    assert.ok(tdoc.includes('print-task done') && tdoc.includes('Baubewilligung'));
+    await page14.keyboard.press('Control+p');
+    await page14.waitForSelector('#taskPrintDialog[open]');
+    await page14.keyboard.press('Escape');
+    step('Aufgaben: Druck als Checkliste, Ctrl+P');
+
+    // Export mit offenen Aufgaben
+    await page14.click('#menuBtn');
+    await page14.click('#exportBtn');
+    await page14.waitForSelector('#exportDialog[open]');
+    await page14.click('#exportDirBtn');
+    await page14.waitForFunction(() => /Export gespeichert/.test(document.querySelector('#status').textContent));
+    const idx14 = await page14.evaluate(() => new TextDecoder().decode(new Uint8Array(window.__exported['index.md'])));
+    assert.ok(idx14.includes('## Offene Aufgaben') && idx14.includes('- [ ] Offerten einholen — aus [Umbau](notes/umbau.md)'), 'offene Aufgaben in der Übersicht');
+    await page14.click('#menuBtn');
+    const [dl14] = await Promise.all([page14.waitForEvent('download'), page14.click('#downloadBtn')]);
+    const dl14Path = path.join(tmp, 'aufgaben.sqlite');
+    await dl14.saveAs(dl14Path);
+    const db14 = new SQL.Database(new Uint8Array(fs.readFileSync(dl14Path)));
+    assert.equal(db14.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], SCHEMA_VERSION);
+    assert.deepEqual(db14.exec('SELECT text, done, due FROM tasks ORDER BY line_no')[0].values, [['Elektriker anrufen', 1, '2020-01-01'], ['Offerten einholen', 0, null], ['Baubewilligung', 1, null]]);
+    db14.close();
+    assert.deepEqual(errors14, [], 'keine Konsolenfehler bei Aufgaben');
+    await ctx14.close();
+    step('Aufgaben: Export und Index in der SQLite-Datei');
 
     console.log('\nSmoke-Test bestanden.');
   } finally {

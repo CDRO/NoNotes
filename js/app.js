@@ -11,6 +11,7 @@
   const Exporter = window.NoNotesExport;
   const Printer = window.NoNotesPrint;
   const E = window.NoNotesEditing;
+  const T = window.NoNotesTasks;
 
   const DEFAULT_FILENAME = 'NoNotes.sqlite';
   const SAVE_DELAY_MS = 600;
@@ -50,6 +51,11 @@
     mdToolbar: $('#mdToolbar'), headingSelect: $('#headingSelect'), helpBtn: $('#helpBtn'),
     helpDialog: $('#helpDialog'), helpTabs: $('#helpTabs'), helpStorageStatus: $('#helpStorageStatus'),
     storageHelpBtn: $('#storageHelpBtn'), menuHelpBtn: $('#menuHelpBtn'),
+    viewTasksBtn: $('#viewTasksBtn'), tasksView: $('#tasksView'), tFilter: $('#tFilter'), tSort: $('#tSort'),
+    tSearch: $('#tSearch'), tTagFilter: $('#tTagFilter'), tPrintBtn: $('#tPrintBtn'), tCount: $('#tCount'),
+    tList: $('#tList'), tEmpty: $('#tEmpty'),
+    taskPrintDialog: $('#taskPrintDialog'), taskPrintForm: $('#taskPrintForm'), taskPrintGoBtn: $('#taskPrintGoBtn'),
+    taskScopeFiltered: $('#taskScopeFiltered'),
     mapView: $('#mapView'), mapNewBtn: $('#mapNewBtn'), mapFitBtn: $('#mapFitBtn'),
     mapZoomInBtn: $('#mapZoomInBtn'), mapZoomOutBtn: $('#mapZoomOutBtn'),
     mindmap: $('#mindmap'), renameInput: $('#renameInput'), contextMenu: $('#contextMenu'),
@@ -85,6 +91,11 @@
     attachmentUrls: new Map(), // id → Objekt-URL für die Anzeige
     multi: new Set(),          // Mehrfachauswahl (Mindmap und Liste)
     printNoteId: null,         // Notiz, auf die sich der Druckdialog bezieht
+    tStatus: 'open',
+    tSort: 'due',
+    tQuery: '',
+    tTag: '',
+    tSearchTimer: null,
     // Speichern: jede Änderung erhöht editSeq; savedSeq ist der zuletzt vollständig gesicherte Stand.
     editSeq: 0,
     savedSeq: 0,
@@ -233,7 +244,7 @@
 
     el.boot.hidden = true;
     el.app.hidden = false;
-    setView(view === 'list' || view === 'questions' ? view : 'map');
+    setView(['list', 'questions', 'tasks'].includes(view) ? view : 'map');
     renderAll();
     updateStorageInfo();
     if (state.fileHandle && state.filePermission !== 'granted') showConnectBanner();
@@ -574,9 +585,11 @@
     document.body.classList.toggle('view-map', view === 'map');
     document.body.classList.toggle('view-list', view === 'list');
     document.body.classList.toggle('view-questions', view === 'questions');
+    document.body.classList.toggle('view-tasks', view === 'tasks');
     el.viewMapBtn.setAttribute('aria-selected', String(view === 'map'));
     el.viewListBtn.setAttribute('aria-selected', String(view === 'list'));
     el.viewQuestionsBtn.setAttribute('aria-selected', String(view === 'questions'));
+    el.viewTasksBtn.setAttribute('aria-selected', String(view === 'tasks'));
     try { localStorage.setItem(VIEW_KEY, view); } catch (e) { /* egal */ }
     document.body.classList.remove('editor-open');
     hideContextMenu();
@@ -586,6 +599,8 @@
       el.mindmap.focus({ preventScroll: true });
     } else if (view === 'questions') {
       renderQuestions();
+    } else if (view === 'tasks') {
+      renderTasks();
     } else {
       renderList();
       renderEditor();
@@ -597,6 +612,7 @@
   function renderCurrentView() {
     if (state.view === 'map') renderMap();
     else if (state.view === 'questions') renderQuestions();
+    else if (state.view === 'tasks') renderTasks();
     else { renderList(); renderEditor(); }
   }
 
@@ -609,7 +625,22 @@
     renderCount();
     renderMap();
     renderQuestionCounts();
+    renderTaskCounts();
     if (state.view === 'questions') renderQuestions();
+    if (state.view === 'tasks') renderTasks();
+  }
+
+  function renderTaskCounts() {
+    const c = DB.countTasks(state.db, T.todayIso());
+    el.viewTasksBtn.replaceChildren();
+    el.viewTasksBtn.append('Aufgaben');
+    if (c.open > 0) {
+      const b = document.createElement('span');
+      b.className = 'count tasks' + (c.overdue > 0 ? ' overdue' : '');
+      b.textContent = String(c.open);
+      b.title = (c.open === 1 ? '1 offene Aufgabe' : `${c.open} offene Aufgaben`) + (c.overdue ? `, ${c.overdue} überfällig` : '');
+      el.viewTasksBtn.appendChild(b);
+    }
   }
 
   function renderTagFilters() {
@@ -632,6 +663,7 @@
     };
     state.tagFilter = fill(el.tagFilter, state.tagFilter);
     state.qTag = fill(el.qTagFilter, state.qTag);
+    state.tTag = fill(el.tTagFilter, state.tTag);
     const mine = new Set((state.currentId != null ? DB.getTags(state.db, state.currentId) : []).map(t => t.toLowerCase()));
     el.tagSuggestions.replaceChildren(...tags.filter(t => !mine.has(t.name.toLowerCase())).map(t => {
       const o = document.createElement('option');
@@ -695,7 +727,7 @@
 
   function renderMulti() {
     const n = state.multi.size;
-    el.multiBar.hidden = n === 0 || state.view === 'questions';
+    el.multiBar.hidden = n === 0 || state.view === 'questions' || state.view === 'tasks';
     el.multiCount.textContent = n === 1 ? '1 Notiz ausgewählt' : `${n} Notizen ausgewählt`;
     if (state.map) state.map.setMulti(state.multi);
     for (const li of el.list.children) li.classList.toggle('multi', state.multi.has(Number(li.dataset.id)));
@@ -1110,7 +1142,18 @@
       highlight: state.query.trim() || null,
       resolveTitle: title => { const id = index.get(title.trim().toLowerCase()); return id == null ? null : id; },
       resolveAttachment: id => attachmentUrl(id),
+      interactiveTasks: !el.body.readOnly,
     });
+  }
+
+  /** Kästchen in der Vorschau angeklickt: Zeile im Text umschalten. */
+  function onPreviewChange(e) {
+    const input = e.target.closest('li.task[data-line] input[type="checkbox"]');
+    if (!input || state.currentId == null || el.body.readOnly) return;
+    const line = Number(input.closest('li').dataset.line);
+    el.body.value = T.setDone(el.body.value, line, input.checked);
+    onEdit();
+    renderPreview();
   }
 
   function schedulePreview() {
@@ -1242,6 +1285,8 @@
       el.mindmap.focus({ preventScroll: true });
     } else if (state.view === 'questions') {
       renderQuestions();
+    } else if (state.view === 'tasks') {
+      renderTasks();
     }
   }
 
@@ -1299,6 +1344,7 @@
     updateListItem(state.currentId, el.title.value, el.body.value, ts);
     renderNoteQuestions(el.body.value);
     renderQuestionCounts();
+    renderTaskCounts();
     schedulePreview();
     markEdited();
   }
@@ -1532,6 +1578,188 @@
     } catch (e) {
       setStatus('Antwort konnte nicht gespeichert werden: ' + e.message, 'error');
     }
+  }
+
+  // ---------- Aufgaben-Ansicht ----------
+
+  function setTaskFilter(status) {
+    clearTimeout(state.tSearchTimer);
+    state.tQuery = el.tSearch.value;
+    state.tStatus = status;
+    for (const b of el.tFilter.querySelectorAll('button[data-status]')) {
+      b.setAttribute('aria-selected', String(b.dataset.status === status));
+    }
+    renderTasks();
+  }
+
+  const URGENCY_LABELS = { overdue: 'Überfällig', today: 'Heute', week: 'Diese Woche', later: 'Später', none: 'Ohne Termin', done: 'Erledigt' };
+
+  function renderTasks() {
+    if (state.view !== 'tasks') return;
+    const today = T.todayIso();
+    const rows = DB.listTasks(state.db, { status: state.tStatus, query: state.tQuery, tag: state.tTag, sort: state.tSort });
+    const counts = DB.countTasks(state.db, today);
+    el.tCount.textContent = `${rows.length} von ${counts.total} · ${counts.open} offen` + (counts.overdue ? ` · ${counts.overdue} überfällig` : '');
+
+    const groups = new Map();
+    for (const r of rows) {
+      const key = state.tSort === 'note' ? `n${r.note_id}` : (r.done ? 'done' : T.urgency(r.due, today));
+      if (!groups.has(key)) {
+        groups.set(key, {
+          title: state.tSort === 'note' ? (r.note_title.trim() || 'Ohne Titel') : URGENCY_LABELS[key],
+          noteId: state.tSort === 'note' ? r.note_id : null,
+          cls: state.tSort === 'note' ? '' : `urgency-${key}`,
+          items: [],
+        });
+      }
+      groups.get(key).items.push(r);
+    }
+
+    const frag = document.createDocumentFragment();
+    for (const g of groups.values()) {
+      const section = document.createElement('section');
+      section.className = 'q-group ' + g.cls;
+      const h = document.createElement('h3');
+      h.className = 'q-note';
+      if (g.noteId != null) {
+        const nb = document.createElement('button');
+        nb.type = 'button';
+        nb.textContent = g.title;
+        nb.title = 'Notiz öffnen';
+        nb.addEventListener('click', () => openNote(g.noteId));
+        h.appendChild(nb);
+      } else {
+        h.append(g.title);
+      }
+      const cnt = document.createElement('span');
+      cnt.textContent = g.items.length === 1 ? '1 Aufgabe' : `${g.items.length} Aufgaben`;
+      h.appendChild(cnt);
+      section.appendChild(h);
+      for (const r of g.items) section.appendChild(renderTaskItem(r, today));
+      frag.appendChild(section);
+    }
+    el.tList.replaceChildren(frag);
+    el.tEmpty.hidden = rows.length > 0;
+    el.tEmpty.textContent = state.tQuery || state.tTag ? 'Keine Treffer.'
+      : state.tStatus === 'open' ? 'Keine offenen Aufgaben. Eine Zeile „- [ ] Text“ wird zur Aufgabe, optional mit „@15.10.2026“ am Ende.'
+      : state.tStatus === 'done' ? 'Noch keine erledigten Aufgaben.'
+      : 'Noch keine Aufgaben. Eine Zeile „- [ ] Text“ wird zur Aufgabe.';
+  }
+
+  function renderTaskItem(r, today) {
+    const item = document.createElement('article');
+    item.className = 'q-item t-item ' + (r.done ? 'done' : 'open');
+    item.dataset.id = String(r.id);
+
+    const head = document.createElement('div');
+    head.className = 'q-head';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = 't-check';
+    box.checked = !!r.done;
+    box.setAttribute('aria-label', r.done ? 'Aufgabe wieder öffnen' : 'Aufgabe abhaken');
+    box.addEventListener('change', () => toggleTaskDone(r.id, box.checked));
+    const text = document.createElement('div');
+    text.className = 'q-text';
+    text.innerHTML = M.highlightText(r.text, state.tQuery.trim());
+    head.append(box, text);
+    if (r.due) {
+      const due = document.createElement('span');
+      const u = r.done ? 'none' : T.urgency(r.due, today);
+      due.className = 'due ' + u;
+      due.textContent = (u === 'overdue' ? 'überfällig · ' : u === 'today' ? 'heute · ' : '') + T.formatDue(r.due);
+      head.appendChild(due);
+    }
+    item.appendChild(head);
+
+    const actions = document.createElement('div');
+    actions.className = 'q-actions';
+    if (state.tSort !== 'note') {
+      const from = document.createElement('span');
+      from.className = 't-note';
+      from.append('aus ');
+      const nb = document.createElement('button');
+      nb.type = 'button';
+      nb.textContent = r.note_title.trim() || 'Ohne Titel';
+      nb.addEventListener('click', () => openNote(r.note_id));
+      from.appendChild(nb);
+      actions.appendChild(from);
+    }
+    const gotoBtn = document.createElement('button');
+    gotoBtn.type = 'button';
+    gotoBtn.className = 'ghost';
+    gotoBtn.textContent = 'Zur Notiz';
+    gotoBtn.addEventListener('click', () => openNote(r.note_id, { line: r.line_no }));
+    actions.appendChild(gotoBtn);
+    const meta = document.createElement('span');
+    meta.className = 'q-meta';
+    meta.textContent = r.done && r.done_at ? `Erledigt ${fmtDate(r.done_at)}` : `Erfasst ${fmtDate(r.created_at)}`;
+    actions.appendChild(meta);
+    item.appendChild(actions);
+    return item;
+  }
+
+  function toggleTaskDone(taskId, done) {
+    try {
+      const noteId = DB.setTaskDone(state.db, taskId, done);
+      markEdited();
+      renderTaskCounts();
+      renderTasks();
+      if (state.currentId === noteId) { renderEditor(); if (state.editorMode !== 'edit') renderPreview(); }
+      setStatus(done ? 'Aufgabe erledigt' : 'Aufgabe wieder geöffnet', 'dirty');
+    } catch (e) {
+      setStatus('Aufgabe konnte nicht geändert werden: ' + e.message, 'error');
+      renderTasks();
+    }
+  }
+
+  function onTaskSearchInput() {
+    clearTimeout(state.tSearchTimer);
+    state.tSearchTimer = setTimeout(() => {
+      if (el.tSearch.value === state.tQuery) return;
+      state.tQuery = el.tSearch.value;
+      renderTasks();
+    }, SEARCH_DELAY_MS);
+  }
+
+  function openTaskPrintDialog() {
+    hideContextMenu();
+    closeMenu();
+    const shown = DB.listTasks(state.db, { status: state.tStatus, query: state.tQuery, tag: state.tTag }).length;
+    const label = state.tStatus === 'open' ? 'offene' : state.tStatus === 'done' ? 'erledigte' : 'alle';
+    el.taskScopeFiltered.textContent = `Wie angezeigt: ${label} Aufgaben${state.tTag ? `, Tag „${state.tTag}“` : ''}${state.tQuery.trim() ? `, Suche „${state.tQuery.trim()}“` : ''} (${shown})`;
+    if (typeof el.taskPrintDialog.showModal === 'function') el.taskPrintDialog.showModal();
+    else el.taskPrintDialog.setAttribute('open', '');
+  }
+
+  function runTaskPrint() {
+    const scope = (el.taskPrintForm.querySelector('input[name="taskScope"]:checked') || {}).value || 'filtered';
+    const groupBy = (el.taskPrintForm.querySelector('input[name="taskGroup"]:checked') || {}).value || 'due';
+    const html = Printer.buildTasksDocument(state.db, {
+      status: scope === 'filtered' ? state.tStatus : scope,
+      tag: scope === 'filtered' ? state.tTag : '',
+      query: scope === 'filtered' ? state.tQuery.trim() : '',
+      groupBy,
+    });
+    if (el.taskPrintDialog.open) el.taskPrintDialog.close();
+    Printer.print(html);
+  }
+
+  /** "/" ausserhalb von Eingabefeldern: Suche der aktuellen Ansicht fokussieren. */
+  function focusSearch() {
+    const target = state.view === 'map' ? el.mapSearch : state.view === 'questions' ? el.qSearch : state.view === 'tasks' ? el.tSearch : el.search;
+    target.focus();
+    target.select();
+  }
+
+  function isTypingTarget(t) {
+    if (!t) return false;
+    const tag = t.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable;
+  }
+
+  function anyDialogOpen() {
+    return [el.exportDialog, el.printDialog, el.qaPrintDialog, el.taskPrintDialog, el.helpDialog].some(d => d.open);
   }
 
   function onQuestionSearchInput() {
@@ -1886,6 +2114,17 @@
     el.viewMapBtn.addEventListener('click', () => setView('map'));
     el.viewListBtn.addEventListener('click', () => setView('list'));
     el.viewQuestionsBtn.addEventListener('click', () => setView('questions'));
+    el.viewTasksBtn.addEventListener('click', () => setView('tasks'));
+    el.tFilter.addEventListener('click', e => {
+      const b = e.target.closest('button[data-status]');
+      if (b) setTaskFilter(b.dataset.status);
+    });
+    el.tSort.addEventListener('change', () => { state.tSort = el.tSort.value; renderTasks(); });
+    el.tSearch.addEventListener('input', onTaskSearchInput);
+    el.tTagFilter.addEventListener('change', () => { state.tTag = el.tTagFilter.value; renderTasks(); });
+    el.tPrintBtn.addEventListener('click', openTaskPrintDialog);
+    el.taskPrintGoBtn.addEventListener('click', runTaskPrint);
+    el.preview.addEventListener('change', onPreviewChange);
     el.qFilter.addEventListener('click', e => {
       const b = e.target.closest('button[data-status]');
       if (b) setQuestionFilter(b.dataset.status);
@@ -2042,11 +2281,16 @@
       else if (mod && !e.shiftKey && e.key.toLowerCase() === 'p') {
         e.preventDefault();
         if (state.view === 'questions' && !isEditorOpen()) openQaPrintDialog();
+        else if (state.view === 'tasks' && !isEditorOpen()) openTaskPrintDialog();
         else openPrintDialog({ noteId: isEditorOpen() || state.view === 'list' ? state.currentId : undefined });
+      }
+      else if (e.key === '/' && !mod && !e.altKey && !isTypingTarget(e.target) && !anyDialogOpen() && !isEditorOpen() && !state.rename) {
+        e.preventDefault();
+        focusSearch();
       }
       else if (e.altKey && e.key.toLowerCase() === 'n') { e.preventDefault(); newNote(); }
       else if (e.key === 'Escape') {
-        if (state.rename || el.exportDialog.open || el.printDialog.open || el.qaPrintDialog.open || el.helpDialog.open) return;
+        if (state.rename || anyDialogOpen()) return;
         if (state.multi.size && !isEditorOpen() && el.menu.hidden && el.contextMenu.hidden) { clearMulti(); return; }
         if (!el.contextMenu.hidden) { hideContextMenu(); return; }
         if (!el.menu.hidden) { closeMenu(); return; }

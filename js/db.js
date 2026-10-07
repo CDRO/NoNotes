@@ -3,7 +3,7 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 5;
+  const SCHEMA_VERSION = 6;
   const DEFAULT_MAP_TITLE = 'Meine Notizen';
 
   function nowIso() { return new Date().toISOString(); }
@@ -103,6 +103,18 @@
         created_at TEXT NOT NULL
       );
       CREATE INDEX idx_attachments_note ON attachments (note_id);
+      CREATE TABLE tasks (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        note_id    INTEGER NOT NULL,
+        text       TEXT NOT NULL,
+        norm       TEXT NOT NULL,
+        done       INTEGER NOT NULL DEFAULT 0,
+        due        TEXT,
+        line_no    INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        done_at    TEXT
+      );
+      CREATE INDEX idx_tasks_note ON tasks (note_id);
     `);
     setMeta(db, 'schema_version', SCHEMA_VERSION);
     setMeta(db, 'created_at', nowIso());
@@ -179,6 +191,25 @@
         CREATE INDEX IF NOT EXISTS idx_attachments_note ON attachments (note_id);
       `);
       version = 5;
+    }
+
+    if (version < 6) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS tasks (
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          note_id    INTEGER NOT NULL,
+          text       TEXT NOT NULL,
+          norm       TEXT NOT NULL,
+          done       INTEGER NOT NULL DEFAULT 0,
+          due        TEXT,
+          line_no    INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          done_at    TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_tasks_note ON tasks (note_id);
+      `);
+      for (const row of selectAll(db, 'SELECT id, body FROM notes')) syncTasks(db, row.id, row.body);
+      version = 6;
     }
 
     setMeta(db, 'schema_version', SCHEMA_VERSION);
@@ -262,7 +293,8 @@
   function getTree(db) {
     return selectAll(db,
       `SELECT id, title, parent_id, sort_order, collapsed,
-              (SELECT count(*) FROM questions q WHERE q.note_id = notes.id AND q.answer IS NULL) AS badge
+              (SELECT count(*) FROM questions q WHERE q.note_id = notes.id AND q.answer IS NULL) AS badge,
+              (SELECT count(*) FROM tasks t WHERE t.note_id = notes.id AND t.done = 0) AS tbadge
          FROM notes
         WHERE deleted_at IS NULL ORDER BY parent_id, sort_order, id`);
   }
@@ -306,6 +338,7 @@
     const ts = nowIso();
     db.run('UPDATE notes SET title = ?, body = ?, updated_at = ? WHERE id = ?', [title, body, ts, id]);
     syncQuestions(db, id, body);
+    syncTasks(db, id, body);
     return ts;
   }
 
@@ -405,8 +438,94 @@
     db.run('DELETE FROM questions WHERE note_id = ?', [id]);
     db.run('DELETE FROM note_tags WHERE note_id = ?', [id]);
     db.run('DELETE FROM attachments WHERE note_id = ?', [id]);
+    db.run('DELETE FROM tasks WHERE note_id = ?', [id]);
     db.run('DELETE FROM notes WHERE id = ?', [id]);
     pruneTags(db);
+  }
+
+  // ---------- Aufgaben ----------
+
+  /** Gleicht den Aufgaben-Index einer Notiz mit ihrem Text ab (wie bei den Fragen). */
+  function syncTasks(db, noteId, body) {
+    const T = global.NoNotesTasks;
+    if (!T) return;
+    const parsed = T.parse(body);
+    const existing = selectAll(db, 'SELECT * FROM tasks WHERE note_id = ? ORDER BY line_no, id', [noteId]);
+    const unused = existing.slice();
+    const ts = nowIso();
+    for (const t of parsed) {
+      const idx = unused.findIndex(e => e.norm === t.norm);
+      const done = t.done ? 1 : 0;
+      if (idx >= 0) {
+        const e = unused.splice(idx, 1)[0];
+        let doneAt = e.done_at;
+        if (done && !e.done) doneAt = ts;
+        if (!done) doneAt = null;
+        if (e.text !== t.text || e.done !== done || e.due !== t.due || e.line_no !== t.lineIndex || e.done_at !== doneAt) {
+          db.run('UPDATE tasks SET text = ?, done = ?, due = ?, line_no = ?, done_at = ? WHERE id = ?',
+            [t.text, done, t.due, t.lineIndex, doneAt, e.id]);
+        }
+      } else {
+        db.run('INSERT INTO tasks (note_id, text, norm, done, due, line_no, created_at, done_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          [noteId, t.text, t.norm, done, t.due, t.lineIndex, ts, done ? ts : null]);
+      }
+    }
+    for (const e of unused) db.run('DELETE FROM tasks WHERE id = ?', [e.id]);
+  }
+
+  /** Aufgaben über alle lebenden Notizen. status: 'open' | 'done' | 'all'; sort: 'due' | 'note'. */
+  function listTasks(db, options) {
+    const status = (options && options.status) || 'open';
+    const q = ((options && options.query) || '').trim().toLowerCase();
+    const tag = options && options.tag ? String(options.tag).trim() : '';
+    const sort = options && options.sort === 'note' ? 'note' : 'due';
+    const where = ['n.deleted_at IS NULL'];
+    const params = [];
+    if (status === 'open') where.push('t.done = 0');
+    else if (status === 'done') where.push('t.done = 1');
+    if (tag) {
+      where.push('EXISTS (SELECT 1 FROM note_tags nt JOIN tags tg ON tg.id = nt.tag_id WHERE nt.note_id = n.id AND tg.name = ? COLLATE NOCASE)');
+      params.push(tag);
+    }
+    if (q) {
+      const like = '%' + escapeLike(q) + '%';
+      where.push("(nn_lower(t.text) LIKE ? ESCAPE '\\' OR nn_lower(n.title) LIKE ? ESCAPE '\\')");
+      params.push(like, like);
+    }
+    const order = sort === 'note'
+      ? 't.done, n.updated_at DESC, n.id, t.line_no'
+      : 't.done, (t.due IS NULL), t.due, n.updated_at DESC, n.id, t.line_no';
+    return selectAll(db,
+      `SELECT t.id, t.note_id, t.text, t.norm, t.done, t.due, t.line_no, t.created_at, t.done_at,
+              n.title AS note_title, n.updated_at AS note_updated_at
+         FROM tasks t JOIN notes n ON n.id = t.note_id
+        WHERE ${where.join(' AND ')}
+        ORDER BY ${order}`, params);
+  }
+
+  function countTasks(db, todayIso) {
+    const row = selectOne(db,
+      `SELECT sum(t.done = 0) AS open, count(*) AS total,
+              sum(t.done = 0 AND t.due IS NOT NULL AND t.due < ?) AS overdue
+         FROM tasks t JOIN notes n ON n.id = t.note_id WHERE n.deleted_at IS NULL`, [todayIso || '0000-00-00']);
+    return { open: Number(row && row.open || 0), total: Number(row && row.total || 0), overdue: Number(row && row.overdue || 0) };
+  }
+
+  function getTask(db, id) {
+    return selectOne(db, 'SELECT * FROM tasks WHERE id = ?', [id]);
+  }
+
+  /** Hakt eine Aufgabe im Notiztext ab bzw. öffnet sie wieder. Gibt die Notiz-ID zurück. */
+  function setTaskDone(db, taskId, done) {
+    const T = global.NoNotesTasks;
+    const row = getTask(db, taskId);
+    if (!row) throw new Error('Aufgabe nicht gefunden.');
+    const note = getNote(db, row.note_id);
+    if (!note) throw new Error('Notiz nicht gefunden.');
+    const t = T.locate(note.body, row);
+    if (!t) throw new Error('Die Aufgabe steht nicht mehr so im Text.');
+    updateNote(db, note.id, note.title, T.setDone(note.body, t.lineIndex, done));
+    return note.id;
   }
 
   // ---------- Anhänge ----------
@@ -649,6 +768,11 @@
     setTags,
     listAllTags,
     normalizeTag,
+    syncTasks,
+    listTasks,
+    countTasks,
+    getTask,
+    setTaskDone,
     addAttachment,
     listAttachments,
     getAttachment,

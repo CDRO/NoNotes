@@ -120,6 +120,18 @@
     });
   }
 
+  function openTaskLines(db, nodes, hrefOf) {
+    const T = global.NoNotesTasks;
+    const byId = new Map(nodes.map(n => [n.id, n]));
+    const rows = DB().listTasks(db, { status: 'open', sort: 'due' });
+    if (!rows.length) return ['Keine offenen Aufgaben.'];
+    return rows.map(r => {
+      const n = byId.get(r.note_id);
+      const due = r.due ? ` (bis ${T.formatDue(r.due)})` : '';
+      return n ? `- [ ] ${r.text}${due} — aus [${n.title.trim() || 'Ohne Titel'}](${hrefOf(n)})` : `- [ ] ${r.text}${due}`;
+    });
+  }
+
   function header(db, version) {
     const title = DB().getMapTitle(db);
     return [
@@ -162,6 +174,7 @@
       index.push('## Inhalt', '');
       index.push(...(nodes.length ? tocLines(nodes, hrefFromIndex) : ['Noch keine Notizen.']));
       index.push('', '## Offene Fragen', '', ...openQuestionLines(db, nodes, hrefFromIndex), '');
+      index.push('## Offene Aufgaben', '', ...openTaskLines(db, nodes, hrefFromIndex), '');
       files.push({ path: 'index.md', data: index.join('\n') });
       for (const n of nodes) {
         const note = DB().getNote(db, n.id);
@@ -182,6 +195,7 @@
       doc.push('## Inhalt', '');
       doc.push(...(nodes.length ? tocLines(nodes, anchorOf) : ['Noch keine Notizen.']));
       doc.push('', '## Offene Fragen', '', ...openQuestionLines(db, nodes, anchorOf), '');
+      doc.push('## Offene Aufgaben', '', ...openTaskLines(db, nodes, anchorOf), '');
       for (const n of nodes) {
         const note = DB().getNote(db, n.id);
         const level = Math.min(6, n.depth + 1);

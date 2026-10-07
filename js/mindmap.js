@@ -48,10 +48,10 @@
     for (const r of rows) {
       byId.set(r.id, {
         id: r.id, title: r.title, parentId: r.parent_id, order: r.sort_order,
-        collapsed: !!r.collapsed, badge: r.badge || 0, children: [],
+        collapsed: !!r.collapsed, badge: r.badge || 0, tbadge: r.tbadge || 0, children: [],
       });
     }
-    const root = { id: 'root', isRoot: true, title: mapTitle, children: [], badge: 0 };
+    const root = { id: 'root', isRoot: true, title: mapTitle, children: [], badge: 0, tbadge: 0 };
     for (const n of byId.values()) {
       const parent = n.parentId != null ? byId.get(n.parentId) : null;
       (parent || root).children.push(n);
@@ -76,10 +76,12 @@
     };
     const countDescendants = n => n.children.reduce((s, c) => s + 1 + countDescendants(c), 0);
     const totalBadge = n => n.badge + n.children.reduce((s, c) => s + totalBadge(c), 0);
+    const totalTBadge = n => n.tbadge + n.children.reduce((s, c) => s + totalTBadge(c), 0);
     sizeNode(root);
-    // Eingeklappte Äste zeigen die offenen Fragen des ganzen Teilbaums.
+    // Eingeklappte Äste zeigen die offenen Fragen und Aufgaben des ganzen Teilbaums.
     const setBadges = n => {
       n.shownBadge = n.isRoot ? 0 : (n.collapsed ? totalBadge(n) : n.badge);
+      n.shownTBadge = n.isRoot ? 0 : (n.collapsed ? totalTBadge(n) : n.tbadge);
       n.visibleChildren.forEach(setBadges);
     };
     setBadges(root);
@@ -218,6 +220,14 @@
         const bt = svgEl('text', { 'text-anchor': 'middle', 'dominant-baseline': 'central' }, b);
         bt.textContent = n.shownBadge > 99 ? '99+' : String(n.shownBadge);
         svgEl('title', null, b).textContent = n.shownBadge === 1 ? '1 offene Frage' : `${n.shownBadge} offene Fragen`;
+      }
+      if (n.shownTBadge > 0) {
+        const bx = n.dir < 0 ? 0 : n.w;
+        const b = svgEl('g', { class: 'mm-tbadge', transform: `translate(${bx} ${n.h})` }, g);
+        svgEl('circle', { r: 9 }, b);
+        const bt = svgEl('text', { 'text-anchor': 'middle', 'dominant-baseline': 'central' }, b);
+        bt.textContent = n.shownTBadge > 99 ? '99+' : String(n.shownTBadge);
+        svgEl('title', null, b).textContent = n.shownTBadge === 1 ? '1 offene Aufgabe' : `${n.shownTBadge} offene Aufgaben`;
       }
       return g;
     }
@@ -572,6 +582,10 @@
       if (n.shownBadge > 0) {
         const bx = n.dir < 0 ? 0 : n.w;
         parts.push(`<g transform="translate(${bx} 0)"><circle r="9" fill="${c.warn}"/><text text-anchor="middle" dominant-baseline="central" fill="#fff" style="font: 700 11px ${esc(FONT_FAMILY.replace(/"/g, "'"))}">${n.shownBadge > 99 ? '99+' : n.shownBadge}</text></g>`);
+      }
+      if (n.shownTBadge > 0) {
+        const bx = n.dir < 0 ? 0 : n.w;
+        parts.push(`<g transform="translate(${bx} ${n.h})"><circle r="9" fill="${c.accent}"/><text text-anchor="middle" dominant-baseline="central" fill="#fff" style="font: 700 11px ${esc(FONT_FAMILY.replace(/"/g, "'"))}">${n.shownTBadge > 99 ? '99+' : n.shownTBadge}</text></g>`);
       }
       parts.push('</g>');
     }

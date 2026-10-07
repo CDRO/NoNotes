@@ -2,9 +2,9 @@
 
 Eine kleine Notiz-App, die **ohne Server, ohne Installation und ohne Adminrechte** läuft.
 Sie öffnet sich als Datei im Browser, ordnet die Notizen als **Mindmap** an, sammelt
-**offene Fragen** aus allen Notizen an einem Ort, versteht **Markdown**, **Tags** und
-**Bilder**, **druckt** und **exportiert** alles samt Mindmap-Bild und speichert in einer echten
-**SQLite-Datenbank**. Alles, was sie braucht, liegt im entpackten Ordner.
+**offene Fragen** und **Aufgaben** aus allen Notizen an einem Ort, versteht **Markdown**,
+**Tags** und **Bilder**, **druckt** und **exportiert** alles samt Mindmap-Bild und speichert
+in einer echten **SQLite-Datenbank**. Alles, was sie braucht, liegt im entpackten Ordner.
 
 Gebaut für Rechner mit stark eingeschränkten Rechten: Es wird kein Dienst gestartet,
 kein Port geöffnet, kein Programm installiert. PowerShell ist optional und auch im
@@ -141,6 +141,24 @@ einen Index darüber.
 - In der Mindmap zeigt eine Marke am Knoten die Anzahl offener Fragen; eingeklappte Äste
   zählen ihren ganzen Teilbaum. Der Reiter *Fragen* trägt die Gesamtzahl.
 
+### Aufgaben
+
+Eine Markdown-Checkbox ist eine Aufgabe: `- [ ] Offerte einholen` offen, `- [x] …` erledigt.
+Ein Termin darf am Zeilenende stehen: `- [ ] Offerte einholen @15.10.2026`.
+
+- Die Ansicht **Aufgaben** sammelt alle Aufgaben aller Notizen. Standardfilter ist *Offen*;
+  *Alle* und *Erledigt* holen den Rest zurück. Sortierung nach Fälligkeit gruppiert in
+  Überfällig, Heute, Diese Woche, Später und Ohne Termin; alternativ nach Notiz. Dazu Suche
+  und Tag-Filter. Der Reiter zeigt die Zahl der offenen Aufgaben, rot wenn etwas überfällig ist.
+- **Abhaken** geht an drei Orten: Kästchen in der Aufgabenliste, Kästchen in der Vorschau
+  des Editors, oder direkt im Text. Alles schreibt in dieselbe Zeile der Notiz.
+- In der Mindmap zeigt ein blauer Marker unten am Knoten die offenen Aufgaben, der orange
+  Marker oben die offenen Fragen. Eingeklappte Äste zählen ihren Teilbaum.
+- **Drucken…** in der Aufgabenansicht (oder `Ctrl+P`) druckt eine Checkliste mit Kästchen,
+  gruppiert nach Fälligkeit oder Notiz. Der Export schreibt eine Liste «Offene Aufgaben» in
+  die Übersicht.
+- `/` startet in jeder Ansicht die Suche.
+
 ### Editor und Markdown
 
 - Der Text ist Markdown: Überschriften, Listen, Aufgabenlisten `- [ ]`, Zitate, Code,
@@ -175,6 +193,7 @@ einen Index darüber.
 | Oberfläche | `index.html`, `css/app.css`, `js/app.js` – reines HTML/CSS/JS, keine Frameworks, kein Build |
 | Mindmap | `js/mindmap.js`: eigenes Layout (links/rechts ausbalanciert), SVG, Zoom, Ziehen, Tastatur |
 | Fragen | `js/questions.js`: Parser für `?`/`!`-Zeilen; Index in der Tabelle `questions`, bei jeder Änderung abgeglichen |
+| Aufgaben | `js/tasks.js`: Parser für `- [ ]`-Zeilen mit `@Datum`; Index in der Tabelle `tasks`, gleiches Prinzip |
 | Markdown | `js/markdown.js`: eigener Renderer, escaped allen Text, erlaubt nur sichere Link-Schemata |
 | Toolleiste | `js/editing.js`: reine Textfunktionen (umschliessen, Zeilenpräfixe, Überschriften, Links), in Node prüfbar |
 | Export | `js/export.js` baut die Dateien, `js/zip.js` ist ein kleiner ZIP-Writer; das Bild liefert `NoNotesMindmap.toSvgString`, PNG über ein Canvas |
@@ -189,7 +208,7 @@ Language Mode zur Verfügung. Dort sind weder `HttpListener` noch der Zugriff au
 File System Access API alles mit, um direkt in die Datenbankdatei zu schreiben, und
 sql.js liefert SQLite als reines JavaScript.
 
-Schema (Version 5). Ältere Datenbanken werden beim Öffnen automatisch migriert.
+Schema (Version 6). Ältere Datenbanken werden beim Öffnen automatisch migriert.
 
 ```sql
 CREATE TABLE notes (
@@ -216,6 +235,10 @@ CREATE TABLE questions (          -- Index über die ?/!-Zeilen, wird aus dem Te
 );
 CREATE TABLE tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE);
 CREATE TABLE note_tags (note_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMARY KEY (note_id, tag_id));
+CREATE TABLE tasks (                -- Index über die "- [ ]"-Zeilen, aus dem Text abgeleitet
+  id INTEGER PRIMARY KEY AUTOINCREMENT, note_id INTEGER NOT NULL, text TEXT NOT NULL, norm TEXT NOT NULL,
+  done INTEGER NOT NULL DEFAULT 0, due TEXT, line_no INTEGER NOT NULL, created_at TEXT NOT NULL, done_at TEXT
+);
 CREATE TABLE attachments (          -- Bilder, im Text als ![Name](att:ID) referenziert
   id INTEGER PRIMARY KEY AUTOINCREMENT, note_id INTEGER NOT NULL, name TEXT NOT NULL,
   mime TEXT NOT NULL, size INTEGER NOT NULL, data BLOB NOT NULL, created_at TEXT NOT NULL
@@ -230,7 +253,7 @@ Der Smoke-Test öffnet die App wie ein Benutzer per `file://` in headless Chromi
 prüft Anlegen, Suchen, Speichern, Neuladen, Herunterladen, Importieren, Löschen, das
 Schreiben in die Datenbankdatei, die Mindmap-Bedienung, die Fragen, Markdown-Vorschau, Tags,
 Papierkorb, Suche, Umsortieren per Drag & Drop, Bild-Anhänge, den Export (Ordner und ZIP),
-das Drucken (mit gestubbtem `window.print`), Toolleiste und Hilfe sowie die Migration alter Datenbanken:
+das Drucken (mit gestubbtem `window.print`), Toolleiste und Hilfe, Aufgaben und die Migration alter Datenbanken:
 
 ```bash
 npm install
