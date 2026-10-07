@@ -6,6 +6,11 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release-Version, z. B. v0.1.0. Legt Tag und Release auf dem gewählten Stand an. Leer = nur Artefakt bauen.'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -35,14 +40,27 @@ jobs:
 
       - name: Version bestimmen
         id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
+          set -euo pipefail
+          RELEASE="false"
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             VERSION="${GITHUB_REF_NAME}"
+            RELEASE="true"
+          elif [[ -n "${INPUT_VERSION}" ]]; then
+            if [[ ! "${INPUT_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Ungültige Version '${INPUT_VERSION}', erwartet z. B. v0.1.0" >&2
+              exit 1
+            fi
+            VERSION="${INPUT_VERSION}"
+            RELEASE="true"
           else
             VERSION="dev-$(git rev-parse --short HEAD)"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Version: ${VERSION}"
+          echo "release=${RELEASE}" >> "$GITHUB_OUTPUT"
+          echo "Version: ${VERSION} (Release: ${RELEASE})"
 
       - name: Version in die App schreiben
         run: |
@@ -55,7 +73,6 @@ jobs:
           STAGE="dist/NoNotes"
           mkdir -p "$STAGE"
           cp -r index.html css js vendor start.ps1 start.cmd README.md "$STAGE/"
-          # Dateien aus dem Vendor-Ordner, die zur Laufzeit nicht gebraucht werden, bleiben draussen
           rm -f "$STAGE"/vendor/sql.js/*.zip
           (cd "$STAGE" && zip -r -X "../NoNotes-${{ steps.version.outputs.version }}.zip" .)
           ls -la dist
@@ -68,11 +85,20 @@ jobs:
           path: dist/NoNotes-*.zip
           if-no-files-found: error
 
-      - name: Release anlegen (nur bei Tag)
-        if: github.ref_type == 'tag'
+      - name: Release anlegen (Tag oder manueller Start mit Version)
+        if: steps.version.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" dist/NoNotes-*.zip \
-            --title "NoNotes ${GITHUB_REF_NAME}" \
-            --generate-notes
+          set -euo pipefail
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "Release $VERSION existiert bereits, ZIP wird ersetzt."
+            gh release upload "$VERSION" dist/NoNotes-*.zip --clobber
+          else
+            # --target legt den Tag auf diesem Commit an, falls er noch nicht existiert.
+            gh release create "$VERSION" dist/NoNotes-*.zip \
+              --target "$GITHUB_SHA" \
+              --title "NoNotes $VERSION" \
+              --generate-notes
+          fi

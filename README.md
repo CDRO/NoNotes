@@ -137,10 +137,11 @@ npm test
 ## Release
 
 Der Workflow `.github/workflows/package.yml` läuft bei jedem Push: Smoke-Test, dann ZIP
-als Artefakt. Bei einem Tag `vX.Y.Z` wird zusätzlich ein GitHub-Release mit dem ZIP erstellt
-und die Versionsnummer in die App geschrieben:
+als Artefakt. Ein Release mit Tag entsteht auf zwei Wegen:
 
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
+- **Manuell**: unter *Actions → Testen und paketieren → Run workflow* den gewünschten Stand
+  wählen und die Version eingeben, z. B. `v0.1.0`. Der Workflow legt den Tag auf diesem
+  Commit an, baut das ZIP und veröffentlicht das Release.
+- **Per Tag**: `git tag v0.1.0 && git push origin v0.1.0` löst denselben Ablauf aus.
+
+Die Versionsnummer wird dabei in die App geschrieben und erscheint oben neben dem Namen.
