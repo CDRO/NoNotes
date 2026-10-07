@@ -23,7 +23,7 @@ const { chromium } = loadPlaywright();
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '3'; // muss zu js/db.js passen
+const SCHEMA_VERSION = '4'; // muss zu js/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 function watchErrors(page) {
@@ -415,6 +415,124 @@ async function main() {
     assert.deepEqual(errors7, [], 'keine Konsolenfehler in der Fragenansicht');
     await ctx7.close();
     step('Fragen: Index steht in der SQLite-Datei');
+
+    // ---------- 8. Markdown-Vorschau, Tags, Papierkorb, Suche mit Hervorhebung ----------
+    const ctx8 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
+    const { page: page8, errors: errors8 } = await openApp(ctx8, 'list');
+    await page8.click('#newBtn');
+    await page8.fill('#title', 'Planung');
+    await page8.fill('#body', 'Grundlagen für das Budget.');
+    await waitSaved(page8);
+    await page8.click('#newBtn');
+    await page8.fill('#title', 'Bericht');
+    await page8.fill('#body', '# Überblick\n\nSiehe [[Planung]] und [[Gibt es nicht]].\n\n- **wichtig**\n- [x] erledigt\n\n? Offen?\n\n```\ncode <b>\n```');
+    await waitSaved(page8);
+
+    // Vorschau: Umschalter, Inhalte, Links
+    await page8.click('#modeSwitch button[data-mode="preview"]');
+    await page8.waitForSelector('#editorPane.mode-preview');
+    assert.equal(await page8.locator('#body').isVisible(), false, 'Textfeld in der Vorschau ausgeblendet');
+    assert.equal(await page8.locator('#preview h1').innerText(), 'Überblick');
+    assert.equal(await page8.locator('#preview strong').innerText(), 'wichtig');
+    assert.equal(await page8.locator('#preview li.task input:checked').count(), 1);
+    assert.equal(await page8.locator('#preview .md-q.open').count(), 1);
+    assert.equal(await page8.locator('#preview pre code').innerText(), 'code <b>');
+    assert.equal(await page8.locator('#preview a.md-wiki:not(.missing)').innerText(), 'Planung');
+    assert.equal(await page8.locator('#preview a.md-wiki.missing').innerText(), 'Gibt es nicht');
+    await page8.click('#modeSwitch button[data-mode="split"]');
+    await page8.waitForSelector('#editorPane.mode-split');
+    assert.equal(await page8.locator('#body').isVisible(), true);
+    assert.equal(await page8.locator('#preview').isVisible(), true);
+    await page8.fill('#body', '# Neu\n\n? Offen?\n\nSiehe [[Planung]].');
+    await page8.waitForFunction(() => document.querySelector('#preview h1') && document.querySelector('#preview h1').textContent === 'Neu');
+    await waitSaved(page8);
+    await page8.click('#preview a.md-wiki');
+    await page8.waitForFunction(() => document.querySelector('#title').value === 'Planung');
+    step('Markdown: Vorschau, geteilte Ansicht, [[Titel]]-Verweis');
+
+    // Tags
+    await page8.fill('#tagInput', 'projekt');
+    await page8.keyboard.press('Enter');
+    await page8.fill('#tagInput', 'Dringend, projekt');
+    await page8.keyboard.press('Enter');
+    await page8.waitForFunction(() => document.querySelectorAll('#tagChips .chip').length === 2);
+    await waitSaved(page8);
+    assert.deepEqual(await page8.locator('#tagChips .chip').allInnerTexts().then(a => a.map(t => t.replace('×', '').trim())), ['Dringend', 'projekt']);
+    assert.equal(await page8.locator('#list li.active .note-tags .tag').count(), 2);
+    await page8.selectOption('#tagFilter', 'projekt');
+    await page8.waitForFunction(() => document.querySelectorAll('#list li').length === 1);
+    await page8.selectOption('#tagFilter', '');
+    await page8.waitForFunction(() => document.querySelectorAll('#list li').length === 2);
+    await page8.click('#tagChips .chip:has-text("Dringend") button');
+    await page8.waitForFunction(() => document.querySelectorAll('#tagChips .chip').length === 1);
+    await waitSaved(page8);
+    // Tag-Filter in der Fragenansicht
+    await page8.click('#viewQuestionsBtn');
+    await page8.waitForSelector('body.view-questions');
+    await page8.waitForFunction(() => document.querySelectorAll('.q-item').length === 1);
+    await page8.selectOption('#qTagFilter', 'projekt');
+    await page8.waitForFunction(() => document.querySelectorAll('.q-item').length === 0, null, {});
+    await page8.selectOption('#qTagFilter', '');
+    await page8.waitForFunction(() => document.querySelectorAll('.q-item').length === 1);
+    await page8.click('#viewListBtn');
+    await page8.waitForSelector('body.view-list');
+    step('Tags: Eingabe, Chips, Filter in Liste und Fragen');
+
+    // Suche mit Hervorhebung in der Liste und in der Mindmap
+    await page8.fill('#search', 'budget');
+    await page8.waitForFunction(() => document.querySelectorAll('#list li').length === 1);
+    assert.equal(await page8.locator('#list li mark').first().innerText(), 'Budget');
+    await page8.click('#viewMapBtn');
+    await page8.waitForSelector('body.view-map');
+    assert.equal(await page8.inputValue('#mapSearch'), 'budget', 'Suche ist in beiden Ansichten dieselbe');
+    await page8.waitForFunction(() => document.querySelectorAll('.mm-node.mm-match').length === 1);
+    assert.equal(await page8.locator('.mm-node.mm-dim').count(), 1);
+    assert.match(await page8.locator('#mapMatches').innerText(), /1 Treffer/);
+    await page8.focus('#mapSearch');
+    await page8.keyboard.press('Enter');
+    await page8.waitForFunction(() => document.querySelector('.mm-node.mm-match.mm-selected'));
+    await page8.fill('#mapSearch', '');
+    await page8.waitForFunction(() => document.querySelectorAll('.mm-node.mm-match').length === 0);
+    await page8.click('#viewListBtn');
+    await page8.waitForFunction(() => document.querySelectorAll('#list li').length === 2);
+    step('Suche: Hervorhebung in Liste und Mindmap, Sprung zum Treffer');
+
+    // Papierkorb: löschen, wiederherstellen, endgültig löschen
+    await page8.click('#list li:has-text("Bericht")');
+    page8.once('dialog', d => d.accept());
+    await page8.click('#deleteBtn');
+    await page8.waitForFunction(() => document.querySelectorAll('#list li').length === 1);
+    await waitSaved(page8);
+    await page8.selectOption('#listScope', 'trash');
+    await page8.waitForFunction(() => document.querySelectorAll('#list li.trashed').length === 1);
+    assert.equal(await page8.locator('#emptyTrashBtn').isVisible(), true);
+    await page8.click('#list li.trashed');
+    await page8.waitForSelector('#trashBar:not([hidden])');
+    assert.equal(await page8.locator('#title').evaluate(e => e.readOnly), true);
+    await page8.click('#restoreBtn');
+    await page8.waitForFunction(() => document.querySelector('#listScope').value === 'live' && document.querySelectorAll('#list li').length === 2);
+    await waitSaved(page8);
+    page8.once('dialog', d => d.accept());
+    await page8.click('#deleteBtn');
+    await page8.waitForFunction(() => document.querySelectorAll('#list li').length === 1);
+    await page8.selectOption('#listScope', 'trash');
+    await page8.waitForFunction(() => document.querySelectorAll('#list li.trashed').length === 1);
+    page8.once('dialog', d => d.accept());
+    await page8.click('#emptyTrashBtn');
+    await page8.waitForFunction(() => document.querySelectorAll('#list li').length === 0);
+    await waitSaved(page8);
+    await page8.click('#menuBtn');
+    const [dl8] = await Promise.all([page8.waitForEvent('download'), page8.click('#downloadBtn')]);
+    const dl8Path = path.join(tmp, 'stufe3.sqlite');
+    await dl8.saveAs(dl8Path);
+    const db8 = new SQL.Database(new Uint8Array(fs.readFileSync(dl8Path)));
+    assert.equal(db8.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], SCHEMA_VERSION);
+    assert.equal(db8.exec('SELECT count(*) FROM notes')[0].values[0][0], 1, 'endgültig gelöscht');
+    assert.deepEqual(db8.exec('SELECT name FROM tags')[0].values.map(r => r[0]), ['projekt']);
+    db8.close();
+    assert.deepEqual(errors8, [], 'keine Konsolenfehler in Stufe 3');
+    await ctx8.close();
+    step('Papierkorb: verschieben, wiederherstellen, endgültig löschen');
 
     console.log('\nSmoke-Test bestanden.');
   } finally {

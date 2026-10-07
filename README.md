@@ -2,8 +2,9 @@
 
 Eine kleine Notiz-App, die **ohne Server, ohne Installation und ohne Adminrechte** läuft.
 Sie öffnet sich als Datei im Browser, ordnet die Notizen als **Mindmap** an, sammelt
-**offene Fragen** aus allen Notizen an einem Ort und speichert alles in einer echten
-**SQLite-Datenbank**. Alles, was sie braucht, liegt im entpackten Ordner.
+**offene Fragen** aus allen Notizen an einem Ort, versteht **Markdown** und **Tags** und
+speichert alles in einer echten **SQLite-Datenbank**. Alles, was sie braucht, liegt im
+entpackten Ordner.
 
 Gebaut für Rechner mit stark eingeschränkten Rechten: Es wird kein Dienst gestartet,
 kein Port geöffnet, kein Programm installiert. PowerShell ist optional und auch im
@@ -75,10 +76,19 @@ Die Notizen bilden einen Baum um einen zentralen Knoten, dessen Titel du per Dop
 | Löschen | `Entf` oder Rechtsklick → Löschen. Unternotizen rücken zum übergeordneten Knoten auf. |
 | Navigieren | Pfeiltasten wandern durch den Baum. Mausrad zoomt, Ziehen der Fläche verschiebt, `0` oder **Einpassen** zeigt alles. |
 
-### Liste
+### Liste, Suche, Tags, Papierkorb
 
 Der Umschalter oben wechselt zur klassischen Liste mit Suche und Editor nebeneinander.
-Die Suche filtert Titel und Inhalt, auch mit Umlauten und unabhängig von Gross-/Kleinschreibung.
+
+- Die **Suche** filtert Titel und Inhalt, auch mit Umlauten und unabhängig von
+  Gross-/Kleinschreibung, und hebt die Treffer in der Liste hervor. Dieselbe Suche gibt es
+  oben in der Mindmap: Treffer leuchten, der Rest wird blass, `Enter` springt von Treffer zu
+  Treffer (auch in eingeklappte Äste).
+- **Tags** vergibst du im Editor unter dem Titel: tippen, `Enter` oder Komma. Die Auswahl
+  «Alle Tags» in Liste und Fragen filtert danach.
+- **Löschen** verschiebt in den **Papierkorb** (Auswahl «Papierkorb» in der Liste). Dort
+  lässt sich eine Notiz wiederherstellen oder endgültig löschen; «Papierkorb leeren» räumt
+  alles weg. Notizen im Papierkorb erscheinen weder in der Mindmap noch bei den Fragen.
 
 ### Fragen
 
@@ -101,8 +111,13 @@ einen Index darüber.
 - In der Mindmap zeigt eine Marke am Knoten die Anzahl offener Fragen; eingeklappte Äste
   zählen ihren ganzen Teilbaum. Der Reiter *Fragen* trägt die Gesamtzahl.
 
-### Editor
+### Editor und Markdown
 
+- Der Text ist Markdown: Überschriften, Listen, Aufgabenlisten `- [ ]`, Zitate, Code,
+  Links, Bilder, fett und kursiv. `[[Titel]]` verweist auf eine andere Notiz; ein Klick in
+  der Vorschau öffnet sie, bei fehlendem Ziel wird sie auf Wunsch als Unternotiz angelegt.
+- Die Darstellung wechselt zwischen **Bearbeiten**, **Geteilt** (Text und Vorschau
+  nebeneinander) und **Vorschau**, auch mit `Ctrl+E`. Die Einstellung wird gemerkt.
 - Oberste Zeile ist der Titel, `Enter` springt in den Text.
 - Der Pfad über dem Titel zeigt, wo die Notiz im Baum hängt; die Einträge sind anklickbar.
 - **+ Unternotiz** legt direkt eine Unternotiz an.
@@ -116,6 +131,7 @@ einen Index darüber.
 | Oberfläche | `index.html`, `css/app.css`, `js/app.js` – reines HTML/CSS/JS, keine Frameworks, kein Build |
 | Mindmap | `js/mindmap.js`: eigenes Layout (links/rechts ausbalanciert), SVG, Zoom, Ziehen, Tastatur |
 | Fragen | `js/questions.js`: Parser für `?`/`!`-Zeilen; Index in der Tabelle `questions`, bei jeder Änderung abgeglichen |
+| Markdown | `js/markdown.js`: eigener Renderer, escaped allen Text, erlaubt nur sichere Link-Schemata |
 | Datenbank | [sql.js](https://github.com/sql-js/sql.js) (SQLite nach JavaScript kompiliert) in `vendor/sql.js/`; Schema und Abfragen in `js/db.js` |
 | Persistenz | `js/storage.js`: IndexedDB (ersatzweise localStorage) plus File System Access API für die Datei |
 | Start | `start.ps1` (nur Cmdlets, läuft im Constrained Language Mode), `start.cmd` |
@@ -126,7 +142,7 @@ Language Mode zur Verfügung. Dort sind weder `HttpListener` noch der Zugriff au
 File System Access API alles mit, um direkt in die Datenbankdatei zu schreiben, und
 sql.js liefert SQLite als reines JavaScript.
 
-Schema (Version 3). Ältere Datenbanken werden beim Öffnen automatisch migriert.
+Schema (Version 4). Ältere Datenbanken werden beim Öffnen automatisch migriert.
 
 ```sql
 CREATE TABLE notes (
@@ -151,6 +167,8 @@ CREATE TABLE questions (          -- Index über die ?/!-Zeilen, wird aus dem Te
   created_at  TEXT NOT NULL,
   answered_at TEXT
 );
+CREATE TABLE tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE);
+CREATE TABLE note_tags (note_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMARY KEY (note_id, tag_id));
 ```
 
 ## Entwicklung
@@ -159,7 +177,8 @@ Für die App selbst ist nichts zu bauen: Dateien ändern, `index.html` neu laden
 
 Der Smoke-Test öffnet die App wie ein Benutzer per `file://` in headless Chromium und
 prüft Anlegen, Suchen, Speichern, Neuladen, Herunterladen, Importieren, Löschen, das
-Schreiben in die Datenbankdatei, die Mindmap-Bedienung, die Fragen und die Migration alter Datenbanken:
+Schreiben in die Datenbankdatei, die Mindmap-Bedienung, die Fragen, Markdown-Vorschau, Tags,
+Papierkorb, Suche und die Migration alter Datenbanken:
 
 ```bash
 npm install

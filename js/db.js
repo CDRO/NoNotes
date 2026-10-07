@@ -3,7 +3,7 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 3;
+  const SCHEMA_VERSION = 4;
   const DEFAULT_MAP_TITLE = 'Meine Notizen';
 
   function nowIso() { return new Date().toISOString(); }
@@ -84,6 +84,15 @@
         answered_at TEXT
       );
       CREATE INDEX idx_questions_note ON questions (note_id);
+      CREATE TABLE tags (
+        id   INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE COLLATE NOCASE
+      );
+      CREATE TABLE note_tags (
+        note_id INTEGER NOT NULL,
+        tag_id  INTEGER NOT NULL,
+        PRIMARY KEY (note_id, tag_id)
+      );
     `);
     setMeta(db, 'schema_version', SCHEMA_VERSION);
     setMeta(db, 'created_at', nowIso());
@@ -131,6 +140,21 @@
       version = 3;
     }
 
+    if (version < 4) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS tags (
+          id   INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL UNIQUE COLLATE NOCASE
+        );
+        CREATE TABLE IF NOT EXISTS note_tags (
+          note_id INTEGER NOT NULL,
+          tag_id  INTEGER NOT NULL,
+          PRIMARY KEY (note_id, tag_id)
+        );
+      `);
+      version = 4;
+    }
+
     setMeta(db, 'schema_version', SCHEMA_VERSION);
   }
 
@@ -166,21 +190,46 @@
     return s.replace(/[\\%_]/g, ch => '\\' + ch);
   }
 
-  const LIST_COLUMNS = 'id, title, substr(body, 1, 200) AS snippet, created_at, updated_at, parent_id';
+  const LIST_COLUMNS = `n.id, n.title, n.body, n.created_at, n.updated_at, n.parent_id, n.deleted_at,
+    (SELECT group_concat(t.name, ',') FROM note_tags nt JOIN tags t ON t.id = nt.tag_id WHERE nt.note_id = n.id) AS tags`;
 
-  /** Liste für die Seitenleiste, neueste zuerst. Optional gefiltert (Titel oder Inhalt). */
-  function listNotes(db, query) {
+  /** Liste für die Seitenleiste, neueste zuerst. Optional gefiltert nach Text (Titel oder Inhalt),
+   *  Tag und Bereich ('live' = normale Notizen, 'trash' = Papierkorb). */
+  function listNotes(db, query, options) {
     const q = (query || '').trim().toLowerCase();
-    if (!q) {
-      return selectAll(db, `SELECT ${LIST_COLUMNS} FROM notes WHERE deleted_at IS NULL ORDER BY updated_at DESC, id DESC`);
+    const tag = options && options.tag ? String(options.tag).trim() : '';
+    const scope = options && options.scope === 'trash' ? 'trash' : 'live';
+    const where = [scope === 'trash' ? 'n.deleted_at IS NOT NULL' : 'n.deleted_at IS NULL'];
+    const params = [];
+    if (q) {
+      const like = '%' + escapeLike(q) + '%';
+      where.push("(nn_lower(n.title) LIKE ? ESCAPE '\\' OR nn_lower(n.body) LIKE ? ESCAPE '\\')");
+      params.push(like, like);
     }
-    const like = '%' + escapeLike(q) + '%';
-    return selectAll(db,
-      `SELECT ${LIST_COLUMNS} FROM notes
-        WHERE deleted_at IS NULL
-          AND (nn_lower(title) LIKE ? ESCAPE '\\' OR nn_lower(body) LIKE ? ESCAPE '\\')
-        ORDER BY updated_at DESC, id DESC`,
-      [like, like]);
+    if (tag) {
+      where.push('EXISTS (SELECT 1 FROM note_tags nt JOIN tags t ON t.id = nt.tag_id WHERE nt.note_id = n.id AND t.name = ? COLLATE NOCASE)');
+      params.push(tag);
+    }
+    const order = scope === 'trash' ? 'n.deleted_at DESC, n.id DESC' : 'n.updated_at DESC, n.id DESC';
+    return selectAll(db, `SELECT ${LIST_COLUMNS} FROM notes n WHERE ${where.join(' AND ')} ORDER BY ${order}`, params);
+  }
+
+  /** Lebende Notiz mit diesem Titel (für [[Titel]]-Verweise). */
+  function findNoteByTitle(db, title) {
+    const t = (title || '').trim();
+    if (!t) return null;
+    const row = selectOne(db,
+      'SELECT id FROM notes WHERE deleted_at IS NULL AND title = ? COLLATE NOCASE ORDER BY updated_at DESC LIMIT 1', [t]);
+    return row ? row.id : null;
+  }
+
+  /** Alle Ziele für [[Titel]]-Verweise: Titel → id (lebende Notizen). */
+  function titleIndex(db) {
+    const map = new Map();
+    for (const r of selectAll(db, "SELECT id, title FROM notes WHERE deleted_at IS NULL AND title <> '' ORDER BY updated_at")) {
+      map.set(r.title.trim().toLowerCase(), r.id);
+    }
+    return map;
   }
 
   /** Alle lebenden Notizen als flache Liste für den Baum. */
@@ -306,7 +355,79 @@
   function purgeNote(db, id) {
     db.run('UPDATE notes SET parent_id = (SELECT parent_id FROM notes WHERE id = ?) WHERE parent_id = ?', [id, id]);
     db.run('DELETE FROM questions WHERE note_id = ?', [id]);
+    db.run('DELETE FROM note_tags WHERE note_id = ?', [id]);
     db.run('DELETE FROM notes WHERE id = ?', [id]);
+    pruneTags(db);
+  }
+
+  // ---------- Papierkorb ----------
+
+  function countTrash(db) {
+    return scalar(db, 'SELECT count(*) FROM notes WHERE deleted_at IS NOT NULL');
+  }
+
+  /** Holt eine Notiz aus dem Papierkorb zurück. Fehlt der alte Elternknoten, hängt sie an der Wurzel. */
+  function restoreNote(db, id) {
+    const note = getNote(db, id);
+    if (!note || !note.deleted_at) return;
+    let parentId = note.parent_id;
+    if (parentId != null) {
+      const parent = getNote(db, parentId);
+      if (!parent || parent.deleted_at) parentId = null;
+    }
+    db.run('UPDATE notes SET deleted_at = NULL, parent_id = ?, sort_order = ?, updated_at = ? WHERE id = ?',
+      [parentId, nextSortOrder(db, parentId), nowIso(), id]);
+  }
+
+  function emptyTrash(db) {
+    for (const row of selectAll(db, 'SELECT id FROM notes WHERE deleted_at IS NOT NULL')) purgeNote(db, row.id);
+  }
+
+  // ---------- Tags ----------
+
+  function normalizeTag(name) {
+    return String(name || '').replace(/\s+/g, ' ').replace(/^#/, '').trim();
+  }
+
+  function pruneTags(db) {
+    db.run('DELETE FROM tags WHERE id NOT IN (SELECT DISTINCT tag_id FROM note_tags)');
+  }
+
+  function getTags(db, noteId) {
+    return selectAll(db,
+      'SELECT t.name FROM note_tags nt JOIN tags t ON t.id = nt.tag_id WHERE nt.note_id = ? ORDER BY t.name COLLATE NOCASE', [noteId])
+      .map(r => r.name);
+  }
+
+  /** Setzt die Tags einer Notiz (ersetzt die bisherigen). Doppelte und leere werden ignoriert. */
+  function setTags(db, noteId, names) {
+    const seen = new Set();
+    const clean = [];
+    for (const raw of names || []) {
+      const name = normalizeTag(raw);
+      if (!name || seen.has(name.toLowerCase())) continue;
+      seen.add(name.toLowerCase());
+      clean.push(name);
+    }
+    db.run('DELETE FROM note_tags WHERE note_id = ?', [noteId]);
+    for (const name of clean) {
+      db.run('INSERT OR IGNORE INTO tags (name) VALUES (?)', [name]);
+      const tagId = scalar(db, 'SELECT id FROM tags WHERE name = ? COLLATE NOCASE', [name]);
+      db.run('INSERT OR IGNORE INTO note_tags (note_id, tag_id) VALUES (?, ?)', [noteId, tagId]);
+    }
+    pruneTags(db);
+    db.run('UPDATE notes SET updated_at = ? WHERE id = ?', [nowIso(), noteId]);
+    return clean;
+  }
+
+  /** Alle Tags mit Anzahl lebender Notizen. */
+  function listAllTags(db) {
+    return selectAll(db,
+      `SELECT t.id, t.name, count(n.id) AS count
+         FROM tags t
+         LEFT JOIN note_tags nt ON nt.tag_id = t.id
+         LEFT JOIN notes n ON n.id = nt.note_id AND n.deleted_at IS NULL
+        GROUP BY t.id ORDER BY t.name COLLATE NOCASE`);
   }
 
   // ---------- Fragen ----------
@@ -343,8 +464,13 @@
   function listQuestions(db, options) {
     const status = (options && options.status) || 'open';
     const q = ((options && options.query) || '').trim().toLowerCase();
+    const tag = options && options.tag ? String(options.tag).trim() : '';
     const where = ['n.deleted_at IS NULL'];
     const params = [];
+    if (tag) {
+      where.push('EXISTS (SELECT 1 FROM note_tags nt JOIN tags t ON t.id = nt.tag_id WHERE nt.note_id = n.id AND t.name = ? COLLATE NOCASE)');
+      params.push(tag);
+    }
     if (status === 'open') where.push('q.answer IS NULL');
     else if (status === 'answered') where.push('q.answer IS NOT NULL');
     if (q) {
@@ -431,6 +557,15 @@
     countQuestions,
     getQuestion,
     answerQuestion,
+    findNoteByTitle,
+    titleIndex,
+    countTrash,
+    restoreNote,
+    emptyTrash,
+    getTags,
+    setTags,
+    listAllTags,
+    normalizeTag,
     exportBytes,
   };
 })(window);

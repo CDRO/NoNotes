@@ -6,11 +6,14 @@
   const Store = window.NoNotesStorage;
   const Mindmap = window.NoNotesMindmap;
   const Q = window.NoNotesQuestions;
+  const M = window.NoNotesMarkdown;
 
   const DEFAULT_FILENAME = 'NoNotes.sqlite';
   const SAVE_DELAY_MS = 600;
   const SEARCH_DELAY_MS = 120;
   const VIEW_KEY = 'nonotes.view';
+  const MODE_KEY = 'nonotes.editorMode';
+  const PREVIEW_DELAY_MS = 150;
 
   const $ = sel => document.querySelector(sel);
   const el = {
@@ -23,6 +26,11 @@
     questionsView: $('#questionsView'), qFilter: $('#qFilter'), qSearch: $('#qSearch'),
     qList: $('#qList'), qEmpty: $('#qEmpty'), qCount: $('#qCount'),
     questionBtn: $('#questionBtn'), answerBtn: $('#answerBtn'), noteQuestions: $('#noteQuestions'),
+    mapSearch: $('#mapSearch'), mapMatches: $('#mapMatches'), qTagFilter: $('#qTagFilter'),
+    listScope: $('#listScope'), tagFilter: $('#tagFilter'), emptyTrashBtn: $('#emptyTrashBtn'),
+    editor: $('#editor'), trashBar: $('#trashBar'), restoreBtn: $('#restoreBtn'), purgeBtn: $('#purgeBtn'),
+    tagChips: $('#tagChips'), tagInput: $('#tagInput'), tagSuggestions: $('#tagSuggestions'),
+    modeSwitch: $('#modeSwitch'), preview: $('#preview'),
     mapView: $('#mapView'), mapNewBtn: $('#mapNewBtn'), mapFitBtn: $('#mapFitBtn'),
     mapZoomInBtn: $('#mapZoomInBtn'), mapZoomOutBtn: $('#mapZoomOutBtn'),
     mindmap: $('#mindmap'), renameInput: $('#renameInput'), contextMenu: $('#contextMenu'),
@@ -47,6 +55,14 @@
     qSearchTimer: null,
     qAnswering: null,     // id der Frage, deren Antwortfeld offen ist
     qDraft: null,         // Entwurf im offenen Antwortfeld (überlebt ein Neuzeichnen)
+    qTag: '',
+    editorMode: 'edit',   // 'edit' | 'split' | 'preview'
+    previewTimer: null,
+    listScope: 'live',    // 'live' | 'trash'
+    tagFilter: '',
+    mapMatches: [],       // ids der Treffer in der Mindmap (Reihenfolge wie Liste)
+    mapMatchIndex: -1,
+    mapSearchTimer: null,
     // Speichern: jede Änderung erhöht editSeq; savedSeq ist der zuletzt vollständig gesicherte Stand.
     editSeq: 0,
     savedSeq: 0,
@@ -183,7 +199,12 @@
     wireEvents();
 
     let view = 'map';
-    try { view = localStorage.getItem(VIEW_KEY) || 'map'; } catch (e) { /* egal */ }
+    let mode = 'edit';
+    try {
+      view = localStorage.getItem(VIEW_KEY) || 'map';
+      mode = localStorage.getItem(MODE_KEY) || 'edit';
+    } catch (e) { /* egal */ }
+    setEditorMode(['edit', 'split', 'preview'].includes(mode) ? mode : 'edit');
 
     el.boot.hidden = true;
     el.app.hidden = false;
@@ -271,7 +292,12 @@
     state.query = '';
     state.mapSelection = null;
     state.mapDirty = true;
+    state.tagFilter = '';
+    state.qTag = '';
+    state.listScope = 'live';
+    el.listScope.value = 'live';
     el.search.value = '';
+    el.mapSearch.value = '';
     showEditorView(false);
     document.body.classList.remove('editor-open');
     if (state.map) state.map.requestFit();
@@ -501,12 +527,41 @@
   // ---------- Darstellung ----------
 
   function renderAll() {
+    renderTagFilters();
     renderList();
     renderEditor();
     renderCount();
     renderMap();
     renderQuestionCounts();
     if (state.view === 'questions') renderQuestions();
+  }
+
+  function renderTagFilters() {
+    const tags = DB.listAllTags(state.db);
+    const fill = (select, current) => {
+      const frag = document.createDocumentFragment();
+      const all = document.createElement('option');
+      all.value = '';
+      all.textContent = 'Alle Tags';
+      frag.appendChild(all);
+      for (const t of tags) {
+        const o = document.createElement('option');
+        o.value = t.name;
+        o.textContent = `${t.name} (${t.count})`;
+        frag.appendChild(o);
+      }
+      select.replaceChildren(frag);
+      select.value = tags.some(t => t.name === current) ? current : '';
+      return select.value;
+    };
+    state.tagFilter = fill(el.tagFilter, state.tagFilter);
+    state.qTag = fill(el.qTagFilter, state.qTag);
+    const mine = new Set((state.currentId != null ? DB.getTags(state.db, state.currentId) : []).map(t => t.toLowerCase()));
+    el.tagSuggestions.replaceChildren(...tags.filter(t => !mine.has(t.name.toLowerCase())).map(t => {
+      const o = document.createElement('option');
+      o.value = t.name;
+      return o;
+    }));
   }
 
   function renderQuestionCounts() {
@@ -525,17 +580,60 @@
   function renderMap() {
     if (!state.map || state.view !== 'map' || isEditorOpen()) { state.mapDirty = true; return; }
     if (!el.mindmap.getBoundingClientRect().width) { state.mapDirty = true; return; }
-    state.map.render(DB.getTree(state.db), { mapTitle: DB.getMapTitle(state.db) });
+    let matchIds = null;
+    if (state.query.trim()) {
+      state.mapMatches = DB.listNotes(state.db, state.query).map(r => r.id);
+      matchIds = new Set(state.mapMatches);
+      el.mapMatches.hidden = false;
+      el.mapMatches.textContent = state.mapMatches.length === 1 ? '1 Treffer' : `${state.mapMatches.length} Treffer`;
+    } else {
+      state.mapMatches = [];
+      state.mapMatchIndex = -1;
+      el.mapMatches.hidden = true;
+    }
+    state.map.render(DB.getTree(state.db), { mapTitle: DB.getMapTitle(state.db), matchIds });
     state.map.setSelected(state.mapSelection);
     state.mapDirty = false;
   }
 
+  /** Springt zum nächsten Treffer der Mindmap-Suche. */
+  function nextMapMatch(step) {
+    if (!state.mapMatches.length) return;
+    state.mapMatchIndex = (state.mapMatchIndex + step + state.mapMatches.length) % state.mapMatches.length;
+    const id = state.mapMatches[state.mapMatchIndex];
+    // Eingeklappte Vorfahren aufklappen, damit der Treffer sichtbar wird.
+    let p = DB.getNote(state.db, id);
+    let changed = false;
+    while (p && p.parent_id != null) {
+      p = DB.getNote(state.db, p.parent_id);
+      if (p && p.collapsed) { DB.setCollapsed(state.db, p.id, false); changed = true; }
+    }
+    if (changed) markEdited();
+    state.mapSelection = id;
+    renderMap();
+    state.map.ensureVisible(id);
+    el.mapMatches.textContent = `Treffer ${state.mapMatchIndex + 1} von ${state.mapMatches.length}`;
+  }
+
+  /** Textausschnitt um den ersten Treffer herum, sonst Anfang des Textes. */
+  function snippetAround(body, query) {
+    const flat = (body || '').replace(/\s+/g, ' ').trim();
+    const q = (query || '').trim();
+    if (!q) return flat.slice(0, 140);
+    const idx = flat.toLowerCase().indexOf(q.toLowerCase());
+    if (idx < 0) return flat.slice(0, 140);
+    const start = Math.max(0, idx - 24);
+    return (start > 0 ? '…' : '') + flat.slice(start, start + 140);
+  }
+
   function renderList() {
-    const notes = DB.listNotes(state.db, state.query);
+    const trash = state.listScope === 'trash';
+    const notes = DB.listNotes(state.db, state.query, { tag: state.tagFilter, scope: state.listScope });
+    const q = state.query.trim();
     const frag = document.createDocumentFragment();
     for (const n of notes) {
       const li = document.createElement('li');
-      li.className = 'note-item' + (n.id === state.currentId ? ' active' : '');
+      li.className = 'note-item' + (n.id === state.currentId ? ' active' : '') + (trash ? ' trashed' : '');
       li.dataset.id = String(n.id);
       li.tabIndex = 0;
       li.setAttribute('role', 'option');
@@ -543,31 +641,43 @@
 
       const t = document.createElement('div');
       t.className = 'note-title';
-      t.textContent = n.title.trim() || 'Ohne Titel';
+      t.innerHTML = M.highlightText(n.title.trim() || 'Ohne Titel', q);
 
       const s = document.createElement('div');
       s.className = 'note-snippet';
-      s.textContent = snippetOf(n.snippet) || '…';
+      s.innerHTML = M.highlightText(snippetAround(n.body, q) || '…', q);
 
       const d = document.createElement('div');
       d.className = 'note-date';
-      d.textContent = fmtDate(n.updated_at);
+      d.textContent = trash && n.deleted_at ? `Gelöscht ${fmtDate(n.deleted_at)}` : fmtDate(n.updated_at);
 
       li.append(t, s, d);
+      if (n.tags) {
+        const tags = document.createElement('div');
+        tags.className = 'note-tags';
+        for (const name of n.tags.split(',')) {
+          const chip = document.createElement('span');
+          chip.className = 'tag';
+          chip.textContent = name;
+          tags.appendChild(chip);
+        }
+        li.appendChild(tags);
+      }
       frag.appendChild(li);
     }
     el.list.replaceChildren(frag);
 
     const empty = notes.length === 0;
     el.listEmpty.hidden = !empty;
-    el.listEmpty.textContent = state.query
-      ? 'Keine Treffer.'
+    el.listEmpty.textContent = q || state.tagFilter ? 'Keine Treffer.'
+      : trash ? 'Der Papierkorb ist leer.'
       : 'Noch keine Notizen. Lege mit „Neue Notiz“ los.';
+    el.emptyTrashBtn.hidden = !(trash && DB.countTrash(state.db) > 0);
   }
 
   function renderEditor() {
     const note = state.currentId != null ? DB.getNote(state.db, state.currentId) : null;
-    if (!note || note.deleted_at) {
+    if (!note) {
       state.currentId = null;
       el.editorPane.hidden = true;
       el.editorEmpty.hidden = false;
@@ -581,6 +691,111 @@
     renderMeta(note.created_at, note.updated_at);
     renderCrumbs(note);
     renderNoteQuestions(note.body);
+    renderTags(DB.getTags(state.db, note.id));
+    const trashed = !!note.deleted_at;
+    el.trashBar.hidden = !trashed;
+    el.editor.classList.toggle('readonly', trashed);
+    el.title.readOnly = trashed;
+    el.body.readOnly = trashed;
+    el.tagInput.disabled = trashed;
+    el.deleteBtn.hidden = trashed;
+    el.childBtn.hidden = trashed;
+    el.questionBtn.disabled = trashed;
+    el.answerBtn.disabled = trashed;
+    if (state.editorMode !== 'edit') renderPreview();
+  }
+
+  function renderTags(tags) {
+    el.tagChips.replaceChildren(...tags.map(name => {
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.append(name);
+      const x = document.createElement('button');
+      x.type = 'button';
+      x.textContent = '×';
+      x.title = `Tag „${name}“ entfernen`;
+      x.setAttribute('aria-label', `Tag ${name} entfernen`);
+      x.addEventListener('click', () => removeTag(name));
+      chip.appendChild(x);
+      return chip;
+    }));
+  }
+
+  function currentTags() {
+    return [...el.tagChips.querySelectorAll('.chip')].map(c => c.firstChild.textContent);
+  }
+
+  function saveTags(tags) {
+    if (state.currentId == null) return;
+    DB.setTags(state.db, state.currentId, tags);
+    renderTags(DB.getTags(state.db, state.currentId));
+    markEdited();
+    renderTagFilters();
+    renderList();
+    if (state.view === 'questions') renderQuestions();
+  }
+
+  function addTagFromInput() {
+    const raw = el.tagInput.value;
+    el.tagInput.value = '';
+    const parts = raw.split(',').map(DB.normalizeTag).filter(Boolean);
+    if (!parts.length) return;
+    saveTags(currentTags().concat(parts));
+  }
+
+  function removeTag(name) {
+    saveTags(currentTags().filter(t => t.toLowerCase() !== name.toLowerCase()));
+  }
+
+  // ---------- Vorschau ----------
+
+  function setEditorMode(mode) {
+    state.editorMode = mode;
+    el.editorPane.classList.remove('mode-edit', 'mode-split', 'mode-preview');
+    el.editorPane.classList.add('mode-' + mode);
+    for (const b of el.modeSwitch.querySelectorAll('button[data-mode]')) {
+      b.setAttribute('aria-selected', String(b.dataset.mode === mode));
+    }
+    try { localStorage.setItem(MODE_KEY, mode); } catch (e) { /* egal */ }
+    if (mode !== 'edit' && state.currentId != null) renderPreview();
+  }
+
+  function cycleEditorMode() {
+    const order = ['edit', 'split', 'preview'];
+    setEditorMode(order[(order.indexOf(state.editorMode) + 1) % order.length]);
+  }
+
+  function renderPreview() {
+    if (state.currentId == null) return;
+    const index = DB.titleIndex(state.db);
+    el.preview.innerHTML = M.render(el.body.value, {
+      highlight: state.query.trim() || null,
+      resolveTitle: title => { const id = index.get(title.trim().toLowerCase()); return id == null ? null : id; },
+    });
+  }
+
+  function schedulePreview() {
+    if (state.editorMode === 'edit') return;
+    clearTimeout(state.previewTimer);
+    state.previewTimer = setTimeout(renderPreview, PREVIEW_DELAY_MS);
+  }
+
+  function onPreviewClick(e) {
+    const a = e.target.closest('a');
+    if (!a) return;
+    if (a.classList.contains('md-wiki')) {
+      e.preventDefault();
+      if (a.dataset.noteId) { openNote(Number(a.dataset.noteId)); return; }
+      const title = a.dataset.title;
+      if (!confirm(`Es gibt keine Notiz „${title}“. Jetzt als Unternotiz anlegen?`)) return;
+      const id = DB.createNote(state.db, state.currentId);
+      DB.renameNote(state.db, id, title);
+      markEdited();
+      renderAll();
+      openNote(id);
+    } else if (a.getAttribute('href') === '#') {
+      e.preventDefault();
+    }
   }
 
   function renderNoteQuestions(body) {
@@ -617,6 +832,11 @@
   }
 
   function renderCount() {
+    if (state.listScope === 'trash') {
+      const t = DB.countTrash(state.db);
+      el.count.textContent = t === 1 ? '1 Notiz im Papierkorb' : `${t} Notizen im Papierkorb`;
+      return;
+    }
     const n = DB.countNotes(state.db);
     el.count.textContent = n === 1 ? '1 Notiz' : `${n} Notizen`;
   }
@@ -691,7 +911,8 @@
     if (state.view === 'map') { newNoteInMap(parentId); return; }
     const id = DB.createNote(state.db, null);
     state.currentId = id;
-    if (state.query) { state.query = ''; el.search.value = ''; }
+    if (state.query) { state.query = ''; el.search.value = ''; el.mapSearch.value = ''; }
+    if (state.listScope === 'trash') { state.listScope = 'live'; el.listScope.value = 'live'; }
     renderAll();
     markEdited();
     if (isNarrow()) showEditorView(true);
@@ -739,6 +960,7 @@
     updateListItem(state.currentId, el.title.value, el.body.value, ts);
     renderNoteQuestions(el.body.value);
     renderQuestionCounts();
+    schedulePreview();
     markEdited();
   }
 
@@ -770,7 +992,7 @@
     // Entwurf eines offenen Antwortfelds sichern, damit ein Neuzeichnen nichts verschluckt.
     const openTa = state.qAnswering != null ? el.qList.querySelector(`.q-item[data-id="${state.qAnswering}"] .q-form textarea`) : null;
     if (openTa) state.qDraft = openTa.value;
-    const rows = DB.listQuestions(state.db, { status: state.qStatus, query: state.qQuery });
+    const rows = DB.listQuestions(state.db, { status: state.qStatus, query: state.qQuery, tag: state.qTag });
     const counts = DB.countQuestions(state.db);
     el.qCount.textContent = `${rows.length} von ${counts.total} · ${counts.open} offen`;
 
@@ -819,14 +1041,14 @@
     mark.textContent = r.answer ? '✓' : '?';
     const text = document.createElement('div');
     text.className = 'q-text';
-    text.textContent = r.text;
+    text.innerHTML = M.highlightText(r.text, state.qQuery.trim());
     head.append(mark, text);
     item.appendChild(head);
 
     if (r.answer) {
       const a = document.createElement('div');
       a.className = 'q-answer';
-      a.textContent = r.answer;
+      a.innerHTML = M.highlightText(r.answer, state.qQuery.trim());
       item.appendChild(a);
     }
 
@@ -925,7 +1147,7 @@
     const info = state.map ? state.map.nodeInfo(id) : null;
     const kids = info ? info.childCount : 0;
     const hint = kids ? `\n\n${kids === 1 ? 'Die Unternotiz rückt' : kids + ' Unternotizen rücken'} zum übergeordneten Knoten auf.` : '';
-    if (!confirm(`Soll ${name} gelöscht werden?${hint}`)) return;
+    if (!confirm(`Soll ${name} in den Papierkorb verschoben werden?${hint}`)) return;
 
     const parentId = note.parent_id;
     let nextInList = null;
@@ -944,6 +1166,39 @@
     markEdited();
     if (state.currentId == null) showEditorView(false);
     if (state.view === 'map') el.mindmap.focus({ preventScroll: true });
+  }
+
+  function restoreCurrent() {
+    if (state.currentId == null) return;
+    const id = state.currentId;
+    DB.restoreNote(state.db, id);
+    state.listScope = 'live';
+    el.listScope.value = 'live';
+    markEdited();
+    renderAll();
+    setStatus('Notiz wiederhergestellt', 'dirty');
+  }
+
+  function purgeCurrent() {
+    if (state.currentId == null) return;
+    const note = DB.getNote(state.db, state.currentId);
+    const name = note && note.title.trim() ? `„${note.title.trim()}“` : 'diese Notiz';
+    if (!confirm(`Soll ${name} endgültig gelöscht werden? Das lässt sich nicht rückgängig machen.`)) return;
+    DB.purgeNote(state.db, state.currentId);
+    state.currentId = null;
+    markEdited();
+    renderAll();
+    showEditorView(false);
+  }
+
+  function emptyTrash() {
+    const n = DB.countTrash(state.db);
+    if (!n) return;
+    if (!confirm(`${n === 1 ? 'Die Notiz' : 'Alle ' + n + ' Notizen'} im Papierkorb endgültig löschen?`)) return;
+    DB.emptyTrash(state.db);
+    if (state.currentId != null && !DB.getNote(state.db, state.currentId)) state.currentId = null;
+    markEdited();
+    renderAll();
   }
 
   function reparentNote(id, parentId) {
@@ -1138,11 +1393,17 @@
 
   // ---------- Suche, Menü ----------
 
-  function onSearchInput() {
+  function onSearchInput(source) {
     clearTimeout(state.searchTimer);
     state.searchTimer = setTimeout(() => {
-      state.query = el.search.value;
+      const value = source === 'map' ? el.mapSearch.value : el.search.value;
+      if (source === 'map') el.search.value = value; else el.mapSearch.value = value;
+      if (value === state.query) return;
+      state.query = value;
+      state.mapMatchIndex = -1;
       renderList();
+      if (state.view === 'map') renderMap(); else state.mapDirty = true;
+      if (state.editorMode !== 'edit') renderPreview();
     }, SEARCH_DELAY_MS);
   }
 
@@ -1240,10 +1501,39 @@
     el.backBtn.addEventListener('click', closeEditor);
     el.title.addEventListener('input', onEdit);
     el.body.addEventListener('input', onEdit);
-    el.search.addEventListener('input', onSearchInput);
+    el.search.addEventListener('input', () => onSearchInput('list'));
     el.search.addEventListener('keydown', e => {
-      if (e.key === 'Escape' && el.search.value) { el.search.value = ''; onSearchInput(); }
+      if (e.key === 'Escape' && el.search.value) { el.search.value = ''; onSearchInput('list'); }
     });
+    el.mapSearch.addEventListener('input', () => onSearchInput('map'));
+    el.mapSearch.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); nextMapMatch(e.shiftKey ? -1 : 1); }
+      else if (e.key === 'Escape') {
+        e.stopPropagation();
+        if (el.mapSearch.value) { el.mapSearch.value = ''; onSearchInput('map'); }
+        else el.mindmap.focus({ preventScroll: true });
+      }
+    });
+    el.listScope.addEventListener('change', () => { state.listScope = el.listScope.value; renderList(); renderCount(); });
+    el.tagFilter.addEventListener('change', () => { state.tagFilter = el.tagFilter.value; renderList(); });
+    el.qTagFilter.addEventListener('change', () => { state.qTag = el.qTagFilter.value; renderQuestions(); });
+    el.emptyTrashBtn.addEventListener('click', emptyTrash);
+    el.restoreBtn.addEventListener('click', restoreCurrent);
+    el.purgeBtn.addEventListener('click', purgeCurrent);
+    el.modeSwitch.addEventListener('click', e => {
+      const b = e.target.closest('button[data-mode]');
+      if (b) setEditorMode(b.dataset.mode);
+    });
+    el.preview.addEventListener('click', onPreviewClick);
+    el.tagInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTagFromInput(); }
+      else if (e.key === 'Backspace' && !el.tagInput.value) {
+        const tags = currentTags();
+        if (tags.length) removeTag(tags[tags.length - 1]);
+      }
+    });
+    el.tagInput.addEventListener('change', () => { if (el.tagInput.value.trim()) addTagFromInput(); });
+    el.tagInput.addEventListener('blur', () => { if (el.tagInput.value.trim()) addTagFromInput(); });
     el.title.addEventListener('keydown', e => {
       if (e.key === 'Enter') { e.preventDefault(); el.body.focus(); }
     });
@@ -1281,6 +1571,7 @@
     document.addEventListener('keydown', e => {
       const mod = e.ctrlKey || e.metaKey;
       if (mod && !e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); persistNow(); }
+      else if (mod && !e.shiftKey && e.key.toLowerCase() === 'e' && state.currentId != null && !el.editorPane.hidden) { e.preventDefault(); cycleEditorMode(); }
       else if (e.altKey && e.key.toLowerCase() === 'n') { e.preventDefault(); newNote(); }
       else if (e.key === 'Escape') {
         if (state.rename) return;

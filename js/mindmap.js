@@ -181,7 +181,9 @@
 
     function drawNode(n) {
       const g = svgEl('g', {
-        class: 'mm-node' + (n.isRoot ? ' mm-root' : '') + (String(n.id) === String(inst.selectedId) ? ' mm-selected' : ''),
+        class: 'mm-node' + (n.isRoot ? ' mm-root' : '') + (String(n.id) === String(inst.selectedId) ? ' mm-selected' : '')
+          + (n.match ? ' mm-match' : '') + (n.matchInside ? ' mm-match-inside' : '')
+          + (svg.classList.contains('has-matches') && !n.isRoot && !n.match && !n.matchInside ? ' mm-dim' : ''),
         'data-id': n.id,
         transform: `translate(${n.x} ${n.y})`,
         tabindex: '-1',
@@ -232,6 +234,17 @@
     function render(rows, options) {
       options = options || {};
       const { root, byId } = buildTree(rows, options.mapTitle || '');
+      const matches = options.matchIds || null;
+      if (matches) {
+        const inside = n => n.children.some(c => matches.has(c.id) || inside(c));
+        for (const n of byId.values()) {
+          n.match = matches.has(n.id);
+          n.matchInside = n.collapsed && inside(n);
+        }
+      } else {
+        for (const n of byId.values()) { n.match = false; n.matchInside = false; }
+      }
+      svg.classList.toggle('has-matches', !!matches);
       const { placed, bounds } = layoutTree(root);
       inst.root = root;
       inst.byId = byId;
