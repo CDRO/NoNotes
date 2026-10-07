@@ -4,10 +4,12 @@
 
   const DB = window.NoNotesDB;
   const Store = window.NoNotesStorage;
+  const Mindmap = window.NoNotesMindmap;
 
   const DEFAULT_FILENAME = 'NoNotes.sqlite';
   const SAVE_DELAY_MS = 600;
   const SEARCH_DELAY_MS = 120;
+  const VIEW_KEY = 'nonotes.view';
 
   const $ = sel => document.querySelector(sel);
   const el = {
@@ -16,9 +18,14 @@
     menuBtn: $('#menuBtn'), menu: $('#menu'), menuHint: $('#menuHint'),
     createFileBtn: $('#createFileBtn'), openFileBtn: $('#openFileBtn'), disconnectBtn: $('#disconnectBtn'),
     downloadBtn: $('#downloadBtn'), importBtn: $('#importBtn'), importInput: $('#importInput'),
+    viewMapBtn: $('#viewMapBtn'), viewListBtn: $('#viewListBtn'),
+    mapView: $('#mapView'), mapNewBtn: $('#mapNewBtn'), mapFitBtn: $('#mapFitBtn'),
+    mapZoomInBtn: $('#mapZoomInBtn'), mapZoomOutBtn: $('#mapZoomOutBtn'),
+    mindmap: $('#mindmap'), renameInput: $('#renameInput'), contextMenu: $('#contextMenu'),
     search: $('#search'), newBtn: $('#newBtn'), list: $('#list'), listEmpty: $('#listEmpty'), count: $('#count'),
     editorEmpty: $('#editorEmpty'), editorPane: $('#editorPane'), backBtn: $('#backBtn'),
-    noteMeta: $('#noteMeta'), deleteBtn: $('#deleteBtn'), title: $('#title'), body: $('#body'),
+    crumbs: $('#crumbs'), noteMeta: $('#noteMeta'), childBtn: $('#childBtn'), deleteBtn: $('#deleteBtn'),
+    title: $('#title'), body: $('#body'),
   };
 
   const state = {
@@ -26,6 +33,11 @@
     db: null,
     currentId: null,
     query: '',
+    view: 'map',
+    map: null,
+    mapDirty: true,
+    mapSelection: null,   // 'root' | Zahl | null
+    rename: null,         // { id, isNew }
     // Speichern: jede Änderung erhöht editSeq; savedSeq ist der zuletzt vollständig gesicherte Stand.
     editSeq: 0,
     savedSeq: 0,
@@ -71,6 +83,8 @@
   function isNarrow() { return window.matchMedia('(max-width: 760px)').matches; }
 
   function showEditorView(on) { document.body.classList.toggle('view-editor', !!on); }
+
+  function isEditorOpen() { return document.body.classList.contains('editor-open'); }
 
   function showBanner(text, actions) {
     el.banner.replaceChildren();
@@ -148,13 +162,26 @@
       }
     }
 
+    state.map = Mindmap.create(el.mindmap, {
+      onSelect: id => { state.mapSelection = id; },
+      onOpen: id => openNote(id),
+      onOpenRoot: () => beginRename('root'),
+      onReparent: (id, parentId) => reparentNote(id, parentId),
+      onToggleCollapse: id => toggleCollapse(id),
+      onContextMenu: (id, x, y) => showNodeMenu(id, x, y),
+    });
+
     wireEvents();
-    renderAll();
-    updateStorageInfo();
-    if (state.fileHandle && state.filePermission !== 'granted') showConnectBanner();
+
+    let view = 'map';
+    try { view = localStorage.getItem(VIEW_KEY) || 'map'; } catch (e) { /* egal */ }
 
     el.boot.hidden = true;
     el.app.hidden = false;
+    setView(view === 'list' ? 'list' : 'map');
+    renderAll();
+    updateStorageInfo();
+    if (state.fileHandle && state.filePermission !== 'granted') showConnectBanner();
     document.body.dataset.ready = 'true';
 
     setStatus(openedFromFile ? `Aus „${state.fileHandle.name}“ geladen`
@@ -174,6 +201,7 @@
 
   function markEdited() {
     state.editedSinceStart = true;
+    state.mapDirty = true;
     scheduleSave();
   }
 
@@ -232,8 +260,12 @@
     state.db = newDb;
     state.currentId = null;
     state.query = '';
+    state.mapSelection = null;
+    state.mapDirty = true;
     el.search.value = '';
     showEditorView(false);
+    document.body.classList.remove('editor-open');
+    if (state.map) state.map.requestFit();
   }
 
   // ---------- Datei-Anbindung ----------
@@ -425,12 +457,42 @@
     }
   }
 
+  // ---------- Ansichten ----------
+
+  function setView(view) {
+    state.view = view;
+    document.body.classList.toggle('view-map', view === 'map');
+    document.body.classList.toggle('view-list', view === 'list');
+    el.viewMapBtn.setAttribute('aria-selected', String(view === 'map'));
+    el.viewListBtn.setAttribute('aria-selected', String(view === 'list'));
+    try { localStorage.setItem(VIEW_KEY, view); } catch (e) { /* egal */ }
+    document.body.classList.remove('editor-open');
+    hideContextMenu();
+    cancelRename();
+    if (view === 'map') {
+      renderMap();
+      el.mindmap.focus({ preventScroll: true });
+    } else {
+      renderList();
+      renderEditor();
+    }
+  }
+
   // ---------- Darstellung ----------
 
   function renderAll() {
     renderList();
     renderEditor();
     renderCount();
+    renderMap();
+  }
+
+  function renderMap() {
+    if (!state.map || state.view !== 'map' || isEditorOpen()) { state.mapDirty = true; return; }
+    if (!el.mindmap.getBoundingClientRect().width) { state.mapDirty = true; return; }
+    state.map.render(DB.getTree(state.db), { mapTitle: DB.getMapTitle(state.db) });
+    state.map.setSelected(state.mapSelection);
+    state.mapDirty = false;
   }
 
   function renderList() {
@@ -470,7 +532,7 @@
 
   function renderEditor() {
     const note = state.currentId != null ? DB.getNote(state.db, state.currentId) : null;
-    if (!note) {
+    if (!note || note.deleted_at) {
       state.currentId = null;
       el.editorPane.hidden = true;
       el.editorEmpty.hidden = false;
@@ -482,10 +544,32 @@
     if (document.activeElement !== el.title) el.title.value = note.title;
     if (document.activeElement !== el.body) el.body.value = note.body;
     renderMeta(note.created_at, note.updated_at);
+    renderCrumbs(note);
   }
 
   function renderMeta(createdAt, updatedAt) {
     el.noteMeta.textContent = `Erstellt ${fmtDate(createdAt)} · Geändert ${fmtDate(updatedAt)}`;
+  }
+
+  function renderCrumbs(note) {
+    const path = DB.getPath(state.db, note.id);
+    const frag = document.createDocumentFragment();
+    const add = (label, onClick) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = label;
+      b.addEventListener('click', onClick);
+      frag.appendChild(b);
+      const sep = document.createElement('span');
+      sep.className = 'sep';
+      sep.textContent = '›';
+      frag.appendChild(sep);
+    };
+    add(DB.getMapTitle(state.db), () => {
+      if (state.view === 'map') { closeEditor(); state.mapSelection = 'root'; state.map.setSelected('root'); }
+    });
+    for (const p of path) add(p.title.trim() || 'Ohne Titel', () => openNote(p.id));
+    el.crumbs.replaceChildren(frag);
   }
 
   function renderCount() {
@@ -510,7 +594,7 @@
     }
   }
 
-  // ---------- Aktionen ----------
+  // ---------- Notiz-Aktionen ----------
 
   function selectNote(id, focusEditor) {
     state.currentId = id;
@@ -520,13 +604,73 @@
     if (focusEditor) (el.title.value ? el.body : el.title).focus();
   }
 
+  /** Öffnet eine Notiz im Editor: in der Liste rechts, aus der Mindmap als Vollbild. */
+  function openNote(id) {
+    hideContextMenu();
+    state.currentId = id;
+    if (state.view === 'map') {
+      state.mapSelection = id;
+      document.body.classList.add('editor-open');
+      renderEditor();
+      (el.title.value ? el.body : el.title).focus();
+    } else {
+      selectNote(id, true);
+    }
+  }
+
+  function closeEditor() {
+    if (!isEditorOpen()) { showEditorView(false); return; }
+    document.body.classList.remove('editor-open');
+    if (state.view === 'map') {
+      if (state.currentId != null) state.mapSelection = state.currentId;
+      renderMap();
+      el.mindmap.focus({ preventScroll: true });
+    }
+  }
+
   function newNote() {
-    const id = DB.createNote(state.db);
+    const parentId = state.view === 'map' ? selectionAsParent() : null;
+    if (state.view === 'map') { newNoteInMap(parentId); return; }
+    const id = DB.createNote(state.db, null);
     state.currentId = id;
     if (state.query) { state.query = ''; el.search.value = ''; }
     renderAll();
     markEdited();
     if (isNarrow()) showEditorView(true);
+    el.title.focus();
+  }
+
+  function selectionAsParent() {
+    return typeof state.mapSelection === 'number' ? state.mapSelection : null;
+  }
+
+  function newNoteInMap(parentId) {
+    hideContextMenu();
+    if (parentId != null) {
+      const info = state.map.nodeInfo(parentId);
+      if (info && info.collapsed) DB.setCollapsed(state.db, parentId, false);
+    }
+    const id = DB.createNote(state.db, parentId);
+    state.mapSelection = id;
+    markEdited();
+    renderMap();
+    renderCount();
+    state.map.ensureVisible(id);
+    beginRename(id, { isNew: true });
+  }
+
+  function newChildOfCurrent() {
+    if (state.currentId == null) return;
+    const parentId = state.currentId;
+    const id = DB.createNote(state.db, parentId);
+    const info = state.map.nodeInfo(parentId);
+    if (info && info.collapsed) DB.setCollapsed(state.db, parentId, false);
+    state.currentId = id;
+    state.mapSelection = id;
+    markEdited();
+    renderList();
+    renderCount();
+    renderEditor();
     el.title.focus();
   }
 
@@ -538,20 +682,226 @@
     markEdited();
   }
 
-  function deleteCurrent() {
-    if (state.currentId == null) return;
-    const note = DB.getNote(state.db, state.currentId);
-    const name = note && note.title.trim() ? `„${note.title.trim()}“` : 'diese Notiz';
-    if (!confirm(`Soll ${name} endgültig gelöscht werden?`)) return;
+  function deleteNoteById(id) {
+    hideContextMenu();
+    const note = DB.getNote(state.db, id);
+    if (!note) return;
+    const name = note.title.trim() ? `„${note.title.trim()}“` : 'diese Notiz';
+    const info = state.map ? state.map.nodeInfo(id) : null;
+    const kids = info ? info.childCount : 0;
+    const hint = kids ? `\n\n${kids === 1 ? 'Die Unternotiz rückt' : kids + ' Unternotizen rücken'} zum übergeordneten Knoten auf.` : '';
+    if (!confirm(`Soll ${name} gelöscht werden?${hint}`)) return;
 
-    const li = el.list.querySelector(`li[data-id="${state.currentId}"]`);
+    const parentId = note.parent_id;
+    let nextInList = null;
+    const li = el.list.querySelector(`li[data-id="${id}"]`);
     const neighbour = li && (li.nextElementSibling || li.previousElementSibling);
-    DB.deleteNote(state.db, state.currentId);
-    state.currentId = neighbour ? Number(neighbour.dataset.id) : null;
+    if (neighbour) nextInList = Number(neighbour.dataset.id);
+
+    DB.deleteNote(state.db, id);
+
+    if (state.currentId === id) {
+      state.currentId = state.view === 'list' ? nextInList : null;
+      if (state.view === 'map') document.body.classList.remove('editor-open');
+    }
+    state.mapSelection = parentId == null ? 'root' : parentId;
     renderAll();
     markEdited();
     if (state.currentId == null) showEditorView(false);
+    if (state.view === 'map') el.mindmap.focus({ preventScroll: true });
   }
+
+  function reparentNote(id, parentId) {
+    try {
+      DB.setParent(state.db, id, parentId);
+      if (parentId != null) {
+        const info = state.map.nodeInfo(parentId);
+        if (info && info.collapsed) DB.setCollapsed(state.db, parentId, false);
+      }
+      state.mapSelection = id;
+      markEdited();
+      renderMap();
+      if (state.currentId === id) renderEditor();
+    } catch (e) {
+      setStatus(e.message, 'error');
+      renderMap();
+    }
+  }
+
+  function toggleCollapse(id) {
+    const info = state.map.nodeInfo(id);
+    if (!info || info.isRoot) return;
+    DB.setCollapsed(state.db, id, !info.collapsed);
+    if (info.collapsed === false && typeof state.mapSelection === 'number'
+        && state.mapSelection !== id && isInSubtree(state.mapSelection, id)) {
+      state.mapSelection = id;
+    }
+    markEdited();
+    renderMap();
+  }
+
+  function isInSubtree(nodeId, ancestorId) {
+    let n = state.map.nodeInfo(nodeId);
+    const seen = new Set();
+    while (n && !n.isRoot && !seen.has(n.id)) {
+      if (n.id === ancestorId) return true;
+      seen.add(n.id);
+      n = n.parentId == null ? null : state.map.nodeInfo(n.parentId);
+    }
+    return false;
+  }
+
+  function moveSelected(direction) {
+    if (typeof state.mapSelection !== 'number') return;
+    if (DB.moveAmongSiblings(state.db, state.mapSelection, direction)) {
+      markEdited();
+      renderMap();
+    }
+  }
+
+  function setAllCollapsed(collapsed) {
+    hideContextMenu();
+    DB.setAllCollapsed(state.db, collapsed);
+    if (collapsed) state.mapSelection = typeof state.mapSelection === 'number' ? state.mapSelection : state.mapSelection;
+    markEdited();
+    renderMap();
+    state.map.fit();
+  }
+
+  // ---------- Umbenennen direkt im Knoten ----------
+
+  function beginRename(id, opts) {
+    hideContextMenu();
+    cancelRename();
+    const rect = state.map.screenRectOf(id);
+    if (!rect) return;
+    state.rename = { id, isNew: !!(opts && opts.isNew) };
+    const input = el.renameInput;
+    const width = Math.max(rect.width, 180);
+    input.style.left = `${rect.left + rect.width / 2 - width / 2}px`;
+    input.style.top = `${rect.top}px`;
+    input.style.width = `${width}px`;
+    input.style.height = `${rect.height}px`;
+    input.style.fontSize = `${Math.max(11, Math.round(rect.height * 0.41))}px`;
+    input.value = id === 'root' ? DB.getMapTitle(state.db) : (DB.getNote(state.db, id) || {}).title || '';
+    input.hidden = false;
+    input.focus();
+    input.select();
+  }
+
+  function commitRename() {
+    const r = state.rename;
+    if (!r) return;
+    state.rename = null;
+    const value = el.renameInput.value.trim();
+    el.renameInput.hidden = true;
+    if (r.id === 'root') {
+      DB.setMapTitle(state.db, value);
+    } else if (r.isNew && !value) {
+      DB.purgeNote(state.db, r.id);
+      state.mapSelection = null;
+    } else {
+      DB.renameNote(state.db, r.id, value);
+      state.mapSelection = r.id;
+    }
+    markEdited();
+    renderAll();
+    if (state.currentId === r.id) renderEditor();
+    el.mindmap.focus({ preventScroll: true });
+  }
+
+  function cancelRename() {
+    const r = state.rename;
+    if (!r) return;
+    state.rename = null;
+    el.renameInput.hidden = true;
+    if (r.isNew && r.id !== 'root') {
+      DB.purgeNote(state.db, r.id);
+      state.mapSelection = null;
+      markEdited();
+      renderAll();
+    }
+    el.mindmap.focus({ preventScroll: true });
+  }
+
+  // ---------- Kontextmenü ----------
+
+  function showContextMenu(items, x, y) {
+    const menu = el.contextMenu;
+    menu.replaceChildren();
+    for (const item of items) {
+      if (item === 'sep') {
+        const s = document.createElement('div');
+        s.className = 'sep';
+        menu.appendChild(s);
+        continue;
+      }
+      const b = document.createElement('button');
+      b.type = 'button';
+      const label = document.createElement('span');
+      label.textContent = item.label;
+      b.appendChild(label);
+      if (item.key) {
+        const k = document.createElement('span');
+        k.className = 'key';
+        k.textContent = item.key;
+        b.appendChild(k);
+      }
+      if (item.danger) b.classList.add('danger');
+      b.addEventListener('click', () => { hideContextMenu(); item.action(); });
+      menu.appendChild(b);
+    }
+    menu.hidden = false;
+    const w = menu.offsetWidth, h = menu.offsetHeight;
+    menu.style.left = `${Math.min(x, window.innerWidth - w - 8)}px`;
+    menu.style.top = `${Math.min(y, window.innerHeight - h - 8)}px`;
+  }
+
+  function hideContextMenu() {
+    el.contextMenu.hidden = true;
+  }
+
+  function showNodeMenu(id, x, y) {
+    if (id == null) {
+      showContextMenu([
+        { label: 'Neue Notiz', key: 'Tab', action: () => newNoteInMap(null) },
+        { label: 'Einpassen', key: '0', action: () => state.map.fit() },
+        'sep',
+        { label: 'Alles ausklappen', action: () => setAllCollapsed(false) },
+        { label: 'Alles einklappen', action: () => setAllCollapsed(true) },
+      ], x, y);
+      return;
+    }
+    if (id === 'root') {
+      showContextMenu([
+        { label: 'Neue Notiz', key: 'Tab', action: () => newNoteInMap(null) },
+        { label: 'Titel ändern', key: 'F2', action: () => beginRename('root') },
+        'sep',
+        { label: 'Alles ausklappen', action: () => setAllCollapsed(false) },
+        { label: 'Alles einklappen', action: () => setAllCollapsed(true) },
+        { label: 'Einpassen', key: '0', action: () => state.map.fit() },
+      ], x, y);
+      return;
+    }
+    const info = state.map.nodeInfo(id);
+    const items = [
+      { label: 'Öffnen', key: 'Enter', action: () => openNote(id) },
+      { label: 'Unternotiz anlegen', key: 'Tab', action: () => newNoteInMap(id) },
+      { label: 'Umbenennen', key: 'F2', action: () => beginRename(id) },
+    ];
+    if (info && info.childCount) {
+      items.push({ label: info.collapsed ? 'Ausklappen' : 'Einklappen', action: () => toggleCollapse(id) });
+    }
+    items.push(
+      { label: 'Nach oben', key: 'Alt+↑', action: () => { state.mapSelection = id; moveSelected(-1); } },
+      { label: 'Nach unten', key: 'Alt+↓', action: () => { state.mapSelection = id; moveSelected(1); } },
+      'sep',
+      { label: 'Löschen', key: 'Entf', danger: true, action: () => deleteNoteById(id) },
+    );
+    showContextMenu(items, x, y);
+  }
+
+  // ---------- Suche, Menü ----------
 
   function onSearchInput() {
     clearTimeout(state.searchTimer);
@@ -568,12 +918,76 @@
   }
   function closeMenu() { toggleMenu(false); }
 
+  // ---------- Tastatur in der Mindmap ----------
+
+  function onMapKeydown(e) {
+    if (state.rename) return;
+    const sel = state.mapSelection;
+    const key = e.key;
+    if (key === 'Tab') {
+      e.preventDefault();
+      newNoteInMap(selectionAsParent());
+    } else if (key === 'Enter') {
+      e.preventDefault();
+      if (typeof sel === 'number') openNote(sel);
+      else if (sel === 'root') beginRename('root');
+    } else if (key === 'F2') {
+      e.preventDefault();
+      if (sel != null) beginRename(sel);
+    } else if (key === 'Delete' || key === 'Backspace') {
+      if (typeof sel === 'number') { e.preventDefault(); deleteNoteById(sel); }
+    } else if (key === 'ArrowUp' || key === 'ArrowDown') {
+      e.preventDefault();
+      if (e.altKey) { moveSelected(key === 'ArrowUp' ? -1 : 1); return; }
+      moveSelection(key === 'ArrowUp' ? 'up' : 'down');
+    } else if (key === 'ArrowLeft' || key === 'ArrowRight') {
+      e.preventDefault();
+      moveSelection(key === 'ArrowLeft' ? 'left' : 'right');
+    } else if (key === '+' || key === '=') {
+      e.preventDefault(); state.map.zoomIn();
+    } else if (key === '-') {
+      e.preventDefault(); state.map.zoomOut();
+    } else if (key === '0') {
+      e.preventDefault(); state.map.fit();
+    } else if (key === 'Escape') {
+      if (!el.contextMenu.hidden) { hideContextMenu(); return; }
+      state.mapSelection = null;
+      state.map.setSelected(null);
+    }
+  }
+
+  function moveSelection(direction) {
+    const from = state.mapSelection == null ? 'root' : state.mapSelection;
+    const next = state.mapSelection == null ? 'root' : state.map.neighbor(from, direction);
+    if (next == null) return;
+    state.mapSelection = next;
+    state.map.setSelected(next);
+    state.map.ensureVisible(next);
+  }
+
   // ---------- Ereignisse ----------
 
   function wireEvents() {
+    el.viewMapBtn.addEventListener('click', () => setView('map'));
+    el.viewListBtn.addEventListener('click', () => setView('list'));
+
     el.newBtn.addEventListener('click', newNote);
-    el.deleteBtn.addEventListener('click', deleteCurrent);
-    el.backBtn.addEventListener('click', () => showEditorView(false));
+    el.mapNewBtn.addEventListener('click', () => newNoteInMap(selectionAsParent()));
+    el.mapFitBtn.addEventListener('click', () => state.map.fit());
+    el.mapZoomInBtn.addEventListener('click', () => state.map.zoomIn());
+    el.mapZoomOutBtn.addEventListener('click', () => state.map.zoomOut());
+    el.mindmap.addEventListener('keydown', onMapKeydown);
+
+    el.renameInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
+      e.stopPropagation();
+    });
+    el.renameInput.addEventListener('blur', () => { if (state.rename) commitRename(); });
+
+    el.childBtn.addEventListener('click', newChildOfCurrent);
+    el.deleteBtn.addEventListener('click', () => { if (state.currentId != null) deleteNoteById(state.currentId); });
+    el.backBtn.addEventListener('click', closeEditor);
     el.title.addEventListener('input', onEdit);
     el.body.addEventListener('input', onEdit);
     el.search.addEventListener('input', onSearchInput);
@@ -599,7 +1013,14 @@
     el.menuBtn.addEventListener('click', () => toggleMenu());
     document.addEventListener('click', e => {
       if (!el.menu.hidden && !e.target.closest('.menu')) closeMenu();
+      if (!el.contextMenu.hidden && !e.target.closest('.context-menu')) hideContextMenu();
     });
+    document.addEventListener('contextmenu', e => {
+      if (!e.target.closest('#mindmap')) hideContextMenu();
+    });
+    window.addEventListener('resize', () => { hideContextMenu(); if (state.rename) cancelRename(); });
+    window.addEventListener('blur', hideContextMenu);
+
     el.createFileBtn.addEventListener('click', createFile);
     el.openFileBtn.addEventListener('click', openFile);
     el.disconnectBtn.addEventListener('click', disconnectFile);
@@ -612,8 +1033,11 @@
       if (mod && !e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); persistNow(); }
       else if (e.altKey && e.key.toLowerCase() === 'n') { e.preventDefault(); newNote(); }
       else if (e.key === 'Escape') {
-        if (!el.menu.hidden) closeMenu();
-        else if (isNarrow() && document.body.classList.contains('view-editor')) showEditorView(false);
+        if (state.rename) return;
+        if (!el.contextMenu.hidden) { hideContextMenu(); return; }
+        if (!el.menu.hidden) { closeMenu(); return; }
+        if (isEditorOpen()) { closeEditor(); return; }
+        if (isNarrow() && document.body.classList.contains('view-editor')) showEditorView(false);
       }
     });
 

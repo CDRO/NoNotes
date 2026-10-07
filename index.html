@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="NoNotes – lokale Notizen, gespeichert in einer SQLite-Datei. Läuft ohne Server direkt im Browser.">
+  <meta name="description" content="NoNotes – lokale Notizen als Mindmap, gespeichert in einer SQLite-Datei. Läuft ohne Server direkt im Browser.">
   <title>NoNotes</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Ctext x='16' y='22' font-family='system-ui,sans-serif' font-size='18' font-weight='700' fill='white' text-anchor='middle'%3EN%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="css/app.css">
 </head>
-<body data-ready="false">
+<body data-ready="false" class="view-map">
 
   <div id="app" class="app" hidden>
     <header class="topbar">
@@ -18,6 +18,12 @@
         <span>NoNotes</span>
         <span class="version" id="version"></span>
       </div>
+
+      <div class="segmented" role="tablist" aria-label="Ansicht">
+        <button type="button" id="viewMapBtn" role="tab" data-view="map" aria-selected="true">Mindmap</button>
+        <button type="button" id="viewListBtn" role="tab" data-view="list" aria-selected="false">Liste</button>
+      </div>
+
       <div class="status" id="status" aria-live="polite" data-state=""></div>
       <div class="storage" id="storageInfo" title="">
         <span class="dot" aria-hidden="true"></span>
@@ -41,7 +47,21 @@
     <div id="banner" class="banner" role="status" hidden></div>
 
     <main class="layout">
-      <aside class="sidebar" aria-label="Notizliste">
+      <!-- Mindmap -->
+      <section class="map-view" id="mapView" aria-label="Mindmap">
+        <div class="map-toolbar">
+          <button type="button" id="mapNewBtn" class="primary" title="Neue Notiz unter der Auswahl (Tab)">Neue Notiz</button>
+          <button type="button" id="mapFitBtn" title="Alles einpassen (0)">Einpassen</button>
+          <button type="button" id="mapZoomOutBtn" title="Verkleinern (−)" aria-label="Verkleinern">−</button>
+          <button type="button" id="mapZoomInBtn" title="Vergrössern (+)" aria-label="Vergrössern">+</button>
+          <span class="map-hint">Doppelklick öffnet · Rechtsklick für Aktionen · Ziehen hängt um</span>
+        </div>
+        <svg id="mindmap" class="mindmap" tabindex="0" role="application" aria-label="Mindmap der Notizen"></svg>
+        <input type="text" id="renameInput" class="rename-input" aria-label="Titel bearbeiten" hidden>
+      </section>
+
+      <!-- Liste -->
+      <aside class="sidebar" id="sidebar" aria-label="Notizliste">
         <div class="sidebar-tools">
           <input type="search" id="search" placeholder="Suchen…" aria-label="Notizen durchsuchen" autocomplete="off">
           <button type="button" id="newBtn" class="primary" title="Neue Notiz (Alt+N)">Neue Notiz</button>
@@ -51,14 +71,17 @@
         <div class="sidebar-foot" id="count"></div>
       </aside>
 
-      <section class="editor" aria-label="Editor">
+      <!-- Editor (Seitenbereich in der Liste, Vollbild aus der Mindmap) -->
+      <section class="editor" id="editor" aria-label="Editor">
         <div id="editorEmpty" class="empty editor-empty">
           Wähle links eine Notiz oder lege eine neue an.
         </div>
         <div id="editorPane" hidden>
           <div class="editor-bar">
-            <button type="button" id="backBtn" class="ghost only-narrow">← Zurück</button>
+            <button type="button" id="backBtn" class="ghost back-btn" title="Zurück (Esc)">← Zurück</button>
+            <nav class="crumbs" id="crumbs" aria-label="Pfad"></nav>
             <span class="meta" id="noteMeta"></span>
+            <button type="button" id="childBtn" class="ghost" title="Unternotiz anlegen">+ Unternotiz</button>
             <button type="button" id="deleteBtn" class="ghost danger">Löschen</button>
           </div>
           <input type="text" id="title" class="title" placeholder="Titel" aria-label="Titel" autocomplete="off" spellcheck="true">
@@ -68,6 +91,8 @@
     </main>
   </div>
 
+  <div id="contextMenu" class="context-menu" role="menu" hidden></div>
+
   <div id="boot" class="boot">Lade NoNotes…</div>
 
   <input type="file" id="importInput" accept=".sqlite,.sqlite3,.db,application/vnd.sqlite3,application/x-sqlite3" hidden>
@@ -76,6 +101,7 @@
   <script src="vendor/sql.js/sql-asm.js"></script>
   <script src="js/db.js"></script>
   <script src="js/storage.js"></script>
+  <script src="js/mindmap.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

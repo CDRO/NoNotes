@@ -1,8 +1,8 @@
 # NoNotes
 
 Eine kleine Notiz-App, die **ohne Server, ohne Installation und ohne Adminrechte** läuft.
-Sie öffnet sich als Datei im Browser und speichert die Notizen in einer echten
-**SQLite-Datenbank**. Alles, was sie braucht, liegt im entpackten Ordner.
+Sie öffnet sich als Datei im Browser, ordnet die Notizen als **Mindmap** an und speichert
+alles in einer echten **SQLite-Datenbank**. Alles, was sie braucht, liegt im entpackten Ordner.
 
 Gebaut für Rechner mit stark eingeschränkten Rechten: Es wird kein Dienst gestartet,
 kein Port geöffnet, kein Programm installiert. PowerShell ist optional und auch im
@@ -58,10 +58,33 @@ Fremde SQLite-Dateien werden beim Öffnen und Importieren abgelehnt.
 
 ## Bedienung
 
-- **Neue Notiz** oder `Alt+N`. Oberste Zeile ist der Titel, `Enter` springt in den Text.
-- Suche filtert Titel und Inhalt, auch mit Umlauten und unabhängig von Gross-/Kleinschreibung.
+### Mindmap (Startansicht)
+
+Die Notizen bilden einen Baum um einen zentralen Knoten, dessen Titel du per Doppelklick
+änderst. Jede Notiz zeigt nur ihren Titel.
+
+| Aktion | So geht's |
+| --- | --- |
+| Notiz öffnen | Doppelklick auf den Knoten oder `Enter`. Der Editor öffnet sich im Vollbild, `Esc` oder «Zurück» schliesst ihn. |
+| Neue Notiz | **Neue Notiz** oder `Tab`: hängt eine Unternotiz an den ausgewählten Knoten (ohne Auswahl an die Wurzel) und fragt gleich den Titel ab. |
+| Umbenennen | `F2` oder Rechtsklick → Umbenennen. |
+| Umhängen | Knoten mit der Maus auf einen anderen Knoten oder die Wurzel ziehen. |
+| Reihenfolge | `Alt+↑` / `Alt+↓` oder Rechtsklick → Nach oben / Nach unten. |
+| Ein-/Ausklappen | Kleiner Kreis am Knoten (zeigt eingeklappt die Anzahl der verborgenen Notizen) oder Rechtsklick. |
+| Löschen | `Entf` oder Rechtsklick → Löschen. Unternotizen rücken zum übergeordneten Knoten auf. |
+| Navigieren | Pfeiltasten wandern durch den Baum. Mausrad zoomt, Ziehen der Fläche verschiebt, `0` oder **Einpassen** zeigt alles. |
+
+### Liste
+
+Der Umschalter oben wechselt zur klassischen Liste mit Suche und Editor nebeneinander.
+Die Suche filtert Titel und Inhalt, auch mit Umlauten und unabhängig von Gross-/Kleinschreibung.
+
+### Editor
+
+- Oberste Zeile ist der Titel, `Enter` springt in den Text.
+- Der Pfad über dem Titel zeigt, wo die Notiz im Baum hängt; die Einträge sind anklickbar.
+- **+ Unternotiz** legt direkt eine Unternotiz an.
 - `Ctrl+S` speichert sofort (passiert sonst automatisch nach kurzer Pause).
-- **Löschen** fragt nach und ist endgültig.
 - Auf schmalen Fenstern wird zwischen Liste und Editor umgeschaltet (`Esc` oder «Zurück»).
 
 ## Technik
@@ -69,6 +92,7 @@ Fremde SQLite-Dateien werden beim Öffnen und Importieren abgelehnt.
 | Teil | Umsetzung |
 | --- | --- |
 | Oberfläche | `index.html`, `css/app.css`, `js/app.js` – reines HTML/CSS/JS, keine Frameworks, kein Build |
+| Mindmap | `js/mindmap.js`: eigenes Layout (links/rechts ausbalanciert), SVG, Zoom, Ziehen, Tastatur |
 | Datenbank | [sql.js](https://github.com/sql-js/sql.js) (SQLite nach JavaScript kompiliert) in `vendor/sql.js/`; Schema und Abfragen in `js/db.js` |
 | Persistenz | `js/storage.js`: IndexedDB (ersatzweise localStorage) plus File System Access API für die Datei |
 | Start | `start.ps1` (nur Cmdlets, läuft im Constrained Language Mode), `start.cmd` |
@@ -79,7 +103,7 @@ Language Mode zur Verfügung. Dort sind weder `HttpListener` noch der Zugriff au
 File System Access API alles mit, um direkt in die Datenbankdatei zu schreiben, und
 sql.js liefert SQLite als reines JavaScript.
 
-Schema (Version 1):
+Schema (Version 2). Ältere Datenbanken werden beim Öffnen automatisch migriert.
 
 ```sql
 CREATE TABLE notes (
@@ -87,9 +111,13 @@ CREATE TABLE notes (
   title      TEXT NOT NULL DEFAULT '',
   body       TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,   -- ISO 8601, UTC
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  parent_id  INTEGER,         -- NULL = hängt an der Wurzel
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  collapsed  INTEGER NOT NULL DEFAULT 0,
+  deleted_at TEXT             -- gesetzt = im Papierkorb
 );
-CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);  -- schema_version, created_at
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);  -- schema_version, created_at, map_title
 ```
 
 ## Entwicklung
@@ -97,8 +125,8 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);  -- schema_versio
 Für die App selbst ist nichts zu bauen: Dateien ändern, `index.html` neu laden.
 
 Der Smoke-Test öffnet die App wie ein Benutzer per `file://` in headless Chromium und
-prüft Anlegen, Suchen, Speichern, Neuladen, Herunterladen, Importieren, Löschen und das
-Schreiben in die Datenbankdatei:
+prüft Anlegen, Suchen, Speichern, Neuladen, Herunterladen, Importieren, Löschen, das
+Schreiben in die Datenbankdatei, die Mindmap-Bedienung und die Migration alter Datenbanken:
 
 ```bash
 npm install
