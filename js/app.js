@@ -10,6 +10,7 @@
   const Zip = window.NoNotesZip;
   const Exporter = window.NoNotesExport;
   const Printer = window.NoNotesPrint;
+  const E = window.NoNotesEditing;
 
   const DEFAULT_FILENAME = 'NoNotes.sqlite';
   const SAVE_DELAY_MS = 600;
@@ -46,6 +47,9 @@
     printIncludeToc: $('#printIncludeToc'), printPageBreaks: $('#printPageBreaks'),
     qaPrintDialog: $('#qaPrintDialog'), qaPrintForm: $('#qaPrintForm'), qaPrintGoBtn: $('#qaPrintGoBtn'),
     qaScopeFiltered: $('#qaScopeFiltered'), qaGrouped: $('#qaGrouped'), qaLines: $('#qaLines'),
+    mdToolbar: $('#mdToolbar'), headingSelect: $('#headingSelect'), helpBtn: $('#helpBtn'),
+    helpDialog: $('#helpDialog'), helpTabs: $('#helpTabs'), helpStorageStatus: $('#helpStorageStatus'),
+    storageHelpBtn: $('#storageHelpBtn'), menuHelpBtn: $('#menuHelpBtn'),
     mapView: $('#mapView'), mapNewBtn: $('#mapNewBtn'), mapFitBtn: $('#mapFitBtn'),
     mapZoomInBtn: $('#mapZoomInBtn'), mapZoomOutBtn: $('#mapZoomOutBtn'),
     mindmap: $('#mindmap'), renameInput: $('#renameInput'), contextMenu: $('#contextMenu'),
@@ -887,9 +891,8 @@
     el.tagInput.disabled = trashed;
     el.deleteBtn.hidden = trashed;
     el.childBtn.hidden = trashed;
-    el.questionBtn.disabled = trashed;
-    el.answerBtn.disabled = trashed;
-    el.attachBtn.disabled = trashed;
+    for (const b of el.mdToolbar.querySelectorAll('button')) b.disabled = trashed;
+    el.headingSelect.disabled = trashed;
     if (state.editorMode !== 'edit') renderPreview();
   }
 
@@ -1300,15 +1303,80 @@
     markEdited();
   }
 
-  /** Markiert die Zeile unter dem Cursor als Frage ("?") oder Antwort ("!") bzw. hebt es auf. */
+  /** Markiert die Zeile(n) unter dem Cursor als Frage ("?") oder Antwort ("!") bzw. hebt es auf. */
   function toggleLine(prefix) {
-    if (state.currentId == null) return;
-    const caret = el.body.selectionStart || 0;
-    const r = Q.toggleLinePrefix(el.body.value, caret, prefix);
-    el.body.value = r.body;
+    runCommand(prefix === '?' ? 'question' : 'answer');
+  }
+
+  // ---------- Toolleiste ----------
+
+  function applyEdit(result) {
+    el.body.value = result.text;
     el.body.focus();
-    el.body.setSelectionRange(r.caret, r.caret);
+    el.body.setSelectionRange(result.selStart, result.selEnd);
     onEdit();
+  }
+
+  function runCommand(cmd) {
+    if (state.currentId == null || el.body.readOnly) return;
+    const t = el.body.value;
+    const s = el.body.selectionStart || 0;
+    const e = el.body.selectionEnd || s;
+    let r = null;
+    switch (cmd) {
+      case 'bold': r = E.wrap(t, s, e, '**', '**', 'fett'); break;
+      case 'italic': r = E.wrap(t, s, e, '*', '*', 'kursiv'); break;
+      case 'strike': r = E.wrap(t, s, e, '~~', '~~', 'durchgestrichen'); break;
+      case 'code': r = E.wrap(t, s, e, '`', '`', 'code'); break;
+      case 'bullet': r = E.toggleList(t, s, e, 'bullet'); break;
+      case 'ordered': r = E.toggleList(t, s, e, 'ordered'); break;
+      case 'task': r = E.toggleList(t, s, e, 'task'); break;
+      case 'quote': r = E.togglePrefix(t, s, e, 'quote'); break;
+      case 'question': r = E.togglePrefix(t, s, e, 'question'); break;
+      case 'answer': r = E.togglePrefix(t, s, e, 'answer'); break;
+      case 'codeblock': r = E.codeBlock(t, s, e); break;
+      case 'hr': r = E.horizontalRule(t, s, e); break;
+      case 'link': r = E.link(t, s, e); break;
+      case 'wiki': r = E.wikiLink(t, s, e); break;
+      default: return;
+    }
+    applyEdit(r);
+  }
+
+  function setHeadingFromSelect() {
+    const v = el.headingSelect.value;
+    el.headingSelect.value = '';
+    if (v === '' || state.currentId == null || el.body.readOnly) return;
+    applyEdit(E.setHeading(el.body.value, el.body.selectionStart || 0, el.body.selectionEnd || 0, Number(v)));
+  }
+
+  // ---------- Hilfe ----------
+
+  function openHelp(tab) {
+    closeMenu();
+    hideContextMenu();
+    showHelpTab(tab || 'editor');
+    if (typeof el.helpDialog.showModal === 'function') { if (!el.helpDialog.open) el.helpDialog.showModal(); }
+    else el.helpDialog.setAttribute('open', '');
+  }
+
+  function showHelpTab(tab) {
+    for (const b of el.helpTabs.querySelectorAll('button[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
+    for (const panel of el.helpDialog.querySelectorAll('.help-panel')) panel.hidden = panel.dataset.panel !== tab;
+    if (tab === 'storage') renderStorageStatus();
+  }
+
+  function renderStorageStatus() {
+    const lines = [];
+    lines.push(`Browser-Speicher: ${Store.browserStore.label()}` + (state.mirrorAtStart ? ' (Kopie vorhanden)' : ''));
+    if (state.fileHandle && state.filePermission === 'granted') lines.push(`Datenbankdatei: „${state.fileHandle.name}“, verbunden${state.handleRemembered ? ', wird gemerkt' : ' (nur diese Sitzung)'}`);
+    else if (state.fileHandle) lines.push(`Datenbankdatei: „${state.fileHandle.name}“ gemerkt, noch nicht verbunden`);
+    else lines.push(Store.fileAccess.supported ? 'Datenbankdatei: keine. Empfehlung: unter Datenbank → Datenbankdatei anlegen…' : 'Datenbankdatei: dieser Browser kann nicht direkt in Dateien schreiben; nutze Kopie herunterladen / importieren.');
+    const n = DB.countNotes(state.db);
+    const bytes = DB.attachmentsSize(state.db);
+    lines.push(`Inhalt: ${n === 1 ? '1 Notiz' : n + ' Notizen'}, ${DB.countTrash(state.db)} im Papierkorb, Bilder ${Math.round(bytes / 1024)} KB`);
+    lines.push(state.editSeq === state.savedSeq ? 'Alle Änderungen sind gespeichert.' : 'Es gibt ungespeicherte Änderungen (werden gleich geschrieben).');
+    el.helpStorageStatus.textContent = lines.join('\n');
   }
 
   // ---------- Fragen-Ansicht ----------
@@ -1823,14 +1891,34 @@
       if (b) setQuestionFilter(b.dataset.status);
     });
     el.qSearch.addEventListener('input', onQuestionSearchInput);
-    el.questionBtn.addEventListener('click', () => toggleLine('?'));
-    el.answerBtn.addEventListener('click', () => toggleLine('!'));
+    el.mdToolbar.addEventListener('click', e => {
+      const b = e.target.closest('button[data-cmd]');
+      if (b) { e.preventDefault(); runCommand(b.dataset.cmd); }
+    });
+    el.mdToolbar.addEventListener('mousedown', e => {
+      // Fokus und Markierung im Textfeld behalten
+      if (e.target.closest('button')) e.preventDefault();
+    });
+    el.headingSelect.addEventListener('change', setHeadingFromSelect);
+    el.helpBtn.addEventListener('click', () => openHelp('editor'));
+    el.menuHelpBtn.addEventListener('click', () => openHelp('editor'));
+    el.storageHelpBtn.addEventListener('click', () => openHelp('storage'));
+    el.helpTabs.addEventListener('click', e => {
+      const b = e.target.closest('button[data-tab]');
+      if (b) showHelpTab(b.dataset.tab);
+    });
     el.body.addEventListener('keydown', e => {
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey) {
-        const k = e.key.toLowerCase();
-        if (k === 'f') { e.preventDefault(); toggleLine('?'); }
-        else if (k === 'a') { e.preventDefault(); toggleLine('!'); }
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      const k = e.key.toLowerCase();
+      if (e.shiftKey) {
+        if (k === 'f') { e.preventDefault(); runCommand('question'); }
+        else if (k === 'a') { e.preventDefault(); runCommand('answer'); }
+        return;
       }
+      if (k === 'b') { e.preventDefault(); runCommand('bold'); }
+      else if (k === 'i') { e.preventDefault(); runCommand('italic'); }
+      else if (k === 'k') { e.preventDefault(); runCommand('link'); }
     });
 
     el.newBtn.addEventListener('click', newNote);
@@ -1950,6 +2038,7 @@
       const mod = e.ctrlKey || e.metaKey;
       if (mod && !e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); persistNow(); }
       else if (mod && !e.shiftKey && e.key.toLowerCase() === 'e' && state.currentId != null && !el.editorPane.hidden) { e.preventDefault(); cycleEditorMode(); }
+      else if (e.key === 'F1') { e.preventDefault(); openHelp('editor'); }
       else if (mod && !e.shiftKey && e.key.toLowerCase() === 'p') {
         e.preventDefault();
         if (state.view === 'questions' && !isEditorOpen()) openQaPrintDialog();
@@ -1957,7 +2046,7 @@
       }
       else if (e.altKey && e.key.toLowerCase() === 'n') { e.preventDefault(); newNote(); }
       else if (e.key === 'Escape') {
-        if (state.rename || el.exportDialog.open || el.printDialog.open || el.qaPrintDialog.open) return;
+        if (state.rename || el.exportDialog.open || el.printDialog.open || el.qaPrintDialog.open || el.helpDialog.open) return;
         if (state.multi.size && !isEditorOpen() && el.menu.hidden && el.contextMenu.hidden) { clearMulti(); return; }
         if (!el.contextMenu.hidden) { hideContextMenu(); return; }
         if (!el.menu.hidden) { closeMenu(); return; }

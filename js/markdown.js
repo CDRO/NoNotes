@@ -16,11 +16,19 @@
     return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
+  const FILE_EXT_RE = /\.(md|markdown|txt|html?|png|jpe?g|gif|svg|webp|pdf|json|csv|js|css|zip|sqlite|db)$/i;
+
+  /** Prüft und normalisiert eine Link-Adresse. Adressen ohne Schema wie www.beispiel.ch oder
+   *  beispiel.ch/seite bekommen https://, relative Dateipfade bleiben erhalten. */
   function safeUrl(url) {
     const u = String(url || '').trim();
     if (/^(https?:|mailto:|tel:)/i.test(u)) return u;
     if (/^[a-z][a-z0-9+.-]*:/i.test(u)) return null; // andere Schemata (javascript:, data:) nicht zulassen
-    if (/^(#|\/|\.\/|\.\.\/)/.test(u) || /^[\w.-]+(\/|$)/.test(u)) return u; // relative Pfade
+    if (/^www\./i.test(u)) return 'https://' + u;
+    if (/^(#|\/|\.\/|\.\.\/)/.test(u)) return u; // relative Pfade und Anker
+    const host = u.split(/[/?#]/)[0];
+    if (/^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,24}(:\d+)?$/i.test(host) && !FILE_EXT_RE.test(host)) return 'https://' + u;
+    if (/^[\w.-]+(\/|$)/.test(u)) return u; // relative Dateipfade wie notes/x.md
     return null;
   }
 
@@ -113,13 +121,18 @@
       const it = /^(\*|_)(?=\S)([^*_]*?\S)\1(?![\w*_])/.exec(src.slice(i));
       if (it && (i === 0 || !/\w/.test(src[i - 1]))) { out += '<em>' + renderInline(it[2], ctx) + '</em>'; i += it[0].length; continue; }
 
-      // Automatischer Link
-      const auto = /^https?:\/\/[^\s<>()\]]+[^\s<>()\].,;:!?'"]/.exec(src.slice(i));
-      if (auto) { out += `<a href="${escapeHtml(auto[0])}" target="_blank" rel="noopener noreferrer">${text(auto[0])}</a>`; i += auto[0].length; continue; }
+      // Automatischer Link (https://… oder www.…)
+      const auto = /^(https?:\/\/|www\.)[^\s<>()\]]+[^\s<>()\].,;:!?'"]/.exec(src.slice(i));
+      if (auto && (i === 0 || !/[\w@]/.test(src[i - 1]))) {
+        const href = /^www\./i.test(auto[0]) ? 'https://' + auto[0] : auto[0];
+        out += `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${text(auto[0])}</a>`;
+        i += auto[0].length;
+        continue;
+      }
 
       // Normaler Text bis zum nächsten Sonderzeichen
       let j = i + 1;
-      while (j < n && !'`![*_~h'.includes(src[j])) j++;
+      while (j < n && !'`![*_~hw'.includes(src[j])) j++;
       emit(src.slice(i, j));
       i = j;
     }

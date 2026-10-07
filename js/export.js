@@ -86,6 +86,7 @@
       const href = resolveLink ? resolveLink(title.trim()) : null;
       return href ? `[${title.trim()}](${href})` : title.trim();
     });
+    out = out.replace(/\]\((www\.[^)\s]+)/gi, '](https://$1');
     if (resolveAttachment) {
       out = out.replace(/\]\(att:(\d+)\)/g, (m, id) => {
         const path = resolveAttachment(Number(id));

@@ -630,3 +630,56 @@ mark { background: color-mix(in srgb, var(--warn) 35%, transparent); color: inhe
   #printArea .print-lines { margin-top: 6pt; }
   #printArea .print-lines span { display: block; height: 9mm; border-bottom: 1px solid #999; }
 }
+
+/* ---------- v0.7: Toolleiste und Hilfe ---------- */
+
+.editor-tools { flex-wrap: wrap; row-gap: 6px; }
+.toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+.toolbar button {
+  width: 30px; height: 28px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-color: transparent; background: transparent; color: var(--text);
+}
+.toolbar button:hover { background: var(--hover); }
+.toolbar button:disabled { opacity: .4; }
+.toolbar svg { width: 16px; height: 16px; fill: currentColor; }
+.tb-glyph { font-size: 13px; font-weight: 700; line-height: 1; }
+.tb-mono { font-family: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace; font-size: 11px; letter-spacing: -.5px; }
+.tb-strike { text-decoration: line-through; font-size: 14px; }
+.tb-quote { font-size: 20px; font-family: Georgia, serif; line-height: 0; position: relative; top: 4px; }
+.tb-q { color: var(--warn); font-size: 15px; }
+.tb-a { color: var(--ok); font-size: 15px; }
+.tb-sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
+.tb-select { padding: 3px 6px; font-size: 12px; height: 28px; border-radius: 6px; max-width: 130px; }
+.help-btn {
+  width: 28px; height: 28px; padding: 0; border-radius: 50%;
+  font-weight: 700; color: var(--accent); border-color: var(--border); background: var(--panel);
+}
+.help-btn:hover { background: var(--active); }
+
+.dialog-wide { max-width: 860px; }
+.help { max-height: calc(100vh - 80px); overflow: auto; }
+.help-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.help-head h2 { margin-right: auto; }
+.help-panel h3 { margin: 14px 0 6px; font-size: 14px; }
+.help-panel h3:first-child { margin-top: 0; }
+.help-panel p, .help-panel li { font-size: 14px; line-height: 1.5; }
+.help-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.help-table th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--border); }
+.help-table td { padding: 6px 8px 6px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+.help-table td:first-child { width: 22%; font-weight: 600; }
+.help-table code, .help-list code { font-family: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace; font-size: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; }
+.help-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 28px; }
+.help-keys { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 13px; }
+.help-keys dt { white-space: nowrap; }
+.help-keys dd { margin: 0; color: var(--muted); }
+kbd { font: 11px/1 ui-monospace, SFMono-Regular, Consolas, Menlo, monospace; padding: 2px 5px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; background: var(--bg); }
+.help-list { padding-left: 20px; margin: 4px 0; }
+.help-list li { margin: 4px 0; }
+.help-status { padding: 10px 12px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border); font-size: 13px; white-space: pre-line; }
+
+@media (max-width: 760px) {
+  .help-cols { grid-template-columns: 1fr; }
+  .help-table td:first-child { width: auto; }
+  .editor-tools .segmented { margin-left: 0; }
+}

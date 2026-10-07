@@ -146,6 +146,15 @@ einen Index darüber.
 - Der Text ist Markdown: Überschriften, Listen, Aufgabenlisten `- [ ]`, Zitate, Code,
   Links, Bilder, fett und kursiv. `[[Titel]]` verweist auf eine andere Notiz; ein Klick in
   der Vorschau öffnet sie, bei fehlendem Ziel wird sie auf Wunsch als Unternotiz angelegt.
+  Adressen ohne `https://` wie `www.beispiel.ch` werden automatisch ergänzt.
+- Die **Toolleiste** über dem Text setzt alles per Klick: Überschrift (Auswahlliste), fett,
+  kursiv, durchgestrichen, Code, Listen, Aufgabe, Zitat, Codeblock, Trennlinie, Link,
+  Notiz-Verweis, Bild, Frage und Antwort. Die Knöpfe wirken auf den markierten Text oder die
+  aktuellen Zeilen und lassen sich mit einem zweiten Klick wieder aufheben.
+  Tastenkürzel: `Ctrl+B`, `Ctrl+I`, `Ctrl+K` für Link.
+- Der **?**-Knopf rechts (oder `F1`) öffnet die Hilfe mit allen Schreibweisen, allen
+  Tastenkürzeln und einer eigenen Seite zur Datenablage, die auch unter
+  *Datenbank → Datenablage erklärt…* zu finden ist.
 - Die Darstellung wechselt zwischen **Bearbeiten**, **Geteilt** (Text und Vorschau
   nebeneinander) und **Vorschau**, auch mit `Ctrl+E`. Die Einstellung wird gemerkt.
 - **Bilder** hängst du mit **🖼 Bild**, per Einfügen aus der Zwischenablage (`Ctrl+V`) oder
@@ -167,6 +176,7 @@ einen Index darüber.
 | Mindmap | `js/mindmap.js`: eigenes Layout (links/rechts ausbalanciert), SVG, Zoom, Ziehen, Tastatur |
 | Fragen | `js/questions.js`: Parser für `?`/`!`-Zeilen; Index in der Tabelle `questions`, bei jeder Änderung abgeglichen |
 | Markdown | `js/markdown.js`: eigener Renderer, escaped allen Text, erlaubt nur sichere Link-Schemata |
+| Toolleiste | `js/editing.js`: reine Textfunktionen (umschliessen, Zeilenpräfixe, Überschriften, Links), in Node prüfbar |
 | Export | `js/export.js` baut die Dateien, `js/zip.js` ist ein kleiner ZIP-Writer; das Bild liefert `NoNotesMindmap.toSvgString`, PNG über ein Canvas |
 | Druck | `js/print.js` baut das Druckdokument in `#printArea`; `@media print` blendet den Rest der App aus |
 | Datenbank | [sql.js](https://github.com/sql-js/sql.js) (SQLite nach JavaScript kompiliert) in `vendor/sql.js/`; Schema und Abfragen in `js/db.js` |
@@ -220,7 +230,7 @@ Der Smoke-Test öffnet die App wie ein Benutzer per `file://` in headless Chromi
 prüft Anlegen, Suchen, Speichern, Neuladen, Herunterladen, Importieren, Löschen, das
 Schreiben in die Datenbankdatei, die Mindmap-Bedienung, die Fragen, Markdown-Vorschau, Tags,
 Papierkorb, Suche, Umsortieren per Drag & Drop, Bild-Anhänge, den Export (Ordner und ZIP),
-das Drucken (mit gestubbtem `window.print`) und die Migration alter Datenbanken:
+das Drucken (mit gestubbtem `window.print`), Toolleiste und Hilfe sowie die Migration alter Datenbanken:
 
 ```bash
 npm install
