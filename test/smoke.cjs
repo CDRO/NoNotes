@@ -1566,6 +1566,66 @@ async function main() {
     await ctx19.close();
     step('Export: Listen in Antworten bleiben Listen');
 
+    // ---------- 20. Geteilte Ansicht: synchrones Scrollen ----------
+    const ctx20 = await browser.newContext({ viewport: { width: 1280, height: 700 }, locale: 'de-CH' });
+    const { page: page20, errors: errors20 } = await openApp(ctx20, 'list');
+    await page20.click('#newBtn');
+    await page20.fill('#title', 'Lang');
+    const lines20 = [];
+    for (let k = 0; k < 120; k++) lines20.push(k % 10 === 0 ? `## Abschnitt ${k}` : (k % 10 === 5 ? `Zeile ${k} ` + 'sehr langer Text, der in der schmalen Spalte des Editors bestimmt mehrfach umbricht und so die Messung der Zeilenhöhe fordert. '.repeat(3) : `Zeile ${k}`));
+    await page20.fill('#body', lines20.join('\n\n')); // Quellzeile 2k = Absatz k
+    await waitSaved(page20);
+    await page20.click('#modeSwitch button[data-mode="split"]');
+    await page20.waitForSelector('#editorPane.mode-split');
+    await page20.waitForSelector('#preview [data-line="238"]');
+    assert.equal(await page20.locator('#preview h2[data-line="0"]').count(), 1, 'Blöcke tragen die Quellzeile');
+    assert.equal(await page20.locator('#preview p[data-line="2"]').count(), 1);
+    const mirrorTop = line => page20.evaluate(n => document.querySelector('#bodyMirror').children[n].offsetTop, line);
+    const previewOffset = line => page20.evaluate(n => { const p = document.querySelector('#preview'); const e = p.querySelector(`[data-line="${n}"]`); return e.getBoundingClientRect().top - p.getBoundingClientRect().top; }, line);
+
+    // Editor führt: Quellzeile 120 (Absatz 60) an die Oberkante → Vorschau zeigt denselben Block oben.
+    await page20.hover('#body');
+    await page20.evaluate(() => { document.querySelector('#body').dispatchEvent(new Event('scroll')); }); // Spiegel aufbauen
+    const target20 = await mirrorTop(120);
+    assert.ok(target20 > 1000, 'Spiegel misst Zeilenhöhen');
+    await page20.evaluate(t => { document.querySelector('#body').scrollTop = t; }, target20);
+    await page20.waitForFunction(() => { const p = document.querySelector('#preview'); const e = p.querySelector('[data-line="120"]'); return Math.abs(e.getBoundingClientRect().top - p.getBoundingClientRect().top) < 3; });
+    const editorBefore = await page20.evaluate(() => document.querySelector('#body').scrollTop);
+    await page20.waitForTimeout(300);
+    assert.equal(await page20.evaluate(() => document.querySelector('#body').scrollTop), editorBefore, 'Vorschau stösst den Editor nicht zurück');
+    step('Geteilt: Editor scrollt, Vorschau folgt zeilengenau');
+
+    // Vorschau führt: Block von Quellzeile 40 an die Oberkante → Editor zeigt Zeile 40 oben.
+    await page20.hover('#preview');
+    await page20.evaluate(() => { const p = document.querySelector('#preview'); const e = p.querySelector('[data-line="40"]'); p.scrollTop += e.getBoundingClientRect().top - p.getBoundingClientRect().top; });
+    const want20 = await mirrorTop(40);
+    await page20.waitForFunction(w => Math.abs(document.querySelector('#body').scrollTop - w) < 3, want20);
+    const previewBefore = await page20.evaluate(() => document.querySelector('#preview').scrollTop);
+    await page20.waitForTimeout(300);
+    assert.equal(await page20.evaluate(() => document.querySelector('#preview').scrollTop), previewBefore, 'Editor stösst die Vorschau nicht zurück');
+    assert.ok(Math.abs(await previewOffset(40)) < 3, 'Vorschau bleibt, wo der Benutzer sie hingescrollt hat');
+
+    // Ende an Ende: Editor ganz unten → Vorschau ganz unten. Umbrochene Zeilen stimmen ebenfalls.
+    await page20.hover('#body');
+    await page20.evaluate(() => { const b = document.querySelector('#body'); b.scrollTop = b.scrollHeight; });
+    await page20.waitForFunction(() => { const p = document.querySelector('#preview'); return p.scrollTop >= p.scrollHeight - p.clientHeight - 1; });
+    const wrapTop = await mirrorTop(210); // Quellzeile 210 = Absatz 105, der lange Absatz
+    await page20.evaluate(t => { document.querySelector('#body').scrollTop = t; }, wrapTop);
+    await page20.waitForFunction(() => { const p = document.querySelector('#preview'); const e = p.querySelector('[data-line="210"]'); return Math.abs(e.getBoundingClientRect().top - p.getBoundingClientRect().top) < 3; });
+    // Nach einer Änderung bleibt die Vorschau am Editor ausgerichtet.
+    await page20.focus('#body');
+    await page20.evaluate(() => { const b = document.querySelector('#body'); b.setSelectionRange(0, 0); });
+    await page20.keyboard.type('# Neu oben\n');
+    await page20.waitForFunction(() => document.querySelector('#preview h1[data-line="0"]'));
+    await page20.waitForFunction(() => { const b = document.querySelector('#body'); const p = document.querySelector('#preview'); if (b.scrollTop > 2) return false; return p.scrollTop < 2; }, null, { timeout: 5000 }).catch(() => {});
+    const bodyTop = await page20.evaluate(() => document.querySelector('#body').scrollTop);
+    const line20 = await page20.evaluate(() => { const m = document.querySelector('#bodyMirror'); const st = document.querySelector('#body').scrollTop; let i = 0; while (i + 1 < m.children.length && m.children[i + 1].offsetTop <= st) i++; return i; });
+    const anchor20 = await page20.evaluate(l => { const p = document.querySelector('#preview'); let best = null; for (const e of p.querySelectorAll('[data-line]')) { const n = Number(e.dataset.line); if (n <= l && (!best || n > Number(best.dataset.line))) best = e; } return best ? Math.abs(best.getBoundingClientRect().top - p.getBoundingClientRect().top) : 9999; }, line20);
+    assert.ok(anchor20 < 60, `Vorschau bleibt nach dem Tippen ausgerichtet (Abstand ${anchor20}px, Editor bei ${bodyTop}px, Zeile ${line20})`);
+    assert.deepEqual(errors20, [], 'keine Konsolenfehler beim synchronen Scrollen');
+    await ctx20.close();
+    step('Geteilt: Vorschau scrollt, Editor folgt; Ende an Ende; umbrochene Zeilen; nach Änderung ausgerichtet');
+
     console.log('\nSmoke-Test bestanden.');
   } finally {
     await browser.close();

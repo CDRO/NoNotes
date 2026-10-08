@@ -201,6 +201,7 @@
           <div class="editor-body" id="editorBody">
             <textarea id="body" class="body" placeholder="Notiz… (Markdown; Zeile mit ? = Frage, darunter Zeilen mit ! = Antwort; [[Titel]] verweist auf eine Notiz)" aria-label="Inhalt" spellcheck="true"></textarea>
             <div id="preview" class="preview md" aria-label="Vorschau" tabindex="0"></div>
+            <div id="bodyMirror" class="body body-mirror" aria-hidden="true"></div>
           </div>
         </div>
       </section>
@@ -351,7 +352,7 @@
           </tbody>
         </table>
         <h3>Toolleiste und Schreiben</h3>
-        <p>Die Knöpfe wirken auf den markierten Text oder die aktuelle Zeile. Ohne Markierung wird ein Platzhalter eingefügt und gleich markiert. Listen, Zitate, Fragen und Antworten lassen sich mit demselben Knopf wieder entfernen. Die Darstellung wechselt zwischen <strong>Bearbeiten</strong>, <strong>Geteilt</strong> und <strong>Vorschau</strong>.</p>
+        <p>Die Knöpfe wirken auf den markierten Text oder die aktuelle Zeile. Ohne Markierung wird ein Platzhalter eingefügt und gleich markiert. Listen, Zitate, Fragen und Antworten lassen sich mit demselben Knopf wieder entfernen. Die Darstellung wechselt zwischen <strong>Bearbeiten</strong>, <strong>Geteilt</strong> und <strong>Vorschau</strong>. In der geteilten Ansicht scrollen Text und Vorschau gemeinsam; es führt jeweils die Seite, auf der die Maus liegt oder die den Fokus hat.</p>
         <p>Beim Schreiben führt <kbd>Enter</kbd> Listen, Aufgaben, Zitate und Antwortzeilen weiter, <kbd>Tab</kbd> und <kbd>Shift</kbd>+<kbd>Tab</kbd> rücken Listenelemente ein und aus. Termine von Fragen und Aufgaben erscheinen in der Vorschau als Abzeichen, im Text bleibt <code>@15.10.2026</code> stehen.</p>
       </section>
 
@@ -475,6 +476,7 @@
   <script src="js/export.js"></script>
   <script src="js/ical.js"></script>
   <script src="js/print.js"></script>
+  <script src="js/scrollsync.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

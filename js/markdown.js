@@ -143,7 +143,7 @@
 
   function makeCtx(options) {
     options = options || {};
-    return { text: makeText(options.highlight), resolveTitle: options.resolveTitle, resolveAttachment: options.resolveAttachment, interactiveTasks: !!options.interactiveTasks };
+    return { text: makeText(options.highlight), resolveTitle: options.resolveTitle, resolveAttachment: options.resolveAttachment, interactiveTasks: !!options.interactiveTasks, lineMap: !!options.lineMap };
   }
 
   /** Nur Zeilenformatierung (fett, Code, Links, [[Verweise]]), z. B. für Listeneinträge und den Druck. */
@@ -158,10 +158,14 @@
     const out = [];
     let i = 0;
 
+    // Mit lineMap tragen die Blöcke data-line (Quellzeile), für das synchrone Scrollen der geteilten Ansicht.
+    const la = n => ctx.lineMap ? ` data-line="${n}"` : '';
+    const nested = Object.assign({}, options, { lineMap: false });
     const paragraph = [];
+    let paragraphStart = 0;
     const flushParagraph = () => {
       if (!paragraph.length) return;
-      out.push('<p>' + paragraph.map(l => renderInline(l, ctx)).join('<br>') + '</p>');
+      out.push(`<p${la(paragraphStart)}>` + paragraph.map(l => renderInline(l, ctx)).join('<br>') + '</p>');
       paragraph.length = 0;
     };
 
@@ -176,19 +180,20 @@
       if (fence) {
         flushParagraph();
         const code = [];
+        const start = i;
         i++;
         while (i < lines.length && !lines[i].trim().startsWith(fence[1])) code.push(lines[i++]);
         i++;
-        out.push(`<pre><code${fence[2] ? ` class="lang-${escapeHtml(fence[2])}"` : ''}>${escapeHtml(code.join('\n'))}</code></pre>`);
+        out.push(`<pre${la(start)}><code${fence[2] ? ` class="lang-${escapeHtml(fence[2])}"` : ''}>${escapeHtml(code.join('\n'))}</code></pre>`);
         continue;
       }
 
       // Überschrift
       const h = /^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
-      if (h) { flushParagraph(); out.push(`<h${h[1].length}>${renderInline(h[2], ctx)}</h${h[1].length}>`); i++; continue; }
+      if (h) { flushParagraph(); out.push(`<h${h[1].length}${la(i)}>${renderInline(h[2], ctx)}</h${h[1].length}>`); i++; continue; }
 
       // Trennlinie
-      if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) { flushParagraph(); out.push('<hr>'); i++; continue; }
+      if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) { flushParagraph(); out.push(`<hr${la(i)}>`); i++; continue; }
 
       // Frage mit Antwortzeilen
       const q = /^\s*\?\s?(.*)$/.exec(line);
@@ -208,8 +213,8 @@
         const dueHtml = split.due && D
           ? `<span class="md-due due ${answered ? 'none' : D.urgency(split.due)}">${escapeHtml(answered ? D.formatDue(split.due) : D.dueLabel(split.due))}</span>`
           : '';
-        out.push(`<div class="md-q ${answered ? 'answered' : 'open'}"><span class="md-mark" aria-hidden="true">${answered ? '✓' : '?'}</span><div class="md-q-body"><div class="md-q-text">${renderInline(split.text, ctx)}${dueHtml}</div>` +
-          (answered ? `<div class="md-a">${render(answers.join('\n'), Object.assign({}, options, { interactiveTasks: false }))}</div>` : '') + '</div></div>');
+        out.push(`<div class="md-q ${answered ? 'answered' : 'open'}"${la(i)}><span class="md-mark" aria-hidden="true">${answered ? '✓' : '?'}</span><div class="md-q-body"><div class="md-q-text">${renderInline(split.text, ctx)}${dueHtml}</div>` +
+          (answered ? `<div class="md-a">${render(answers.join('\n'), Object.assign({}, nested, { interactiveTasks: false }))}</div>` : '') + '</div></div>');
         i = j;
         continue;
       }
@@ -218,7 +223,7 @@
       const loneAnswer = /^\s*!(?!\[)\s?(.*)$/.exec(line);
       if (loneAnswer) {
         flushParagraph();
-        out.push(`<div class="md-a md-a-lone">${renderInline(loneAnswer[1].trim(), ctx)}</div>`);
+        out.push(`<div class="md-a md-a-lone"${la(i)}>${renderInline(loneAnswer[1].trim(), ctx)}</div>`);
         i++;
         continue;
       }
@@ -227,8 +232,9 @@
       if (/^\s{0,3}>/.test(line)) {
         flushParagraph();
         const quoted = [];
+        const start = i;
         while (i < lines.length && /^\s{0,3}>/.test(lines[i])) quoted.push(lines[i++].replace(/^\s{0,3}>\s?/, ''));
-        out.push('<blockquote>' + render(quoted.join('\n'), options) + '</blockquote>');
+        out.push(`<blockquote${la(start)}>` + render(quoted.join('\n'), nested) + '</blockquote>');
         continue;
       }
 
@@ -239,6 +245,7 @@
         continue;
       }
 
+      if (!paragraph.length) paragraphStart = i;
       paragraph.push(line);
       i++;
     }
@@ -298,7 +305,7 @@
         html += '</li>';
       }
       const box = item.task == null ? '' : `<input type="checkbox"${ctx.interactiveTasks ? '' : ' disabled'}${item.task ? ' checked' : ''} aria-label="${item.task ? 'erledigt' : 'offen'}"> `;
-      html += `<li${item.task == null ? '' : ` class="task${item.task ? ' done' : ''}" data-line="${item.line}"`}>${box}${item.text}`;
+      html += `<li${item.task == null ? (ctx.lineMap ? ` data-line="${item.line}"` : '') : ` class="task${item.task ? ' done' : ''}" data-line="${item.line}"`}>${box}${item.text}`;
     }
     while (stack.length) { html += '</li>'; close(); }
     out.push(html);

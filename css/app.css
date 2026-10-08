@@ -477,8 +477,16 @@ mark { background: color-mix(in srgb, var(--warn) 35%, transparent); color: inhe
 
 /* Editor-Modi */
 .editor-tools .segmented { margin-left: 8px; }
-.editor-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr; gap: 12px; }
+.editor-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr; gap: 12px; position: relative; }
 .editor-body .body { height: 100%; }
+/* Unsichtbarer Spiegel des Textes mit denselben Schriftmassen: misst die Pixelhöhe jeder Quellzeile. */
+#editorPane .editor-body .body-mirror {
+  display: block; position: absolute; top: 0; left: 0; z-index: -1;
+  height: auto; min-height: 0; max-height: none; overflow: hidden;
+  visibility: hidden; pointer-events: none; box-sizing: border-box; border: 0;
+  white-space: pre-wrap; overflow-wrap: break-word; word-break: normal;
+}
+.preview { position: relative; }
 .preview { overflow: auto; min-height: 200px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); line-height: 1.65; font-size: 16px; }
 #editorPane.mode-edit .preview { display: none; }
 #editorPane.mode-preview .body { display: none; }

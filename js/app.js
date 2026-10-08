@@ -67,7 +67,7 @@
     mapZoomInBtn: $('#mapZoomInBtn'), mapZoomOutBtn: $('#mapZoomOutBtn'),
     mindmap: $('#mindmap'), renameInput: $('#renameInput'), contextMenu: $('#contextMenu'),
     search: $('#search'), newBtn: $('#newBtn'), list: $('#list'), listEmpty: $('#listEmpty'), count: $('#count'),
-    editorEmpty: $('#editorEmpty'), editorPane: $('#editorPane'), backBtn: $('#backBtn'),
+    editorEmpty: $('#editorEmpty'), editorPane: $('#editorPane'), backBtn: $('#backBtn'), bodyMirror: $('#bodyMirror'),
     crumbs: $('#crumbs'), noteMeta: $('#noteMeta'), childBtn: $('#childBtn'), deleteBtn: $('#deleteBtn'),
     title: $('#title'), body: $('#body'),
   };
@@ -105,6 +105,7 @@
     tTag: '',
     tSearchTimer: null,
     calHandle: null,          // gemerkte Kalenderdatei (.ics)
+    scrollSync: null,         // synchrones Scrollen in der geteilten Ansicht
     // Speichern: jede Änderung erhöht editSeq; savedSeq ist der zuletzt vollständig gesicherte Stand.
     editSeq: 0,
     savedSeq: 0,
@@ -1231,7 +1232,9 @@
       resolveTitle: wikiResolver(),
       resolveAttachment: id => attachmentUrl(id),
       interactiveTasks: !el.body.readOnly,
+      lineMap: true,
     });
+    if (state.editorMode === 'split' && state.scrollSync) state.scrollSync.afterRender();
   }
 
   /** Kästchen in der Vorschau angeklickt: Zeile im Text umschalten. */
@@ -1375,7 +1378,8 @@
     el.body.focus();
     el.body.setSelectionRange(start, end);
     const lineHeight = parseFloat(getComputedStyle(el.body).lineHeight) || 24;
-    el.body.scrollTop = Math.max(0, lineIndex * lineHeight - el.body.clientHeight / 3);
+    const top = state.scrollSync && state.editorMode !== 'preview' ? state.scrollSync.topOfLine(lineIndex) : lineIndex * lineHeight;
+    el.body.scrollTop = Math.max(0, top - el.body.clientHeight / 3);
   }
 
   function closeEditor() {
@@ -2362,6 +2366,10 @@
       if (b) setEditorMode(b.dataset.mode);
     });
     el.preview.addEventListener('click', onPreviewClick);
+    state.scrollSync = window.NoNotesScrollSync.create({
+      textarea: el.body, preview: el.preview, mirror: el.bodyMirror,
+      isActive: () => state.editorMode === 'split' && !el.editorPane.hidden,
+    });
     el.qList.addEventListener('click', onListLinkClick);
     el.tList.addEventListener('click', onListLinkClick);
     el.attachBtn.addEventListener('click', () => { el.attachInput.value = ''; el.attachInput.click(); });

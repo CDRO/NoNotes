@@ -220,6 +220,10 @@ Dasselbe gilt für Fragen.
   *Datenbank → Datenablage erklärt…* zu finden ist.
 - Die Darstellung wechselt zwischen **Bearbeiten**, **Geteilt** (Text und Vorschau
   nebeneinander) und **Vorschau**, auch mit `Ctrl+E`. Die Einstellung wird gemerkt.
+- In der geteilten Ansicht scrollen Text und Vorschau synchron. Die App misst dafür die
+  Pixelhöhe jeder Textzeile in einem unsichtbaren Spiegel des Editors (so stimmt es auch bei
+  umbrochenen Zeilen) und kennt die Quellzeile jedes Blocks der Vorschau. Es führt die Seite,
+  auf der die Maus liegt oder die den Fokus hat, die andere folgt.
 - **Bilder** hängst du mit **🖼 Bild**, per Einfügen aus der Zwischenablage (`Ctrl+V`) oder
   durch Ablegen auf dem Text an. Sie liegen in der Datenbank, im Text steht `![Name](att:ID)`,
   die Vorschau zeigt sie. Grosse Bilder werden auf 1600 Pixel Kantenlänge verkleinert.
@@ -244,6 +248,7 @@ Dasselbe gilt für Fragen.
 | Toolleiste | `js/editing.js`: reine Textfunktionen (umschliessen, Zeilenpräfixe, Überschriften, Links), in Node prüfbar |
 | Export | `js/export.js` baut die Dateien, `js/zip.js` ist ein kleiner ZIP-Writer; das Bild liefert `NoNotesMindmap.toSvgString`, PNG über ein Canvas |
 | Druck | `js/print.js` baut das Druckdokument in `#printArea`; `@media print` blendet den Rest der App aus |
+| Scroll-Sync | `js/scrollsync.js`: Spiegel des Textes misst Zeilenhöhen, Vorschau-Blöcke tragen `data-line`, lineare Interpolation dazwischen |
 | Kalender | `js/ical.js`: iCalendar nach RFC 5545 mit festen UIDs, SEQUENCE, VALARM, Zeilenfaltung; gemerkte Kennungen in `meta` |
 | Datenbank | [sql.js](https://github.com/sql-js/sql.js) (SQLite nach JavaScript kompiliert) in `vendor/sql.js/`; Schema und Abfragen in `js/db.js` |
 | Persistenz | `js/storage.js`: IndexedDB (ersatzweise localStorage) plus File System Access API für die Datei |
@@ -303,7 +308,7 @@ prüft Anlegen, Suchen, Speichern, Neuladen, Herunterladen, Importieren, Lösche
 Schreiben in die Datenbankdatei, die Mindmap-Bedienung, die Fragen, Markdown-Vorschau, Tags,
 Papierkorb, Suche, Umsortieren per Drag & Drop, Bild-Anhänge, den Export (Ordner und ZIP),
 das Drucken (mit gestubbtem `window.print`), Toolleiste und Hilfe, Aufgaben, Termine mit Uhrzeit,
-den Kalenderexport und die Migration alter Datenbanken:
+den Kalenderexport, das synchrone Scrollen der geteilten Ansicht und die Migration alter Datenbanken:
 
 ```bash
 npm install
