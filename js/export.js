@@ -69,7 +69,11 @@
         const answered = answers.join('').trim().length > 0;
         if (out.length && out[out.length - 1].trim() !== '' && !out[out.length - 1].startsWith('>')) out.push('');
         out.push(`> **${answered ? 'Frage (beantwortet)' : 'Offene Frage'}:** ${inline(q[1].trim(), resolveLink, resolveAttachment)}`);
-        if (answered) out.push(`> **Antwort:** ${answers.map(a => inline(a, resolveLink, resolveAttachment)).join(' ')}`);
+        if (answered) {
+          const rendered = answers.map(a => inline(a, resolveLink, resolveAttachment));
+          if (rendered.length === 1) out.push(`> **Antwort:** ${rendered[0]}`);
+          else { out.push('> **Antwort:**'); for (const a of rendered) out.push(`> ${a}`); } // Listen in Antworten bleiben Listen
+        }
         if (j < lines.length && lines[j].trim() !== '') out.push('');
         i = j - 1;
         continue;

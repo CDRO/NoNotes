@@ -1218,12 +1218,17 @@
     setEditorMode(order[(order.indexOf(state.editorMode) + 1) % order.length]);
   }
 
+  /** Löst [[Titel]] auf Notiz-IDs auf; einmal pro Darstellung bauen. */
+  function wikiResolver() {
+    const index = DB.titleIndex(state.db);
+    return title => { const id = index.get(title.trim().toLowerCase()); return id == null ? null : id; };
+  }
+
   function renderPreview() {
     if (state.currentId == null) return;
-    const index = DB.titleIndex(state.db);
     el.preview.innerHTML = M.render(el.body.value, {
       highlight: state.query.trim() || null,
-      resolveTitle: title => { const id = index.get(title.trim().toLowerCase()); return id == null ? null : id; },
+      resolveTitle: wikiResolver(),
       resolveAttachment: id => attachmentUrl(id),
       interactiveTasks: !el.body.readOnly,
     });
@@ -1258,6 +1263,20 @@
       markEdited();
       renderAll();
       openNote(id);
+    } else if (a.getAttribute('href') === '#') {
+      e.preventDefault();
+    }
+  }
+
+  /** Link in der Fragen- oder Aufgabenliste: Verweis öffnet die Notiz, externe Links öffnen sich im neuen Tab. */
+  function onListLinkClick(e) {
+    const a = e.target.closest('a');
+    if (!a) return;
+    e.stopPropagation();
+    if (a.classList.contains('md-wiki')) {
+      e.preventDefault();
+      if (a.dataset.noteId) openNote(Number(a.dataset.noteId));
+      else setStatus(`Es gibt keine Notiz „${a.dataset.title}“`, 'error');
     } else if (a.getAttribute('href') === '#') {
       e.preventDefault();
     }
@@ -1522,6 +1541,7 @@
 
   function renderQuestions() {
     if (state.view !== 'questions') return;
+    const resolve = wikiResolver();
     // Entwurf eines offenen Antwortfelds sichern, damit ein Neuzeichnen nichts verschluckt.
     const openTa = state.qAnswering != null ? el.qList.querySelector(`.q-item[data-id="${state.qAnswering}"] .q-form textarea`) : null;
     if (openTa) state.qDraft = openTa.value;
@@ -1565,7 +1585,7 @@
       cnt.textContent = g.items.length === 1 ? '1 Frage' : `${g.items.length} Fragen`;
       h.appendChild(cnt);
       section.appendChild(h);
-      for (const r of g.items) section.appendChild(renderQuestionItem(r, today));
+      for (const r of g.items) section.appendChild(renderQuestionItem(r, today, resolve));
       frag.appendChild(section);
     }
     el.qList.replaceChildren(frag);
@@ -1576,7 +1596,8 @@
       : 'Noch keine Fragen. Eine Zeile, die mit „?“ beginnt, wird zur Frage.';
   }
 
-  function renderQuestionItem(r, today) {
+  function renderQuestionItem(r, today, resolve) {
+    resolve = resolve || wikiResolver();
     const item = document.createElement('article');
     item.className = 'q-item ' + (r.answer ? 'answered' : 'open');
     item.dataset.id = String(r.id);
@@ -1588,7 +1609,7 @@
     mark.textContent = r.answer ? '✓' : '?';
     const text = document.createElement('div');
     text.className = 'q-text';
-    text.innerHTML = M.highlightText(r.text, state.qQuery.trim());
+    text.innerHTML = M.inline(r.text, { highlight: state.qQuery.trim() || null, resolveTitle: resolve });
     head.append(mark, text);
     if (r.due) {
       const due = document.createElement('span');
@@ -1602,7 +1623,7 @@
     if (r.answer) {
       const a = document.createElement('div');
       a.className = 'q-answer';
-      a.innerHTML = M.highlightText(r.answer, state.qQuery.trim());
+      a.innerHTML = M.render(r.answer, { highlight: state.qQuery.trim() || null, resolveTitle: resolve });
       item.appendChild(a);
     }
 
@@ -1719,6 +1740,7 @@
 
   function renderTasks() {
     if (state.view !== 'tasks') return;
+    const resolve = wikiResolver();
     const today = Dates.nowIso();
     const rows = DB.listTasks(state.db, { status: state.tStatus, query: state.tQuery, tag: state.tTag, sort: state.tSort });
     const counts = DB.countTasks(state.db, today);
@@ -1758,7 +1780,7 @@
       cnt.textContent = g.items.length === 1 ? '1 Aufgabe' : `${g.items.length} Aufgaben`;
       h.appendChild(cnt);
       section.appendChild(h);
-      for (const r of g.items) section.appendChild(renderTaskItem(r, today));
+      for (const r of g.items) section.appendChild(renderTaskItem(r, today, resolve));
       frag.appendChild(section);
     }
     el.tList.replaceChildren(frag);
@@ -1769,7 +1791,8 @@
       : 'Noch keine Aufgaben. Eine Zeile „- [ ] Text“ wird zur Aufgabe.';
   }
 
-  function renderTaskItem(r, today) {
+  function renderTaskItem(r, today, resolve) {
+    resolve = resolve || wikiResolver();
     const item = document.createElement('article');
     item.className = 'q-item t-item ' + (r.done ? 'done' : 'open');
     item.dataset.id = String(r.id);
@@ -1784,7 +1807,7 @@
     box.addEventListener('change', () => toggleTaskDone(r.id, box.checked));
     const text = document.createElement('div');
     text.className = 'q-text';
-    text.innerHTML = M.highlightText(r.text, state.tQuery.trim());
+    text.innerHTML = M.inline(r.text, { highlight: state.tQuery.trim() || null, resolveTitle: resolve });
     head.append(box, text);
     if (r.due) {
       const due = document.createElement('span');
@@ -2339,6 +2362,8 @@
       if (b) setEditorMode(b.dataset.mode);
     });
     el.preview.addEventListener('click', onPreviewClick);
+    el.qList.addEventListener('click', onListLinkClick);
+    el.tList.addEventListener('click', onListLinkClick);
     el.attachBtn.addEventListener('click', () => { el.attachInput.value = ''; el.attachInput.click(); });
     el.printBtn.addEventListener('click', () => openPrintDialog({ noteId: state.currentId }));
     el.mapPrintBtn.addEventListener('click', () => openPrintDialog({}));

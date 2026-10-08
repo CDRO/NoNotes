@@ -1460,6 +1460,112 @@ async function main() {
     await ctx18.close();
     step('Kalender: Herunterladen ohne Abgesagte, gemerkte Datei, Kennung in der Datenbank');
 
+    // ---------- 19. Listenarten, Listen in Antworten, Links in den zentralen Listen und im Druck ----------
+    const ctx19 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
+    await ctx19.addInitScript(() => {
+      window.__printed = [];
+      window.print = () => { window.__printed.push(document.getElementById('printArea').innerHTML); };
+    });
+    const { page: page19, errors: errors19 } = await openApp(ctx19, 'list');
+    const md19 = (src) => page19.evaluate(s => window.NoNotesMarkdown.render(s), src);
+    assert.equal(await md19('- a\n- b\n1. eins\n2. zwei'), '<ul><li>a</li><li>b</li></ul><ol><li>eins</li><li>zwei</li></ol>', 'Nummerierung direkt nach Bullets');
+    assert.match(await md19('- [ ] Aufgabe\n1. eins'), /<\/ul><ol><li>eins<\/li><\/ol>$/, 'Nummerierung direkt nach Aufgabe');
+    assert.equal(await md19('1. eins\n- a'), '<ol><li>eins</li></ol><ul><li>a</li></ul>');
+    assert.equal(await md19('- a\n  - b\n  1. c\n- d'), '<ul><li>a<ul><li>b</li></ul><ol><li>c</li></ol></li><li>d</li></ul>', 'Wechsel in verschachtelter Liste');
+    assert.equal(await md19('1. eins\n2. zwei'), '<ol><li>eins</li><li>zwei</li></ol>', 'gleiche Art bleibt eine Liste');
+    assert.equal(await md19('> - a\n> 1. b'), '<blockquote><ul><li>a</li></ul><ol><li>b</li></ol></blockquote>', 'auch im Zitat');
+    step('Markdown: Wechsel zwischen Bullet- und nummerierter Liste beginnt neue Liste');
+
+    await page19.click('#newBtn');
+    await page19.fill('#title', 'Ziel');
+    await page19.fill('#body', 'Zielnotiz');
+    await waitSaved(page19);
+    await page19.click('#newBtn');
+    await page19.fill('#title', 'Quelle');
+    await page19.fill('#body', [
+      '- [ ] Mail an [[Ziel]] mit **Anhang** und [Google](https://google.com)',
+      '- [ ] Zweite Aufgabe [[Gibtsnicht]]',
+      '',
+      '? Was steht in [[Ziel]]?',
+      '! 1. eins',
+      '! 2. zwei',
+      '',
+      '? Kurz?',
+      '! Ja',
+    ].join('\n'));
+    await waitSaved(page19);
+    await page19.click('#modeSwitch button[data-mode="preview"]');
+    await page19.waitForSelector('#preview .md-a ol');
+    assert.equal(await page19.locator('#preview .md-a ol li').count(), 2, 'Liste in der Antwort der Vorschau');
+    assert.equal(await page19.locator('#preview li.task a.md-wiki[data-note-id]').count(), 1);
+    await page19.click('#modeSwitch button[data-mode="edit"]');
+    step('Vorschau: Liste in der Antwort, Verweis in der Aufgabe');
+
+    await page19.click('#viewTasksBtn');
+    await page19.waitForSelector('body.view-tasks');
+    await page19.waitForFunction(() => document.querySelectorAll('.t-item').length === 2);
+    const t1 = page19.locator('.t-item').first();
+    assert.equal(await t1.locator('.q-text').innerText(), 'Mail an Ziel mit Anhang und Google', 'Markdown in der Aufgabenliste gerendert');
+    assert.equal(await t1.locator('.q-text strong').count(), 1);
+    assert.equal(await t1.locator('.q-text a[href="https://google.com"][target="_blank"]').count(), 1, 'externer Link');
+    assert.equal(await page19.locator('.t-item a.md-wiki.missing').count(), 1, 'fehlender Verweis gekennzeichnet');
+    await page19.click('.t-item a.md-wiki.missing');
+    await page19.waitForFunction(() => /keine Notiz „Gibtsnicht“/.test(document.querySelector('#status').textContent));
+    assert.equal(await page19.locator('body.view-tasks').count(), 1, 'fehlender Verweis bleibt in der Liste');
+    await t1.locator('.q-text a.md-wiki').click();
+    await page19.waitForSelector('body.editor-open');
+    await page19.waitForFunction(() => document.querySelector('#title').value === 'Ziel');
+    await page19.keyboard.press('Escape');
+    await page19.waitForSelector('body:not(.editor-open)');
+    step('Aufgabenliste: Formatierung, Link, Verweis öffnet die Notiz');
+
+    await page19.click('#viewQuestionsBtn');
+    await page19.waitForSelector('body.view-questions');
+    await page19.click('#qFilter button[data-status="all"]');
+    await page19.waitForFunction(() => document.querySelectorAll('.q-item:not(.t-item)').length === 2);
+    const q1 = page19.locator('.q-item:not(.t-item)').first();
+    assert.equal(await q1.locator('.q-text a.md-wiki').innerText(), 'Ziel', 'Verweis im Fragetext');
+    assert.equal(await q1.locator('.q-answer ol li').count(), 2, 'Liste in der Antwort der Fragenliste');
+    await q1.locator('.q-text a.md-wiki').click();
+    await page19.waitForSelector('body.editor-open');
+    await page19.waitForFunction(() => document.querySelector('#title').value === 'Ziel');
+    await page19.keyboard.press('Escape');
+    await page19.waitForSelector('body:not(.editor-open)');
+    step('Fragenliste: Verweis und Liste in der Antwort');
+
+    await page19.click('#qPrintBtn');
+    await page19.waitForSelector('#qaPrintDialog[open]');
+    await page19.click('#qaPrintGoBtn');
+    await page19.waitForFunction(() => window.__printed.length === 1);
+    const qaDoc19 = await page19.evaluate(() => window.__printed[0]);
+    assert.ok(/<div class="print-a md"><ol><li>eins<\/li><li>zwei<\/li><\/ol><\/div>/.test(qaDoc19), 'Liste in der gedruckten Antwort');
+    assert.ok(/print-q-text">Was steht in <a href="#" class="md-wiki" data-title="Ziel" data-note-id="\d+">Ziel<\/a>\?/.test(qaDoc19), 'Verweis im gedruckten Fragetext');
+    await page19.click('#viewTasksBtn');
+    await page19.waitForSelector('body.view-tasks');
+    await page19.click('#tPrintBtn');
+    await page19.waitForSelector('#taskPrintDialog[open]');
+    await page19.click('#taskPrintGoBtn');
+    await page19.waitForFunction(() => window.__printed.length === 2);
+    const tDoc19 = await page19.evaluate(() => window.__printed[1]);
+    assert.ok(tDoc19.includes('<a href="https://google.com" target="_blank" rel="noopener noreferrer">Google</a>'), 'Link in der gedruckten Checkliste');
+    assert.ok(tDoc19.includes('<strong>Anhang</strong>'));
+    step('Druck: Markdown in Fragen und Antworten und in der Checkliste');
+
+    await page19.click('#menuBtn');
+    await page19.click('#exportBtn');
+    await page19.waitForSelector('#exportDialog[open]');
+    const [dl19] = await Promise.all([page19.waitForEvent('download'), page19.click('#exportZipBtn')]);
+    const zip19Path = path.join(tmp, 'listen.zip');
+    await dl19.saveAs(zip19Path);
+    const files19 = readZip(fs.readFileSync(zip19Path));
+    const quelle19 = new TextDecoder().decode(files19[Object.keys(files19).find(n => /notes\/.*quelle.*\.md$/i.test(n))]);
+    assert.ok(quelle19.includes('> **Frage (beantwortet):** Was steht in [Ziel]('), 'Verweis im Export verlinkt');
+    assert.ok(quelle19.includes('> **Antwort:**\n> 1. eins\n> 2. zwei'), 'mehrzeilige Antwort bleibt Liste');
+    assert.ok(quelle19.includes('> **Antwort:** Ja'), 'einzeilige Antwort bleibt in der Zeile');
+    assert.deepEqual(errors19, [], 'keine Konsolenfehler bei Listen und Links');
+    await ctx19.close();
+    step('Export: Listen in Antworten bleiben Listen');
+
     console.log('\nSmoke-Test bestanden.');
   } finally {
     await browser.close();

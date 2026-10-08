@@ -165,6 +165,9 @@ Notiztext bleibt die einzige Wahrheit, die App führt nur einen Index darüber.
 - **Beantworten** schreibt die Antwort als `!`-Zeile direkt unter die Frage in die Notiz.
   **Antwort bearbeiten** ändert sie, ein leerer Text macht die Frage wieder offen.
 - **Zur Notiz** öffnet die Notiz im Vollbild und springt zur Zeile der Frage.
+- Frage und Antwort werden in der Liste, in der Vorschau und im Druck formatiert: fett, Code,
+  Links und `[[Verweise]]` funktionieren, eine Antwort darf mehrere Zeilen und Listen enthalten
+  (`! 1. erstens`, `! 2. zweitens`). Im Markdown-Export bleibt eine solche Antwort eine Liste.
 - In der Mindmap zeigt eine Marke am Knoten die Anzahl offener Fragen; eingeklappte Äste
   zählen ihren ganzen Teilbaum. Der Reiter *Fragen* trägt die Gesamtzahl.
 
@@ -182,6 +185,9 @@ Dasselbe gilt für Fragen.
   und Tag-Filter. Der Reiter zeigt die Zahl der offenen Aufgaben, rot wenn etwas überfällig ist.
 - **Abhaken** geht an drei Orten: Kästchen in der Aufgabenliste, Kästchen in der Vorschau
   des Editors, oder direkt im Text. Alles schreibt in dieselbe Zeile der Notiz.
+- Der Aufgabentext wird in der Liste und im Druck wie in der Vorschau formatiert: fett, Code,
+  Links und `[[Verweise]]` funktionieren. Ein Klick auf einen Verweis öffnet die Notiz, ein Klick
+  auf einen Link öffnet ihn im neuen Tab.
 - In der Mindmap zeigt ein blauer Marker unten am Knoten die offenen Aufgaben, der orange
   Marker oben die offenen Fragen. Eingeklappte Äste zählen ihren Teilbaum.
 - **Drucken…** in der Aufgabenansicht (oder `Ctrl+P`) druckt eine Checkliste mit Kästchen,

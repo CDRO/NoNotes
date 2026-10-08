@@ -13,6 +13,11 @@
   const esc = s => M().escapeHtml(s);
   const URGENCY_ORDER = ['overdue', 'today', 'week', 'later', 'none', 'done', 'answered'];
   const byUrgency = (a, b) => URGENCY_ORDER.indexOf(a[0]) - URGENCY_ORDER.indexOf(b[0]);
+  /** [[Titel]] im Druck auflösen, damit Verweise als vorhandene Notiz erscheinen. */
+  function titleResolver(db) {
+    const index = DB().titleIndex(db);
+    return title => { const id = index.get(title.trim().toLowerCase()); return id == null ? null : id; };
+  }
 
   /** Teilbaum-IDs (inklusive Wurzelknoten) aus der Baumreihenfolge. */
   function subtreeIds(nodes, id) {
@@ -133,6 +138,7 @@
       options.query ? `Suche „${options.query}“` : null,
     ].filter(Boolean).join(', ');
     const open = rows.filter(r => !r.answer).length;
+    const resolveTitle = titleResolver(db);
 
     const item = r => {
       const answered = !!r.answer;
@@ -142,8 +148,8 @@
       const from = groupBy === 'note' ? '' : ` · aus ${esc(r.note_title.trim() || 'Ohne Titel')}`;
       return `<div class="print-q ${answered ? 'answered' : 'open'}">` +
         `<span class="print-mark">${answered ? '✓' : '?'}</span>` +
-        `<div class="print-q-body"><div class="print-q-text">${esc(r.text)}${due}</div>` +
-        (answered ? `<div class="print-a">${esc(r.answer).replace(/\n/g, '<br>')}</div>` : ruled) +
+        `<div class="print-q-body"><div class="print-q-text">${M().inline(r.text, { resolveTitle })}${due}</div>` +
+        (answered ? `<div class="print-a md">${M().render(r.answer, { resolveTitle })}</div>` : ruled) +
         `<div class="print-q-meta">${answered && r.answered_at ? 'Beantwortet ' + esc(fmtDate(r.answered_at)) : 'Gestellt ' + esc(fmtDate(r.created_at))}${from}</div></div></div>`;
     };
 
@@ -194,11 +200,12 @@
       options.query ? `Suche „${options.query}“` : null,
     ].filter(Boolean).join(', ');
     const open = rows.filter(r => !r.done).length;
+    const resolveTitle = titleResolver(db);
     const item = r => {
       const u = r.done ? 'none' : T.urgency(r.due, today);
       const meta = [r.due ? `bis ${T.formatDue(r.due)}` : null, options.groupBy === 'note' ? null : (r.note_title.trim() || 'Ohne Titel'), r.done && r.done_at ? `erledigt ${fmtDate(r.done_at)}` : null].filter(Boolean).join(' · ');
       return `<div class="print-task ${r.done ? 'done' : 'open'}"><span class="print-box" aria-hidden="true"></span>` +
-        `<span class="print-task-text">${esc(r.text)}</span>` +
+        `<span class="print-task-text">${M().inline(r.text, { resolveTitle })}</span>` +
         (meta ? `<span class="print-task-meta${u === 'overdue' ? ' overdue' : ''}">${esc(meta)}</span>` : '') + '</div>';
     };
     const parts = [];

@@ -336,7 +336,13 @@ body:not(.view-list).editor-open #editorPane { max-width: 1000px; }
 .q-mark { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 14px; background: var(--warn); color: #fff; }
 .q-item.answered .q-mark { background: var(--ok); }
 .q-text { font-weight: 600; line-height: 1.45; white-space: pre-wrap; }
-.q-answer { margin-left: 34px; padding: 8px 12px; border-left: 3px solid var(--ok); background: var(--bg); border-radius: 0 8px 8px 0; white-space: pre-wrap; }
+.q-answer { margin-left: 34px; padding: 8px 12px; border-left: 3px solid var(--ok); background: var(--bg); border-radius: 0 8px 8px 0; }
+.q-answer p, .md-a p { margin: 0; }
+.q-answer p + p, .md-a p + p { margin-top: .4em; }
+.q-answer ul, .q-answer ol, .md-a ul, .md-a ol { margin: .2em 0; padding-left: 1.4em; }
+.q-answer > :first-child, .md-a > :first-child { margin-top: 0; }
+.q-answer > :last-child, .md-a > :last-child { margin-bottom: 0; }
+.q-answer code, .q-text code { font-size: .92em; }
 .q-actions { display: flex; align-items: center; gap: 8px; margin-left: 34px; flex-wrap: wrap; }
 .q-actions button { padding: 5px 10px; font-size: 13px; }
 .q-meta { color: var(--muted); font-size: 12px; }
@@ -493,10 +499,11 @@ mark { background: color-mix(in srgb, var(--warn) 35%, transparent); color: inhe
 .md pre code { border: 0; padding: 0; background: none; }
 .md hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
 .md img { max-width: 100%; border-radius: 8px; }
-.md a { color: var(--accent); }
-.md a.md-wiki { text-decoration: none; border-bottom: 1px dashed var(--accent); }
-.md a.md-wiki.missing { color: var(--muted); border-bottom-color: var(--muted); }
+.md a, .q-item a { color: var(--accent); }
+.md a.md-wiki, .q-item a.md-wiki { text-decoration: none; border-bottom: 1px dashed var(--accent); }
+.md a.md-wiki.missing, .q-item a.md-wiki.missing { color: var(--muted); border-bottom-color: var(--muted); }
 .md a.md-wiki.missing::after { content: " +"; opacity: .7; }
+.q-item a.md-wiki.missing::after { content: " ?"; opacity: .7; }
 .md-q { display: flex; gap: 10px; align-items: flex-start; margin: .6em 0; padding: 8px 12px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border); }
 .md-q .md-mark { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px; background: var(--warn); color: #fff; }
 .md-q.answered .md-mark { background: var(--ok); }
@@ -626,6 +633,10 @@ mark { background: color-mix(in srgb, var(--warn) 35%, transparent); color: inhe
   #printArea .print-q-body { flex: 1; }
   #printArea .print-q-text { font-weight: 600; }
   #printArea .print-a { margin-top: 3pt; padding: 3pt 8pt; border-left: 2pt solid #15803d; }
+  #printArea .print-a p { margin: 0; }
+  #printArea .print-a ul, #printArea .print-a ol { margin: 2pt 0; padding-left: 14pt; }
+  #printArea .print-q a, #printArea .print-task a { color: inherit; text-decoration: underline; }
+  #printArea .print-q a.md-wiki, #printArea .print-task a.md-wiki { text-decoration: none; }
   #printArea .print-q-meta { color: #666; font-size: 8.5pt; margin-top: 2pt; }
   #printArea .print-lines { margin-top: 6pt; }
   #printArea .print-lines span { display: block; height: 9mm; border-bottom: 1px solid #999; }

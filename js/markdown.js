@@ -141,9 +141,19 @@
 
   // ---------- Blöcke ----------
 
+  function makeCtx(options) {
+    options = options || {};
+    return { text: makeText(options.highlight), resolveTitle: options.resolveTitle, resolveAttachment: options.resolveAttachment, interactiveTasks: !!options.interactiveTasks };
+  }
+
+  /** Nur Zeilenformatierung (fett, Code, Links, [[Verweise]]), z. B. für Listeneinträge und den Druck. */
+  function inline(src, options) {
+    return renderInline(String(src == null ? '' : src), makeCtx(options));
+  }
+
   function render(markdown, options) {
     options = options || {};
-    const ctx = { text: makeText(options.highlight), resolveTitle: options.resolveTitle, resolveAttachment: options.resolveAttachment, interactiveTasks: !!options.interactiveTasks };
+    const ctx = makeCtx(options);
     const lines = String(markdown || '').replace(/\r\n?/g, '\n').split('\n');
     const out = [];
     let i = 0;
@@ -199,7 +209,7 @@
           ? `<span class="md-due due ${answered ? 'none' : D.urgency(split.due)}">${escapeHtml(answered ? D.formatDue(split.due) : D.dueLabel(split.due))}</span>`
           : '';
         out.push(`<div class="md-q ${answered ? 'answered' : 'open'}"><span class="md-mark" aria-hidden="true">${answered ? '✓' : '?'}</span><div class="md-q-body"><div class="md-q-text">${renderInline(split.text, ctx)}${dueHtml}</div>` +
-          (answered ? `<div class="md-a">${answers.map(a => renderInline(a.trim(), ctx)).join('<br>')}</div>` : '') + '</div></div>');
+          (answered ? `<div class="md-a">${render(answers.join('\n'), Object.assign({}, options, { interactiveTasks: false }))}</div>` : '') + '</div></div>');
         i = j;
         continue;
       }
@@ -280,6 +290,8 @@
     const close = () => { const s = stack.pop(); html += s.ordered ? '</ol>' : '</ul>'; };
     for (const item of items) {
       while (stack.length && item.indent < stack[stack.length - 1].indent) { html += '</li>'; close(); }
+      // Wechsel zwischen Bullet und Nummer auf gleicher Einrückung beginnt eine neue Liste
+      if (stack.length && item.indent === stack[stack.length - 1].indent && item.ordered !== stack[stack.length - 1].ordered) { html += '</li>'; close(); }
       if (!stack.length || item.indent > stack[stack.length - 1].indent) {
         open(item);
       } else {
@@ -298,5 +310,5 @@
     return makeText(highlight)(s);
   }
 
-  global.NoNotesMarkdown = { render, escapeHtml, highlightText };
+  global.NoNotesMarkdown = { render, inline, escapeHtml, highlightText };
 })(window);
