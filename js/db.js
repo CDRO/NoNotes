@@ -3,7 +3,7 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 6;
+  const SCHEMA_VERSION = 7;
   const DEFAULT_MAP_TITLE = 'Meine Notizen';
 
   function nowIso() { return new Date().toISOString(); }
@@ -81,7 +81,8 @@
         answer      TEXT,
         line_no     INTEGER NOT NULL,
         created_at  TEXT NOT NULL,
-        answered_at TEXT
+        answered_at TEXT,
+        due         TEXT
       );
       CREATE INDEX idx_questions_note ON questions (note_id);
       CREATE TABLE tags (
@@ -210,6 +211,12 @@
       `);
       for (const row of selectAll(db, 'SELECT id, body FROM notes')) syncTasks(db, row.id, row.body);
       version = 6;
+    }
+
+    if (version < 7) {
+      db.exec('ALTER TABLE questions ADD COLUMN due TEXT');
+      for (const row of selectAll(db, 'SELECT id, body FROM notes')) syncQuestions(db, row.id, row.body);
+      version = 7;
     }
 
     setMeta(db, 'schema_version', SCHEMA_VERSION);
@@ -649,23 +656,25 @@
         let answeredAt = e.answered_at;
         if (q.answer && !e.answer) answeredAt = ts;
         if (!q.answer) answeredAt = null;
-        if (e.text !== q.text || e.answer !== q.answer || e.line_no !== q.lineIndex || e.answered_at !== answeredAt) {
-          db.run('UPDATE questions SET text = ?, answer = ?, line_no = ?, answered_at = ? WHERE id = ?',
-            [q.text, q.answer, q.lineIndex, answeredAt, e.id]);
+        const due = q.due || null;
+        if (e.text !== q.text || e.answer !== q.answer || e.line_no !== q.lineIndex || e.answered_at !== answeredAt || e.due !== due) {
+          db.run('UPDATE questions SET text = ?, answer = ?, line_no = ?, answered_at = ?, due = ? WHERE id = ?',
+            [q.text, q.answer, q.lineIndex, answeredAt, due, e.id]);
         }
       } else {
-        db.run('INSERT INTO questions (note_id, text, norm, answer, line_no, created_at, answered_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [noteId, q.text, q.norm, q.answer, q.lineIndex, ts, q.answer ? ts : null]);
+        db.run('INSERT INTO questions (note_id, text, norm, answer, line_no, created_at, answered_at, due) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          [noteId, q.text, q.norm, q.answer, q.lineIndex, ts, q.answer ? ts : null, q.due || null]);
       }
     }
     for (const e of unused) db.run('DELETE FROM questions WHERE id = ?', [e.id]);
   }
 
-  /** Fragen über alle lebenden Notizen. status: 'open' | 'answered' | 'all'. */
+  /** Fragen über alle lebenden Notizen. status: 'open' | 'answered' | 'all'; sort: 'note' | 'due'. */
   function listQuestions(db, options) {
     const status = (options && options.status) || 'open';
     const q = ((options && options.query) || '').trim().toLowerCase();
     const tag = options && options.tag ? String(options.tag).trim() : '';
+    const sort = options && options.sort === 'due' ? 'due' : 'note';
     const where = ['n.deleted_at IS NULL'];
     const params = [];
     if (tag) {
@@ -679,19 +688,23 @@
       where.push("(nn_lower(q.text) LIKE ? ESCAPE '\\' OR nn_lower(q.answer) LIKE ? ESCAPE '\\' OR nn_lower(n.title) LIKE ? ESCAPE '\\')");
       params.push(like, like, like);
     }
+    const order = sort === 'due'
+      ? '(q.answer IS NOT NULL), (q.due IS NULL), q.due, n.updated_at DESC, n.id, q.line_no'
+      : '(q.answer IS NOT NULL), n.updated_at DESC, n.id, q.line_no';
     return selectAll(db,
-      `SELECT q.id, q.note_id, q.text, q.norm, q.answer, q.line_no, q.created_at, q.answered_at,
+      `SELECT q.id, q.note_id, q.text, q.norm, q.answer, q.line_no, q.created_at, q.answered_at, q.due,
               n.title AS note_title, n.updated_at AS note_updated_at
          FROM questions q JOIN notes n ON n.id = q.note_id
         WHERE ${where.join(' AND ')}
-        ORDER BY (q.answer IS NOT NULL), n.updated_at DESC, n.id, q.line_no`, params);
+        ORDER BY ${order}`, params);
   }
 
-  function countQuestions(db) {
+  function countQuestions(db, todayIso) {
     const row = selectOne(db,
-      `SELECT sum(q.answer IS NULL) AS open, count(*) AS total
-         FROM questions q JOIN notes n ON n.id = q.note_id WHERE n.deleted_at IS NULL`);
-    return { open: Number(row && row.open || 0), total: Number(row && row.total || 0) };
+      `SELECT sum(q.answer IS NULL) AS open, count(*) AS total,
+              sum(q.answer IS NULL AND q.due IS NOT NULL AND q.due < ?) AS overdue
+         FROM questions q JOIN notes n ON n.id = q.note_id WHERE n.deleted_at IS NULL`, [todayIso || '0000-00-00']);
+    return { open: Number(row && row.open || 0), total: Number(row && row.total || 0), overdue: Number(row && row.overdue || 0) };
   }
 
   function getQuestion(db, id) {

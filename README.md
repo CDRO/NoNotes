@@ -123,18 +123,20 @@ Der Umschalter oben wechselt zur klassischen Liste mit Suche und Editor nebenein
 ### Fragen
 
 Eine Zeile, die mit `?` beginnt, ist eine Frage. Direkt darunter stehende Zeilen, die mit `!`
-beginnen, sind die Antwort. Der Notiztext bleibt die einzige Wahrheit, die App führt nur
-einen Index darüber.
+beginnen, sind die Antwort. Ein Termin darf wie bei Aufgaben am Zeilenende stehen. Der
+Notiztext bleibt die einzige Wahrheit, die App führt nur einen Index darüber.
 
 ```
-? Wie hoch ist das Budget?
+? Wie hoch ist das Budget? @15.10.2026
 ! 20'000 CHF laut Mail von Anna
 ```
 
 - Im Editor setzen **? Frage** und **! Antwort** (oder `Ctrl+Shift+F` / `Ctrl+Shift+A`) das
   Zeichen auf der aktuellen Zeile oder nehmen es wieder weg.
-- Die Ansicht **Fragen** listet alle Fragen aller Notizen, nach Notiz gruppiert. Standardfilter
-  ist *Offen*; *Alle* und *Beantwortet* holen den Rest zurück, die Suche filtert nach Text.
+- Die Ansicht **Fragen** listet alle Fragen aller Notizen. Standardfilter ist *Offen*; *Alle*
+  und *Beantwortet* holen den Rest zurück, die Suche filtert nach Text. Sortierung nach
+  Fälligkeit gruppiert in Überfällig, Heute, Diese Woche, Später und Ohne Termin, alternativ
+  nach Notiz. Der Reiter zeigt die offenen Fragen, rot wenn eine überfällig ist.
 - **Beantworten** schreibt die Antwort als `!`-Zeile direkt unter die Frage in die Notiz.
   **Antwort bearbeiten** ändert sie, ein leerer Text macht die Frage wieder offen.
 - **Zur Notiz** öffnet die Notiz im Vollbild und springt zur Zeile der Frage.
@@ -194,6 +196,7 @@ Ein Termin darf am Zeilenende stehen: `- [ ] Offerte einholen @15.10.2026`.
 | Mindmap | `js/mindmap.js`: eigenes Layout (links/rechts ausbalanciert), SVG, Zoom, Ziehen, Tastatur |
 | Fragen | `js/questions.js`: Parser für `?`/`!`-Zeilen; Index in der Tabelle `questions`, bei jeder Änderung abgeglichen |
 | Aufgaben | `js/tasks.js`: Parser für `- [ ]`-Zeilen mit `@Datum`; Index in der Tabelle `tasks`, gleiches Prinzip |
+| Termine | `js/dates.js`: gemeinsame Logik für `@TT.MM.JJJJ` bzw. `@JJJJ-MM-TT`, Dringlichkeit, Anzeige |
 | Markdown | `js/markdown.js`: eigener Renderer, escaped allen Text, erlaubt nur sichere Link-Schemata |
 | Toolleiste | `js/editing.js`: reine Textfunktionen (umschliessen, Zeilenpräfixe, Überschriften, Links), in Node prüfbar |
 | Export | `js/export.js` baut die Dateien, `js/zip.js` ist ein kleiner ZIP-Writer; das Bild liefert `NoNotesMindmap.toSvgString`, PNG über ein Canvas |
@@ -208,7 +211,7 @@ Language Mode zur Verfügung. Dort sind weder `HttpListener` noch der Zugriff au
 File System Access API alles mit, um direkt in die Datenbankdatei zu schreiben, und
 sql.js liefert SQLite als reines JavaScript.
 
-Schema (Version 6). Ältere Datenbanken werden beim Öffnen automatisch migriert.
+Schema (Version 7). Ältere Datenbanken werden beim Öffnen automatisch migriert.
 
 ```sql
 CREATE TABLE notes (
@@ -231,7 +234,8 @@ CREATE TABLE questions (          -- Index über die ?/!-Zeilen, wird aus dem Te
   answer      TEXT,               -- NULL = offen
   line_no     INTEGER NOT NULL,
   created_at  TEXT NOT NULL,
-  answered_at TEXT
+  answered_at TEXT,
+  due         TEXT                -- Fälligkeit aus "@Datum" am Zeilenende
 );
 CREATE TABLE tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE);
 CREATE TABLE note_tags (note_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMARY KEY (note_id, tag_id));

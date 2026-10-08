@@ -1,7 +1,8 @@
 /* NoNotes – Fragen und Antworten im Notiztext.
-   Syntax: Eine Zeile, die mit "?" beginnt, ist eine Frage. Direkt darauf folgende Zeilen,
-   die mit "!" beginnen, sind die Antwort. Der Text bleibt die einzige Wahrheit; die
-   Tabelle "questions" ist nur ein Index darüber. */
+   Syntax: Eine Zeile, die mit "?" beginnt, ist eine Frage, optional mit Fälligkeit
+   "@15.10.2026" am Zeilenende (siehe js/dates.js). Direkt darauf folgende Zeilen, die mit
+   "!" beginnen, sind die Antwort. Der Text bleibt die einzige Wahrheit; die Tabelle
+   "questions" ist nur ein Index darüber. */
 (function (global) {
   'use strict';
 
@@ -19,7 +20,9 @@
     for (let i = 0; i < lines.length; i++) {
       const m = QUESTION_RE.exec(lines[i]);
       if (!m) continue;
-      const text = m[1].trim();
+      const D = global.NoNotesDates;
+      const split = D ? D.splitDue(m[1]) : { text: m[1].trim(), due: null };
+      const text = split.text;
       if (!text) continue;
       const answerLines = [];
       let j = i + 1;
@@ -33,6 +36,7 @@
       result.push({
         text,
         norm: normalize(text),
+        due: split.due,
         answer: answer || null,
         lineIndex: i,
         answerStart: i + 1,

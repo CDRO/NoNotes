@@ -111,12 +111,14 @@
   }
 
   function openQuestionLines(db, nodes, hrefOf) {
+    const D = global.NoNotesDates;
     const byId = new Map(nodes.map(n => [n.id, n]));
-    const rows = DB().listQuestions(db, { status: 'open' });
+    const rows = DB().listQuestions(db, { status: 'open', sort: 'due' });
     if (!rows.length) return ['Keine offenen Fragen.'];
     return rows.map(r => {
       const n = byId.get(r.note_id);
-      return n ? `- ${r.text} — aus [${n.title.trim() || 'Ohne Titel'}](${hrefOf(n)})` : `- ${r.text}`;
+      const due = r.due && D ? ` (bis ${D.formatDue(r.due)})` : '';
+      return n ? `- ${r.text}${due} — aus [${n.title.trim() || 'Ohne Titel'}](${hrefOf(n)})` : `- ${r.text}${due}`;
     });
   }
 

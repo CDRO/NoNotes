@@ -12,6 +12,7 @@
   const Printer = window.NoNotesPrint;
   const E = window.NoNotesEditing;
   const T = window.NoNotesTasks;
+  const Dates = window.NoNotesDates;
 
   const DEFAULT_FILENAME = 'NoNotes.sqlite';
   const SAVE_DELAY_MS = 600;
@@ -47,7 +48,7 @@
     printSelectionChildren: $('#printSelectionChildren'), printIncludeMap: $('#printIncludeMap'),
     printIncludeToc: $('#printIncludeToc'), printPageBreaks: $('#printPageBreaks'),
     qaPrintDialog: $('#qaPrintDialog'), qaPrintForm: $('#qaPrintForm'), qaPrintGoBtn: $('#qaPrintGoBtn'),
-    qaScopeFiltered: $('#qaScopeFiltered'), qaGrouped: $('#qaGrouped'), qaLines: $('#qaLines'),
+    qaScopeFiltered: $('#qaScopeFiltered'), qaLines: $('#qaLines'), qSort: $('#qSort'),
     mdToolbar: $('#mdToolbar'), headingSelect: $('#headingSelect'), helpBtn: $('#helpBtn'),
     helpDialog: $('#helpDialog'), helpTabs: $('#helpTabs'), helpStorageStatus: $('#helpStorageStatus'),
     storageHelpBtn: $('#storageHelpBtn'), menuHelpBtn: $('#menuHelpBtn'),
@@ -76,6 +77,7 @@
     mapSelection: null,   // 'root' | Zahl | null
     rename: null,         // { id, isNew }
     qStatus: 'open',
+    qSort: 'due',
     qQuery: '',
     qSearchTimer: null,
     qAnswering: null,     // id der Frage, deren Antwortfeld offen ist
@@ -673,14 +675,14 @@
   }
 
   function renderQuestionCounts() {
-    const c = DB.countQuestions(state.db);
+    const c = DB.countQuestions(state.db, Dates.todayIso());
     el.viewQuestionsBtn.replaceChildren();
     el.viewQuestionsBtn.append('Fragen');
     if (c.open > 0) {
       const b = document.createElement('span');
-      b.className = 'count';
+      b.className = 'count' + (c.overdue > 0 ? ' q-overdue' : '');
       b.textContent = String(c.open);
-      b.title = c.open === 1 ? '1 offene Frage' : `${c.open} offene Fragen`;
+      b.title = (c.open === 1 ? '1 offene Frage' : `${c.open} offene Fragen`) + (c.overdue ? `, ${c.overdue} überfällig` : '');
       el.viewQuestionsBtn.appendChild(b);
     }
   }
@@ -807,11 +809,12 @@
 
   function runQaPrint() {
     const scope = (el.qaPrintForm.querySelector('input[name="qaScope"]:checked') || {}).value || 'filtered';
+    const groupBy = (el.qaPrintForm.querySelector('input[name="qaGroup"]:checked') || {}).value || 'note';
     const html = Printer.buildQuestionsDocument(state.db, {
       status: scope === 'filtered' ? state.qStatus : scope,
       tag: scope === 'filtered' ? state.qTag : '',
       query: scope === 'filtered' ? state.qQuery.trim() : '',
-      grouped: el.qaGrouped.checked,
+      groupBy,
       lines: el.qaLines.checked,
     });
     if (el.qaPrintDialog.open) el.qaPrintDialog.close();
@@ -1442,44 +1445,58 @@
     // Entwurf eines offenen Antwortfelds sichern, damit ein Neuzeichnen nichts verschluckt.
     const openTa = state.qAnswering != null ? el.qList.querySelector(`.q-item[data-id="${state.qAnswering}"] .q-form textarea`) : null;
     if (openTa) state.qDraft = openTa.value;
-    const rows = DB.listQuestions(state.db, { status: state.qStatus, query: state.qQuery, tag: state.qTag });
-    const counts = DB.countQuestions(state.db);
-    el.qCount.textContent = `${rows.length} von ${counts.total} · ${counts.open} offen`;
+    const today = Dates.todayIso();
+    const rows = DB.listQuestions(state.db, { status: state.qStatus, query: state.qQuery, tag: state.qTag, sort: state.qSort });
+    const counts = DB.countQuestions(state.db, today);
+    el.qCount.textContent = `${rows.length} von ${counts.total} · ${counts.open} offen` + (counts.overdue ? ` · ${counts.overdue} überfällig` : '');
 
     const groups = new Map();
     for (const r of rows) {
-      if (!groups.has(r.note_id)) groups.set(r.note_id, { title: r.note_title, items: [] });
-      groups.get(r.note_id).items.push(r);
+      const byDue = state.qSort === 'due';
+      const key = byDue ? (r.answer ? 'answered' : Dates.urgency(r.due, today)) : `n${r.note_id}`;
+      if (!groups.has(key)) {
+        groups.set(key, {
+          title: byDue ? Dates.URGENCY_LABELS[key] : (r.note_title.trim() || 'Ohne Titel'),
+          noteId: byDue ? null : r.note_id,
+          cls: byDue ? `urgency-${key}` : '',
+          items: [],
+        });
+      }
+      groups.get(key).items.push(r);
     }
 
     const frag = document.createDocumentFragment();
-    for (const [noteId, g] of groups) {
+    for (const g of groups.values()) {
       const section = document.createElement('section');
-      section.className = 'q-group';
+      section.className = 'q-group ' + g.cls;
       const h = document.createElement('h3');
       h.className = 'q-note';
-      const nb = document.createElement('button');
-      nb.type = 'button';
-      nb.textContent = g.title.trim() || 'Ohne Titel';
-      nb.title = 'Notiz öffnen';
-      nb.addEventListener('click', () => openNote(noteId));
-      h.appendChild(nb);
+      if (g.noteId != null) {
+        const nb = document.createElement('button');
+        nb.type = 'button';
+        nb.textContent = g.title;
+        nb.title = 'Notiz öffnen';
+        nb.addEventListener('click', () => openNote(g.noteId));
+        h.appendChild(nb);
+      } else {
+        h.append(g.title);
+      }
       const cnt = document.createElement('span');
       cnt.textContent = g.items.length === 1 ? '1 Frage' : `${g.items.length} Fragen`;
       h.appendChild(cnt);
       section.appendChild(h);
-      for (const r of g.items) section.appendChild(renderQuestionItem(r));
+      for (const r of g.items) section.appendChild(renderQuestionItem(r, today));
       frag.appendChild(section);
     }
     el.qList.replaceChildren(frag);
     el.qEmpty.hidden = rows.length > 0;
-    el.qEmpty.textContent = state.qQuery ? 'Keine Treffer.'
-      : state.qStatus === 'open' ? 'Keine offenen Fragen. Eine Zeile, die mit „?“ beginnt, wird zur Frage.'
+    el.qEmpty.textContent = state.qQuery || state.qTag ? 'Keine Treffer.'
+      : state.qStatus === 'open' ? 'Keine offenen Fragen. Eine Zeile, die mit „?“ beginnt, wird zur Frage, optional mit „@15.10.2026“ am Ende.'
       : state.qStatus === 'answered' ? 'Noch keine beantworteten Fragen.'
       : 'Noch keine Fragen. Eine Zeile, die mit „?“ beginnt, wird zur Frage.';
   }
 
-  function renderQuestionItem(r) {
+  function renderQuestionItem(r, today) {
     const item = document.createElement('article');
     item.className = 'q-item ' + (r.answer ? 'answered' : 'open');
     item.dataset.id = String(r.id);
@@ -1493,6 +1510,13 @@
     text.className = 'q-text';
     text.innerHTML = M.highlightText(r.text, state.qQuery.trim());
     head.append(mark, text);
+    if (r.due) {
+      const due = document.createElement('span');
+      const u = r.answer ? 'none' : Dates.urgency(r.due, today || Dates.todayIso());
+      due.className = 'due ' + u;
+      due.textContent = r.answer ? Dates.formatDue(r.due) : Dates.dueLabel(r.due, today || Dates.todayIso());
+      head.appendChild(due);
+    }
     item.appendChild(head);
 
     if (r.answer) {
@@ -1515,6 +1539,17 @@
     gotoBtn.textContent = 'Zur Notiz';
     gotoBtn.addEventListener('click', () => openNote(r.note_id, { line: r.line_no }));
     actions.append(answerBtn, gotoBtn);
+    if (state.qSort === 'due') {
+      const from = document.createElement('span');
+      from.className = 't-note';
+      from.append('aus ');
+      const nb = document.createElement('button');
+      nb.type = 'button';
+      nb.textContent = r.note_title.trim() || 'Ohne Titel';
+      nb.addEventListener('click', () => openNote(r.note_id));
+      from.appendChild(nb);
+      actions.appendChild(from);
+    }
     const meta = document.createElement('span');
     meta.className = 'q-meta';
     meta.textContent = r.answer && r.answered_at ? `Beantwortet ${fmtDate(r.answered_at)}` : `Gestellt ${fmtDate(r.created_at)}`;
@@ -2130,6 +2165,7 @@
       if (b) setQuestionFilter(b.dataset.status);
     });
     el.qSearch.addEventListener('input', onQuestionSearchInput);
+    el.qSort.addEventListener('change', () => { state.qSort = el.qSort.value; renderQuestions(); });
     el.mdToolbar.addEventListener('click', e => {
       const b = e.target.closest('button[data-cmd]');
       if (b) { e.preventDefault(); runCommand(b.dataset.cmd); }

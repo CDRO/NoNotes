@@ -110,9 +110,12 @@
   }
 
   /** HTML für den Druck von Fragen und Antworten.
-   *  options: { status: 'open'|'answered'|'all', tag, query, lines, grouped } */
+   *  options: { status: 'open'|'answered'|'all', tag, query, lines, groupBy: 'note'|'due'|'none' } */
   function buildQuestionsDocument(db, options) {
-    const rows = DB().listQuestions(db, { status: options.status || 'all', tag: options.tag || '', query: options.query || '' });
+    const D = global.NoNotesDates;
+    const today = D.todayIso();
+    const groupBy = options.groupBy || (options.grouped === false ? 'none' : 'note');
+    const rows = DB().listQuestions(db, { status: options.status || 'all', tag: options.tag || '', query: options.query || '', sort: groupBy === 'due' ? 'due' : 'note' });
     const mapTitle = DB().getMapTitle(db);
     const nodes = Exporter().treeOrder(db);
     const byId = new Map(nodes.map(n => [n.id, n]));
@@ -132,11 +135,14 @@
     const item = r => {
       const answered = !!r.answer;
       const ruled = !answered && options.lines ? '<div class="print-lines"><span></span><span></span><span></span></div>' : '';
+      const u = answered ? 'none' : D.urgency(r.due, today);
+      const due = r.due ? `<span class="due ${u}">${esc(answered ? D.formatDue(r.due) : D.dueLabel(r.due, today))}</span>` : '';
+      const from = groupBy === 'note' ? '' : ` · aus ${esc(r.note_title.trim() || 'Ohne Titel')}`;
       return `<div class="print-q ${answered ? 'answered' : 'open'}">` +
         `<span class="print-mark">${answered ? '✓' : '?'}</span>` +
-        `<div class="print-q-body"><div class="print-q-text">${esc(r.text)}</div>` +
+        `<div class="print-q-body"><div class="print-q-text">${esc(r.text)}${due}</div>` +
         (answered ? `<div class="print-a">${esc(r.answer).replace(/\n/g, '<br>')}</div>` : ruled) +
-        `<div class="print-q-meta">${answered && r.answered_at ? 'Beantwortet ' + esc(fmtDate(r.answered_at)) : 'Gestellt ' + esc(fmtDate(r.created_at))}</div></div></div>`;
+        `<div class="print-q-meta">${answered && r.answered_at ? 'Beantwortet ' + esc(fmtDate(r.answered_at)) : 'Gestellt ' + esc(fmtDate(r.created_at))}${from}</div></div></div>`;
     };
 
     const parts = [];
@@ -145,8 +151,18 @@
       parts.push('<p class="print-meta">Keine Fragen in dieser Auswahl.</p>');
       return parts.join('\n');
     }
-    if (options.grouped === false) {
+    if (groupBy === 'none') {
       parts.push('<section class="print-qgroup">' + rows.map(r => item(r)).join('') + '</section>');
+    } else if (groupBy === 'due') {
+      const groups = new Map();
+      for (const r of rows) {
+        const key = r.answer ? 'answered' : D.urgency(r.due, today);
+        if (!groups.has(key)) groups.set(key, { title: D.URGENCY_LABELS[key], items: [] });
+        groups.get(key).items.push(r);
+      }
+      for (const g of groups.values()) {
+        parts.push(`<section class="print-qgroup"><h2>${esc(g.title)}</h2>${g.items.map(r => item(r)).join('')}</section>`);
+      }
     } else {
       const groups = new Map();
       for (const r of rows) {

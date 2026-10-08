@@ -719,3 +719,12 @@ body:not(.view-tasks) .tasks-view { display: none; }
   #printArea .print-task-meta { color: #666; font-size: 8.5pt; white-space: nowrap; }
   #printArea .print-task-meta.overdue { color: #b00; font-weight: 600; }
 }
+
+/* ---------- v0.9: Fälligkeit bei Fragen ---------- */
+.md-due { margin-left: 8px; font-weight: 500; vertical-align: middle; }
+.q-item .q-head .due { margin-left: auto; }
+.segmented .count.q-overdue { background: var(--danger); }
+@media print {
+  #printArea .print-q-text .due, #printArea .md-due { font-size: 8.5pt; border: 1px solid #999; border-radius: 999px; padding: 1pt 5pt; margin-left: 6pt; color: #333; background: none; font-weight: 500; }
+  #printArea .due.overdue { color: #b00; border-color: #b00; font-weight: 600; }
+}

@@ -193,7 +193,12 @@
           j++;
         }
         const answered = answers.join('').trim().length > 0;
-        out.push(`<div class="md-q ${answered ? 'answered' : 'open'}"><span class="md-mark" aria-hidden="true">${answered ? '✓' : '?'}</span><div class="md-q-body"><div class="md-q-text">${renderInline(q[1].trim(), ctx)}</div>` +
+        const D = global.NoNotesDates;
+        const split = D ? D.splitDue(q[1]) : { text: q[1].trim(), due: null };
+        const dueHtml = split.due && D
+          ? `<span class="md-due due ${answered ? 'none' : D.urgency(split.due)}">${escapeHtml(answered ? D.formatDue(split.due) : D.dueLabel(split.due))}</span>`
+          : '';
+        out.push(`<div class="md-q ${answered ? 'answered' : 'open'}"><span class="md-mark" aria-hidden="true">${answered ? '✓' : '?'}</span><div class="md-q-body"><div class="md-q-text">${renderInline(split.text, ctx)}${dueHtml}</div>` +
           (answered ? `<div class="md-a">${answers.map(a => renderInline(a.trim(), ctx)).join('<br>')}</div>` : '') + '</div></div>');
         i = j;
         continue;

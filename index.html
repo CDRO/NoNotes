@@ -78,6 +78,10 @@
             <button type="button" role="tab" data-status="all" aria-selected="false">Alle</button>
             <button type="button" role="tab" data-status="answered" aria-selected="false">Beantwortet</button>
           </div>
+          <select id="qSort" aria-label="Sortierung">
+            <option value="due">Nach Fälligkeit</option>
+            <option value="note">Nach Notiz</option>
+          </select>
           <input type="search" id="qSearch" placeholder="Fragen durchsuchen…" aria-label="Fragen durchsuchen" autocomplete="off">
           <select id="qTagFilter" aria-label="Nach Tag filtern"><option value="">Alle Tags</option></select>
           <button type="button" id="qPrintBtn" title="Fragen und Antworten drucken (Ctrl+P)">Drucken…</button>
@@ -246,8 +250,13 @@
         <label class="option compact"><input type="radio" name="qaScope" value="all"><span>Alle Fragen</span></label>
       </fieldset>
       <fieldset class="dialog-fieldset">
+        <legend>Gruppierung</legend>
+        <label class="option compact"><input type="radio" name="qaGroup" value="note" checked><span>Nach Notiz</span></label>
+        <label class="option compact"><input type="radio" name="qaGroup" value="due"><span>Nach Fälligkeit (Überfällig, Heute, Diese Woche, Später, Ohne Termin)</span></label>
+        <label class="option compact"><input type="radio" name="qaGroup" value="none"><span>Keine Gruppierung</span></label>
+      </fieldset>
+      <fieldset class="dialog-fieldset">
         <legend>Darstellung</legend>
-        <label class="suboption"><input type="checkbox" id="qaGrouped" checked> Nach Notiz gruppieren</label>
         <label class="suboption"><input type="checkbox" id="qaLines" checked> Linien für handschriftliche Antworten bei offenen Fragen</label>
       </fieldset>
       <div class="row">
@@ -311,7 +320,7 @@
         <h3>Besonderheiten von NoNotes</h3>
         <table class="help-table">
           <tbody>
-            <tr><td>Frage</td><td>Zeile beginnt mit <code>?</code>: <code>? Wie hoch ist das Budget?</code></td><td>Erscheint in der Ansicht «Fragen» und als Marker am Knoten.</td></tr>
+            <tr><td>Frage</td><td>Zeile beginnt mit <code>?</code>: <code>? Wie hoch ist das Budget?</code>, Termin am Ende: <code>? Offerte da? @15.10.2026</code></td><td>Erscheint in der Ansicht «Fragen» und als Marker am Knoten; mit Termin sortiert nach Fälligkeit, überfällig wird markiert.</td></tr>
             <tr><td>Antwort</td><td>Zeilen direkt darunter mit <code>!</code>: <code>! 20'000 CHF</code></td><td>Die Frage gilt als beantwortet. Leer lassen macht sie wieder offen.</td></tr>
             <tr><td>Verweis</td><td><code>[[Titel einer Notiz]]</code></td><td>Klick in der Vorschau öffnet die Notiz; fehlt sie, wird sie auf Wunsch als Unternotiz angelegt.</td></tr>
             <tr><td>Bild aus der Datenbank</td><td><code>![Name](att:ID)</code>, entsteht beim Einfügen über den Bild-Knopf, per <code>Ctrl+V</code> oder Ablegen</td><td>Das Bild liegt in der SQLite-Datei und wird mitexportiert.</td></tr>
@@ -417,6 +426,7 @@
 
   <script src="js/version.js"></script>
   <script src="vendor/sql.js/sql-asm.js"></script>
+  <script src="js/dates.js"></script>
   <script src="js/questions.js"></script>
   <script src="js/tasks.js"></script>
   <script src="js/markdown.js"></script>

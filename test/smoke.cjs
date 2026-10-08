@@ -23,7 +23,7 @@ const { chromium } = loadPlaywright();
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '6'; // muss zu js/db.js passen
+const SCHEMA_VERSION = '7'; // muss zu js/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 function watchErrors(page) {
@@ -1056,6 +1056,89 @@ async function main() {
     assert.deepEqual(errors14, [], 'keine Konsolenfehler bei Aufgaben');
     await ctx14.close();
     step('Aufgaben: Export und Index in der SQLite-Datei');
+
+    // ---------- 15. Fälligkeit bei Fragen ----------
+    const ctx15 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
+    await ctx15.addInitScript(() => {
+      window.__printed = [];
+      window.print = () => { window.__printed.push(document.getElementById('printArea').innerHTML); };
+      window.__exported = {};
+      const concat = chunks => { const n = chunks.reduce((s, c) => s + c.length, 0); const out = new Uint8Array(n); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; } return out; };
+      const makeDir = prefix => ({ kind: 'directory', name: 'Export', getDirectoryHandle: async n => makeDir(prefix + n + '/'), getFileHandle: async n => ({ kind: 'file', name: n, createWritable: async () => { const chunks = []; return { write: async d => { chunks.push(new Uint8Array(d)); }, close: async () => { window.__exported[prefix + n] = Array.from(concat(chunks)); }, abort: async () => {} }; } }) });
+      window.showDirectoryPicker = async () => makeDir('');
+    });
+    const { page: page15, errors: errors15 } = await openApp(ctx15, 'list');
+    await page15.click('#newBtn');
+    await page15.fill('#title', 'Budget');
+    await page15.fill('#body', '? Offerten da? @01.01.2020\n? Versicherung? @2030-01-01\n? Ohne Termin?\n? Fertig? @2030-02-02\n! ja');
+    await waitSaved(page15);
+    assert.match(await page15.locator('#viewQuestionsBtn').innerText(), /Fragen\s*3/);
+    assert.equal(await page15.locator('#viewQuestionsBtn .count.q-overdue').count(), 1, 'überfällige Frage rot');
+    await page15.click('#modeSwitch button[data-mode="preview"]');
+    await page15.waitForSelector('#preview .md-q .md-due.overdue');
+    assert.equal(await page15.locator('#preview .md-due').count(), 3);
+    assert.match(await page15.locator('#preview .md-q.open .md-q-text').first().innerText(), /^Offerten da\?/, 'Termin nicht mehr im Fragetext');
+    await page15.click('#modeSwitch button[data-mode="edit"]');
+    step('Fragen: Termin erkannt, Zähler und Vorschau');
+
+    await page15.click('#viewQuestionsBtn');
+    await page15.waitForSelector('body.view-questions');
+    await page15.waitForFunction(() => document.querySelectorAll('.q-item').length === 3);
+    const groupTitles = async () => page15.locator('#qList .q-note').allInnerTexts().then(a => a.map(t => t.split('\n')[0].replace(/\s*\d+ Fragen?$/, '').trim()));
+    assert.deepEqual(await groupTitles(), ['Überfällig', 'Später', 'Ohne Termin']);
+    assert.equal(await page15.locator('.q-item .due.overdue').count(), 1);
+    assert.match(await page15.locator('#qCount').innerText(), /1 überfällig/);
+    await page15.click('#qFilter button[data-status="all"]');
+    await page15.waitForFunction(() => document.querySelectorAll('.q-item').length === 4);
+    assert.deepEqual(await groupTitles(), ['Überfällig', 'Später', 'Ohne Termin', 'Beantwortet']);
+    await page15.selectOption('#qSort', 'note');
+    await page15.waitForFunction(() => document.querySelector('#qList .q-note button') && document.querySelector('#qList .q-note button').textContent === 'Budget');
+    await page15.selectOption('#qSort', 'due');
+    await page15.click('#qFilter button[data-status="open"]');
+    await page15.waitForFunction(() => document.querySelectorAll('.q-item').length === 3);
+    // Zentral beantworten lässt den Termin in der Zeile stehen
+    await page15.locator('.q-item', { hasText: 'Offerten da?' }).locator('button:has-text("Beantworten")').click();
+    await page15.fill('.q-item .q-form textarea', 'Ja, heute gekommen');
+    await page15.click('.q-item .q-form button[type="submit"]');
+    await page15.waitForFunction(() => document.querySelectorAll('.q-item').length === 2);
+    await waitSaved(page15);
+    await page15.locator('.q-item').first().locator('button:has-text("Zur Notiz")').click();
+    await page15.waitForSelector('body.editor-open');
+    assert.ok((await page15.inputValue('#body')).startsWith('? Offerten da? @01.01.2020\n! Ja, heute gekommen\n'));
+    await page15.keyboard.press('Escape');
+    await page15.waitForSelector('body:not(.editor-open)');
+    step('Fragen: Gruppen nach Fälligkeit, Sortierung, Beantworten behält den Termin');
+
+    // Druck nach Fälligkeit gruppiert
+    await page15.click('#qPrintBtn');
+    await page15.waitForSelector('#qaPrintDialog[open]');
+    await page15.check('#qaPrintForm input[name="qaScope"][value="all"]');
+    await page15.check('#qaPrintForm input[name="qaGroup"][value="due"]');
+    await page15.click('#qaPrintGoBtn');
+    await page15.waitForFunction(() => window.__printed.length === 1);
+    const qdoc = await page15.evaluate(() => window.__printed[0]);
+    assert.ok(qdoc.includes('<h2>Später</h2>') && qdoc.includes('<h2>Ohne Termin</h2>') && qdoc.includes('<h2>Beantwortet</h2>'), 'Gruppen im Druck');
+    assert.ok(qdoc.includes('class="due later"') && qdoc.includes('1.1.2030'), 'Termin im Druck');
+    // Export nennt den Termin
+    await page15.click('#menuBtn');
+    await page15.click('#exportBtn');
+    await page15.waitForSelector('#exportDialog[open]');
+    await page15.click('#exportDirBtn');
+    await page15.waitForFunction(() => /Export gespeichert/.test(document.querySelector('#status').textContent));
+    const idx15 = await page15.evaluate(() => new TextDecoder().decode(new Uint8Array(window.__exported['index.md'])));
+    assert.ok(idx15.includes('- Versicherung? (bis 1.1.2030) — aus [Budget](notes/budget.md)'), 'offene Frage mit Termin in der Übersicht');
+    await page15.click('#menuBtn');
+    const [dl15] = await Promise.all([page15.waitForEvent('download'), page15.click('#downloadBtn')]);
+    const dl15Path = path.join(tmp, 'fragen-termine.sqlite');
+    await dl15.saveAs(dl15Path);
+    const db15 = new SQL.Database(new Uint8Array(fs.readFileSync(dl15Path)));
+    assert.equal(db15.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], SCHEMA_VERSION);
+    assert.deepEqual(db15.exec('SELECT text, due, answer IS NOT NULL FROM questions ORDER BY line_no')[0].values,
+      [['Offerten da?', '2020-01-01', 1], ['Versicherung?', '2030-01-01', 0], ['Ohne Termin?', null, 0], ['Fertig?', '2030-02-02', 1]]);
+    db15.close();
+    assert.deepEqual(errors15, [], 'keine Konsolenfehler bei Fragen mit Termin');
+    await ctx15.close();
+    step('Fragen: Druck nach Fälligkeit, Export, Index in SQLite');
 
     console.log('\nSmoke-Test bestanden.');
   } finally {
