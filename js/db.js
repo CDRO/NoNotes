@@ -3,7 +3,7 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 7;
+  const SCHEMA_VERSION = 8;
   const DEFAULT_MAP_TITLE = 'Meine Notizen';
 
   function nowIso() { return new Date().toISOString(); }
@@ -217,6 +217,12 @@
       db.exec('ALTER TABLE questions ADD COLUMN due TEXT');
       for (const row of selectAll(db, 'SELECT id, body FROM notes')) syncQuestions(db, row.id, row.body);
       version = 7;
+    }
+
+    if (version < 8) {
+      // Uhrzeiten in Terminen: alle Notizen neu indexieren, damit "@Datum Zeit" erkannt wird.
+      for (const row of selectAll(db, 'SELECT id, body FROM notes')) { syncQuestions(db, row.id, row.body); syncTasks(db, row.id, row.body); }
+      version = 8;
     }
 
     setMeta(db, 'schema_version', SCHEMA_VERSION);
@@ -510,11 +516,13 @@
         ORDER BY ${order}`, params);
   }
 
-  function countTasks(db, todayIso) {
+  function countTasks(db, nowIso) {
+    const now = nowIso || '0000-00-00';
+    const today = now.slice(0, 10);
     const row = selectOne(db,
       `SELECT sum(t.done = 0) AS open, count(*) AS total,
-              sum(t.done = 0 AND t.due IS NOT NULL AND t.due < ?) AS overdue
-         FROM tasks t JOIN notes n ON n.id = t.note_id WHERE n.deleted_at IS NULL`, [todayIso || '0000-00-00']);
+              sum(t.done = 0 AND t.due IS NOT NULL AND ${overdueClause('t.due')}) AS overdue
+         FROM tasks t JOIN notes n ON n.id = t.note_id WHERE n.deleted_at IS NULL`, [today, now]);
     return { open: Number(row && row.open || 0), total: Number(row && row.total || 0), overdue: Number(row && row.overdue || 0) };
   }
 
@@ -699,11 +707,18 @@
         ORDER BY ${order}`, params);
   }
 
-  function countQuestions(db, todayIso) {
+  /** Überfällig: ohne Uhrzeit zählt der Tag, mit Uhrzeit der Zeitpunkt. */
+  function overdueClause(col) {
+    return `((length(${col}) = 10 AND ${col} < ?) OR (length(${col}) > 10 AND ${col} < ?))`;
+  }
+
+  function countQuestions(db, nowIso) {
+    const now = nowIso || '0000-00-00';
+    const today = now.slice(0, 10);
     const row = selectOne(db,
       `SELECT sum(q.answer IS NULL) AS open, count(*) AS total,
-              sum(q.answer IS NULL AND q.due IS NOT NULL AND q.due < ?) AS overdue
-         FROM questions q JOIN notes n ON n.id = q.note_id WHERE n.deleted_at IS NULL`, [todayIso || '0000-00-00']);
+              sum(q.answer IS NULL AND q.due IS NOT NULL AND ${overdueClause('q.due')}) AS overdue
+         FROM questions q JOIN notes n ON n.id = q.note_id WHERE n.deleted_at IS NULL`, [today, now]);
     return { open: Number(row && row.open || 0), total: Number(row && row.total || 0), overdue: Number(row && row.overdue || 0) };
   }
 

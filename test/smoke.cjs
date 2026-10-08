@@ -23,7 +23,7 @@ const { chromium } = loadPlaywright();
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '7'; // muss zu js/db.js passen
+const SCHEMA_VERSION = '8'; // muss zu js/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 function watchErrors(page) {
@@ -1204,6 +1204,67 @@ async function main() {
     assert.deepEqual(errors16, [], 'keine Konsolenfehler bei Listen');
     await ctx16.close();
     step('Vorschau: Termine von Aufgaben und Fragen als Abzeichen');
+
+    // ---------- 17. Uhrzeiten in Terminen ----------
+    const ctx17 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
+    await ctx17.addInitScript(() => {
+      window.__printed = [];
+      window.print = () => { window.__printed.push(document.getElementById('printArea').innerHTML); };
+      window.__exported = {};
+      const concat = chunks => { const n = chunks.reduce((s, c) => s + c.length, 0); const out = new Uint8Array(n); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; } return out; };
+      const makeDir = prefix => ({ kind: 'directory', name: 'Export', getDirectoryHandle: async n => makeDir(prefix + n + '/'), getFileHandle: async n => ({ kind: 'file', name: n, createWritable: async () => { const chunks = []; return { write: async d => { chunks.push(new Uint8Array(d)); }, close: async () => { window.__exported[prefix + n] = Array.from(concat(chunks)); }, abort: async () => {} }; } }) });
+      window.showDirectoryPicker = async () => makeDir('');
+    });
+    const { page: page17, errors: errors17 } = await openApp(ctx17, 'list');
+    const now = new Date();
+    const pad2 = n => String(n).padStart(2, '0');
+    const todayDe = `${pad2(now.getDate())}.${pad2(now.getMonth() + 1)}.${now.getFullYear()}`;
+    const todayShort = `${now.getDate()}.${now.getMonth() + 1}.${now.getFullYear()}`;
+    const todayIso = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+    await page17.click('#newBtn');
+    await page17.fill('#title', 'Zeiten');
+    await page17.fill('#body', `- [ ] Früh @${todayDe} 00:01\n- [ ] Spät @${todayDe} 23.59\n- [ ] Tag @${todayDe}\n? Frage @${todayDe} 23:58`);
+    await waitSaved(page17);
+    assert.equal(await page17.locator('#viewTasksBtn .count.overdue').count(), 1, 'Termin heute mit vergangener Zeit ist überfällig');
+    await page17.click('#modeSwitch button[data-mode="preview"]');
+    await page17.waitForSelector('#preview li.task .md-due');
+    const badges = await page17.locator('#preview li.task .md-due').allInnerTexts();
+    assert.deepEqual(badges, [`überfällig · ${todayShort}, 00:01`, 'heute · 23:59', `heute · ${todayShort}`]);
+    assert.equal(await page17.locator('#preview .md-q .md-due').innerText(), 'heute · 23:58');
+    await page17.click('#modeSwitch button[data-mode="edit"]');
+    step('Zeiten: Erkennung, Überfällig nach Uhrzeit, Anzeige');
+
+    await page17.click('#viewTasksBtn');
+    await page17.waitForSelector('body.view-tasks');
+    await page17.waitForFunction(() => document.querySelectorAll('.t-item').length === 3);
+    const tgroups = await page17.locator('#tList .q-note').allInnerTexts().then(a => a.map(t => t.split('\n')[0].replace(/\s*\d+ Aufgaben?$/, '').trim()));
+    assert.deepEqual(tgroups, ['Überfällig', 'Heute']);
+    assert.deepEqual(await page17.locator('.t-item .q-text').allInnerTexts(), ['Früh', 'Tag', 'Spät'], 'ohne Zeit vor Zeiten am selben Tag');
+    await page17.click('#tPrintBtn');
+    await page17.waitForSelector('#taskPrintDialog[open]');
+    await page17.click('#taskPrintGoBtn');
+    await page17.waitForFunction(() => window.__printed.length === 1);
+    const tdoc17 = await page17.evaluate(() => window.__printed[0]);
+    assert.ok(tdoc17.includes(`bis ${todayShort}, 23:59`), 'Uhrzeit im Druck');
+    await page17.click('#menuBtn');
+    await page17.click('#exportBtn');
+    await page17.waitForSelector('#exportDialog[open]');
+    await page17.click('#exportDirBtn');
+    await page17.waitForFunction(() => /Export gespeichert/.test(document.querySelector('#status').textContent));
+    const idx17 = await page17.evaluate(() => new TextDecoder().decode(new Uint8Array(window.__exported['index.md'])));
+    assert.ok(idx17.includes(`- [ ] Spät (bis ${todayShort}, 23:59)`), 'Uhrzeit im Export');
+    await page17.click('#menuBtn');
+    const [dl17] = await Promise.all([page17.waitForEvent('download'), page17.click('#downloadBtn')]);
+    const dl17Path = path.join(tmp, 'zeiten.sqlite');
+    await dl17.saveAs(dl17Path);
+    const db17 = new SQL.Database(new Uint8Array(fs.readFileSync(dl17Path)));
+    assert.equal(db17.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], SCHEMA_VERSION);
+    assert.deepEqual(db17.exec('SELECT due FROM tasks ORDER BY line_no')[0].values.map(r => r[0]), [`${todayIso}T00:01`, `${todayIso}T23:59`, todayIso]);
+    assert.equal(db17.exec('SELECT due FROM questions')[0].values[0][0], `${todayIso}T23:58`);
+    db17.close();
+    assert.deepEqual(errors17, [], 'keine Konsolenfehler bei Zeiten');
+    await ctx17.close();
+    step('Zeiten: Liste, Druck, Export, Ablage');
 
     console.log('\nSmoke-Test bestanden.');
   } finally {

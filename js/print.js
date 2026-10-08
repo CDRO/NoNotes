@@ -11,6 +11,8 @@
   const fmtDateTime = new Intl.DateTimeFormat('de-CH', { dateStyle: 'medium', timeStyle: 'short' });
   const fmtDate = iso => { const d = new Date(iso); return isNaN(d) ? '' : fmtDateTime.format(d); };
   const esc = s => M().escapeHtml(s);
+  const URGENCY_ORDER = ['overdue', 'today', 'week', 'later', 'none', 'done', 'answered'];
+  const byUrgency = (a, b) => URGENCY_ORDER.indexOf(a[0]) - URGENCY_ORDER.indexOf(b[0]);
 
   /** Teilbaum-IDs (inklusive Wurzelknoten) aus der Baumreihenfolge. */
   function subtreeIds(nodes, id) {
@@ -113,7 +115,7 @@
    *  options: { status: 'open'|'answered'|'all', tag, query, lines, groupBy: 'note'|'due'|'none' } */
   function buildQuestionsDocument(db, options) {
     const D = global.NoNotesDates;
-    const today = D.todayIso();
+    const today = D.nowIso();
     const groupBy = options.groupBy || (options.grouped === false ? 'none' : 'note');
     const rows = DB().listQuestions(db, { status: options.status || 'all', tag: options.tag || '', query: options.query || '', sort: groupBy === 'due' ? 'due' : 'note' });
     const mapTitle = DB().getMapTitle(db);
@@ -160,7 +162,7 @@
         if (!groups.has(key)) groups.set(key, { title: D.URGENCY_LABELS[key], items: [] });
         groups.get(key).items.push(r);
       }
-      for (const g of groups.values()) {
+      for (const [, g] of [...groups.entries()].sort(byUrgency)) {
         parts.push(`<section class="print-qgroup"><h2>${esc(g.title)}</h2>${g.items.map(r => item(r)).join('')}</section>`);
       }
     } else {
@@ -185,7 +187,7 @@
     const T = global.NoNotesTasks;
     const rows = DB().listTasks(db, { status: options.status || 'all', tag: options.tag || '', query: options.query || '', sort: options.groupBy === 'note' ? 'note' : 'due' });
     const mapTitle = DB().getMapTitle(db);
-    const today = T.todayIso();
+    const today = global.NoNotesDates.nowIso();
     const filterText = [
       options.status === 'open' ? 'offene Aufgaben' : options.status === 'done' ? 'erledigte Aufgaben' : 'alle Aufgaben',
       options.tag ? `Tag „${options.tag}“` : null,
@@ -210,7 +212,8 @@
       if (!groups.has(key)) groups.set(key, { title, items: [] });
       groups.get(key).items.push(r);
     }
-    for (const g of groups.values()) {
+    const ordered = options.groupBy === 'note' ? [...groups.entries()] : [...groups.entries()].sort(byUrgency);
+    for (const [, g] of ordered) {
       parts.push(`<section class="print-qgroup"><h2>${esc(g.title)}</h2>${g.items.map(item).join('')}</section>`);
     }
     return parts.join('\n');

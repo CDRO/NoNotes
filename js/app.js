@@ -633,7 +633,7 @@
   }
 
   function renderTaskCounts() {
-    const c = DB.countTasks(state.db, T.todayIso());
+    const c = DB.countTasks(state.db, Dates.nowIso());
     el.viewTasksBtn.replaceChildren();
     el.viewTasksBtn.append('Aufgaben');
     if (c.open > 0) {
@@ -675,7 +675,7 @@
   }
 
   function renderQuestionCounts() {
-    const c = DB.countQuestions(state.db, Dates.todayIso());
+    const c = DB.countQuestions(state.db, Dates.nowIso());
     el.viewQuestionsBtn.replaceChildren();
     el.viewQuestionsBtn.append('Fragen');
     if (c.open > 0) {
@@ -1445,7 +1445,7 @@
     // Entwurf eines offenen Antwortfelds sichern, damit ein Neuzeichnen nichts verschluckt.
     const openTa = state.qAnswering != null ? el.qList.querySelector(`.q-item[data-id="${state.qAnswering}"] .q-form textarea`) : null;
     if (openTa) state.qDraft = openTa.value;
-    const today = Dates.todayIso();
+    const today = Dates.nowIso();
     const rows = DB.listQuestions(state.db, { status: state.qStatus, query: state.qQuery, tag: state.qTag, sort: state.qSort });
     const counts = DB.countQuestions(state.db, today);
     el.qCount.textContent = `${rows.length} von ${counts.total} · ${counts.open} offen` + (counts.overdue ? ` · ${counts.overdue} überfällig` : '');
@@ -1466,7 +1466,7 @@
     }
 
     const frag = document.createDocumentFragment();
-    for (const g of groups.values()) {
+    for (const g of orderedGroups(groups, state.qSort === 'due')) {
       const section = document.createElement('section');
       section.className = 'q-group ' + g.cls;
       const h = document.createElement('h3');
@@ -1512,9 +1512,9 @@
     head.append(mark, text);
     if (r.due) {
       const due = document.createElement('span');
-      const u = r.answer ? 'none' : Dates.urgency(r.due, today || Dates.todayIso());
+      const u = r.answer ? 'none' : Dates.urgency(r.due, today || Dates.nowIso());
       due.className = 'due ' + u;
-      due.textContent = r.answer ? Dates.formatDue(r.due) : Dates.dueLabel(r.due, today || Dates.todayIso());
+      due.textContent = r.answer ? Dates.formatDue(r.due) : Dates.dueLabel(r.due, today || Dates.nowIso());
       head.appendChild(due);
     }
     item.appendChild(head);
@@ -1628,10 +1628,18 @@
   }
 
   const URGENCY_LABELS = { overdue: 'Überfällig', today: 'Heute', week: 'Diese Woche', later: 'Später', none: 'Ohne Termin', done: 'Erledigt' };
+  const URGENCY_ORDER = ['overdue', 'today', 'week', 'later', 'none', 'done', 'answered'];
+
+  /** Gruppen nach Dringlichkeit in fester Reihenfolge, sonst in Reihenfolge des Auftretens. */
+  function orderedGroups(groups, byUrgency) {
+    const entries = [...groups.entries()];
+    if (byUrgency) entries.sort((a, b) => URGENCY_ORDER.indexOf(a[0]) - URGENCY_ORDER.indexOf(b[0]));
+    return entries.map(e => e[1]);
+  }
 
   function renderTasks() {
     if (state.view !== 'tasks') return;
-    const today = T.todayIso();
+    const today = Dates.nowIso();
     const rows = DB.listTasks(state.db, { status: state.tStatus, query: state.tQuery, tag: state.tTag, sort: state.tSort });
     const counts = DB.countTasks(state.db, today);
     el.tCount.textContent = `${rows.length} von ${counts.total} · ${counts.open} offen` + (counts.overdue ? ` · ${counts.overdue} überfällig` : '');
@@ -1651,7 +1659,7 @@
     }
 
     const frag = document.createDocumentFragment();
-    for (const g of groups.values()) {
+    for (const g of orderedGroups(groups, state.tSort !== 'note')) {
       const section = document.createElement('section');
       section.className = 'q-group ' + g.cls;
       const h = document.createElement('h3');

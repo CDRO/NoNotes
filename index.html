@@ -310,7 +310,7 @@
             <tr><td>Durchgestrichen</td><td><code>~~alt~~</code></td><td><del>alt</del></td></tr>
             <tr><td>Code</td><td><code>`befehl`</code>, Block mit <code>```</code> davor und danach</td><td><code>befehl</code></td></tr>
             <tr><td>Liste</td><td><code>- Punkt</code> oder <code>1. Punkt</code>, eingerückt für Unterpunkte</td><td>• Punkt</td></tr>
-            <tr><td>Aufgabe</td><td><code>- [ ] offen</code>, <code>- [x] erledigt</code>, Termin am Ende: <code>- [ ] Offerte einholen @15.10.2026</code></td><td>☐ offen · ☑ erledigt. Erscheint in der Ansicht «Aufgaben», abhaken dort, in der Vorschau oder im Text.</td></tr>
+            <tr><td>Aufgabe</td><td><code>- [ ] offen</code>, <code>- [x] erledigt</code>, Termin am Ende: <code>- [ ] Offerte einholen @15.10.2026</code>, mit Uhrzeit <code>@15.10.2026 14:30</code></td><td>☐ offen · ☑ erledigt. Erscheint in der Ansicht «Aufgaben», abhaken dort, in der Vorschau oder im Text. Mit Uhrzeit gilt der Zeitpunkt, ohne der ganze Tag.</td></tr>
             <tr><td>Zitat</td><td><code>&gt; Text</code></td><td><em>│ Text</em></td></tr>
             <tr><td>Link</td><td><code>[Google](https://google.com)</code>, Adressen wie <code>www.google.com</code> werden automatisch verlinkt</td><td><u>Google</u></td></tr>
             <tr><td>Bild aus dem Web</td><td><code>![Beschreibung](https://…/bild.png)</code></td><td>Bild</td></tr>
@@ -320,7 +320,7 @@
         <h3>Besonderheiten von NoNotes</h3>
         <table class="help-table">
           <tbody>
-            <tr><td>Frage</td><td>Zeile beginnt mit <code>?</code>: <code>? Wie hoch ist das Budget?</code>, Termin am Ende: <code>? Offerte da? @15.10.2026</code></td><td>Erscheint in der Ansicht «Fragen» und als Marker am Knoten; mit Termin sortiert nach Fälligkeit, überfällig wird markiert.</td></tr>
+            <tr><td>Frage</td><td>Zeile beginnt mit <code>?</code>: <code>? Wie hoch ist das Budget?</code>, Termin am Ende: <code>? Offerte da? @15.10.2026</code> oder <code>@15.10.2026 14:30</code></td><td>Erscheint in der Ansicht «Fragen» und als Marker am Knoten; mit Termin sortiert nach Fälligkeit, überfällig wird markiert.</td></tr>
             <tr><td>Antwort</td><td>Zeilen direkt darunter mit <code>!</code>: <code>! 20'000 CHF</code></td><td>Die Frage gilt als beantwortet. Leer lassen macht sie wieder offen.</td></tr>
             <tr><td>Verweis</td><td><code>[[Titel einer Notiz]]</code></td><td>Klick in der Vorschau öffnet die Notiz; fehlt sie, wird sie auf Wunsch als Unternotiz angelegt.</td></tr>
             <tr><td>Bild aus der Datenbank</td><td><code>![Name](att:ID)</code>, entsteht beim Einfügen über den Bild-Knopf, per <code>Ctrl+V</code> oder Ablegen</td><td>Das Bild liegt in der SQLite-Datei und wird mitexportiert.</td></tr>

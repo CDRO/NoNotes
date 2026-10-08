@@ -146,7 +146,10 @@ Notiztext bleibt die einzige Wahrheit, die App führt nur einen Index darüber.
 ### Aufgaben
 
 Eine Markdown-Checkbox ist eine Aufgabe: `- [ ] Offerte einholen` offen, `- [x] …` erledigt.
-Ein Termin darf am Zeilenende stehen: `- [ ] Offerte einholen @15.10.2026`.
+Ein Termin darf am Zeilenende stehen: `- [ ] Offerte einholen @15.10.2026`, mit Uhrzeit
+`@15.10.2026 14:30` (auch `14.30` oder `@2026-10-15 14:30`). Mit Uhrzeit gilt der Zeitpunkt,
+ohne Uhrzeit der ganze Tag; ein heutiger Termin mit vergangener Uhrzeit ist überfällig.
+Dasselbe gilt für Fragen.
 
 - Die Ansicht **Aufgaben** sammelt alle Aufgaben aller Notizen. Standardfilter ist *Offen*;
   *Alle* und *Erledigt* holen den Rest zurück. Sortierung nach Fälligkeit gruppiert in
@@ -218,7 +221,7 @@ Language Mode zur Verfügung. Dort sind weder `HttpListener` noch der Zugriff au
 File System Access API alles mit, um direkt in die Datenbankdatei zu schreiben, und
 sql.js liefert SQLite als reines JavaScript.
 
-Schema (Version 7). Ältere Datenbanken werden beim Öffnen automatisch migriert.
+Schema (Version 8). Ältere Datenbanken werden beim Öffnen automatisch migriert.
 
 ```sql
 CREATE TABLE notes (
@@ -242,7 +245,7 @@ CREATE TABLE questions (          -- Index über die ?/!-Zeilen, wird aus dem Te
   line_no     INTEGER NOT NULL,
   created_at  TEXT NOT NULL,
   answered_at TEXT,
-  due         TEXT                -- Fälligkeit aus "@Datum" am Zeilenende
+  due         TEXT                -- Fälligkeit aus "@Datum [Zeit]": YYYY-MM-DD oder YYYY-MM-DDTHH:MM
 );
 CREATE TABLE tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE);
 CREATE TABLE note_tags (note_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMARY KEY (note_id, tag_id));
