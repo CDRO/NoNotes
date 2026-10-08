@@ -326,8 +326,9 @@
             <tr><td>Bild aus der Datenbank</td><td><code>![Name](att:ID)</code>, entsteht beim Einfügen über den Bild-Knopf, per <code>Ctrl+V</code> oder Ablegen</td><td>Das Bild liegt in der SQLite-Datei und wird mitexportiert.</td></tr>
           </tbody>
         </table>
-        <h3>Toolleiste</h3>
+        <h3>Toolleiste und Schreiben</h3>
         <p>Die Knöpfe wirken auf den markierten Text oder die aktuelle Zeile. Ohne Markierung wird ein Platzhalter eingefügt und gleich markiert. Listen, Zitate, Fragen und Antworten lassen sich mit demselben Knopf wieder entfernen. Die Darstellung wechselt zwischen <strong>Bearbeiten</strong>, <strong>Geteilt</strong> und <strong>Vorschau</strong>.</p>
+        <p>Beim Schreiben führt <kbd>Enter</kbd> Listen, Aufgaben, Zitate und Antwortzeilen weiter, <kbd>Tab</kbd> und <kbd>Shift</kbd>+<kbd>Tab</kbd> rücken Listenelemente ein und aus. Termine von Fragen und Aufgaben erscheinen in der Vorschau als Abzeichen, im Text bleibt <code>@15.10.2026</code> stehen.</p>
       </section>
 
       <section class="help-panel" data-panel="keys" hidden>
@@ -342,6 +343,9 @@
               <dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd></dt><dd>Zeile als Antwort</dd>
               <dt><kbd>Ctrl</kbd>+<kbd>E</kbd></dt><dd>Darstellung wechseln</dd>
               <dt><kbd>Ctrl</kbd>+<kbd>V</kbd></dt><dd>Bild aus der Zwischenablage einfügen</dd>
+              <dt><kbd>Enter</kbd> in einer Liste</dt><dd>Nächstes Element mit gleichem Zeichen und gleicher Einrückung; leeres Element rückt aus bzw. beendet die Liste. Gilt auch für Aufgaben, Zitate und Antwortzeilen</dd>
+              <dt><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd></dt><dd>Listenelement ein- bzw. ausrücken (auch mehrere markierte Zeilen); nummerierte Listen zählen neu</dd>
+              <dt><kbd>Shift</kbd>+<kbd>Enter</kbd></dt><dd>Normale neue Zeile ohne Fortführung</dd>
               <dt><kbd>Enter</kbd> im Titel</dt><dd>In den Text springen</dd>
               <dt><kbd>Esc</kbd></dt><dd>Vollbild-Editor schliessen</dd>
             </dl>

@@ -142,6 +142,145 @@
     return { text: before + ins + after, selStart: s + ins.length, selEnd: s + ins.length };
   }
 
+  // ---------- Listen weiterführen, ein- und ausrücken ----------
+
+  const ITEM_RE = /^(\s*)(?:([-*+])|(\d+)([.)]))\s+(\[[ xX]\]\s+)?(.*)$/;
+  const QUOTE_LINE_RE = /^(\s*)>\s?(.*)$/;
+  const ANSWER_LINE_RE = /^(\s*)!(?!\[)\s?(.*)$/;
+
+  /** Zerlegt eine Zeile in Einrückung, Marker und Inhalt, oder null. */
+  function parseItem(line) {
+    let m = ITEM_RE.exec(line);
+    if (m) {
+      const indent = m[1];
+      const content = m[6] || '';
+      const prefixLength = line.length - content.length;
+      if (m[5]) return { kind: 'task', indent, bullet: m[2] || null, number: m[3] ? Number(m[3]) : null, delim: m[4] || null, content, prefixLength };
+      if (m[3]) return { kind: 'ordered', indent, number: Number(m[3]), delim: m[4], content, prefixLength };
+      return { kind: 'bullet', indent, bullet: m[2], content, prefixLength };
+    }
+    m = QUOTE_LINE_RE.exec(line);
+    if (m) return { kind: 'quote', indent: m[1], content: m[2], prefixLength: line.length - m[2].length };
+    m = ANSWER_LINE_RE.exec(line);
+    if (m) return { kind: 'answer', indent: m[1], content: m[2], prefixLength: line.length - m[2].length };
+    return null;
+  }
+
+  function markerFor(item, next) {
+    switch (item.kind) {
+      case 'task': return item.number != null ? `${item.number + (next ? 1 : 0)}${item.delim} [ ] ` : `${item.bullet || '-'} [ ] `;
+      case 'ordered': return `${item.number + (next ? 1 : 0)}${item.delim} `;
+      case 'bullet': return `${item.bullet} `;
+      case 'quote': return '> ';
+      case 'answer': return '! ';
+      default: return '';
+    }
+  }
+
+  /** Nummerierte Listen im ganzen Text neu durchzählen; jeder Lauf behält seine Startnummer.
+   *  Ein Lauf endet an Leerzeilen, Nicht-Listenzeilen, bei Aufzählungszeichen derselben Stufe
+   *  oder beim Ausrücken. */
+  function renumberAll(text) {
+    const lines = text.split('\n');
+    const counters = new Map(); // Einrückung → letzte Nummer
+    for (let i = 0; i < lines.length; i++) {
+      const item = parseItem(lines[i]);
+      if (!item || item.kind === 'quote' || item.kind === 'answer' || !lines[i].trim()) { counters.clear(); continue; }
+      const level = item.indent.length;
+      for (const k of [...counters.keys()]) if (k > level) counters.delete(k);
+      const ordered = item.kind === 'ordered' || (item.kind === 'task' && item.number != null);
+      if (!ordered) { counters.delete(level); continue; }
+      const n = counters.has(level) ? counters.get(level) + 1 : item.number;
+      counters.set(level, n);
+      if (n !== item.number) {
+        lines[i] = lines[i].replace(/^(\s*)\d+([.)])/, `$1${n}$2`);
+      }
+    }
+    return lines.join('\n');
+  }
+
+  function offsetOfLine(lines, index) {
+    let off = 0;
+    for (let i = 0; i < index; i++) off += lines[i].length + 1;
+    return off;
+  }
+
+  /** Enter in einer Listen-, Aufgaben-, Zitat- oder Antwortzeile. Liefert null, wenn der Browser
+   *  die normale neue Zeile einfügen soll. */
+  function continueLine(text, s, e) {
+    const base = text.slice(0, s) + text.slice(e);
+    const lineStart = base.lastIndexOf('\n', s - 1) + 1;
+    let lineEnd = base.indexOf('\n', s);
+    if (lineEnd < 0) lineEnd = base.length;
+    const line = base.slice(lineStart, lineEnd);
+    const item = parseItem(line);
+    if (!item) return null;
+    if (s < lineStart + item.prefixLength) return null; // Cursor steht noch vor dem Inhalt
+
+    let out, caret;
+    if (!item.content.trim()) {
+      // Leeres Element: zuerst ausrücken, dann beenden.
+      if (item.indent.length >= 2 && item.kind !== 'quote' && item.kind !== 'answer') {
+        const newIndent = item.indent.slice(0, item.indent.length - 2);
+        const newLine = newIndent + markerFor(item, false);
+        out = base.slice(0, lineStart) + newLine + base.slice(lineEnd);
+        caret = lineStart + newLine.length;
+      } else {
+        out = base.slice(0, lineStart) + base.slice(lineEnd);
+        caret = lineStart;
+      }
+    } else {
+      const marker = item.indent + markerFor(item, true);
+      out = base.slice(0, s) + '\n' + marker + base.slice(s);
+      caret = s + 1 + marker.length;
+    }
+
+    if (item.kind === 'ordered' || (item.kind === 'task' && item.number != null)) {
+      // Nach dem Neunummerieren den Cursor über Zeile und Spalte wiederfinden.
+      const before = out.slice(0, caret).split('\n');
+      const lineIdx = before.length - 1;
+      const col = before[before.length - 1].length;
+      out = renumberAll(out);
+      const lines = out.split('\n');
+      caret = offsetOfLine(lines, lineIdx) + Math.min(col, lines[lineIdx].length);
+    }
+    return { text: out, selStart: caret, selEnd: caret };
+  }
+
+  /** Tab / Shift+Tab: Listenzeilen in der Markierung ein- (delta 1) oder ausrücken (delta -1).
+   *  Liefert null, wenn die Cursorzeile keine Listenzeile ist. */
+  function indentLines(text, s, e, delta) {
+    const { from, to } = lineBounds(text, s, e);
+    const lines = text.slice(from, to).split('\n');
+    const items = lines.map(parseItem);
+    const isList = it => it && it.kind !== 'quote' && it.kind !== 'answer';
+    const startLine = text.slice(0, from).split('\n').length - 1;
+    const caretLine = text.slice(0, s).split('\n').length - 1;
+    const k = caretLine - startLine;
+    if (!isList(items[k])) return null;
+
+    const changed = lines.map((l, i) => {
+      if (!isList(items[i])) return l;
+      if (delta > 0) {
+        // Eine neu eingerückte Unterliste beginnt bei 1; renumberAll zählt dann hoch.
+        return '  ' + l.replace(/^(\s*)\d+([.)])/, '$11$2');
+      }
+      return l.replace(/^ {1,2}/, '');
+    });
+    let out = text.slice(0, from) + changed.join('\n') + text.slice(to);
+    out = renumberAll(out);
+    const outLines = out.split('\n');
+
+    if (e > s) {
+      const endLine = startLine + lines.length - 1;
+      return { text: out, selStart: offsetOfLine(outLines, startLine), selEnd: offsetOfLine(outLines, endLine) + outLines[endLine].length };
+    }
+    const col = s - (text.lastIndexOf('\n', s - 1) + 1);
+    const shift = changed[k].length - lines[k].length;
+    const caret = offsetOfLine(outLines, caretLine) + Math.max(0, Math.min(col + shift, outLines[caretLine].length));
+    return { text: out, selStart: caret, selEnd: caret };
+  }
+
   /** Text an der Cursorposition einfügen (ersetzt die Markierung). */
   function insert(text, s, e, snippet, selectInner) {
     const out = text.slice(0, s) + snippet + text.slice(e);
@@ -149,5 +288,5 @@
     return { text: out, selStart: s + snippet.length, selEnd: s + snippet.length };
   }
 
-  global.NoNotesEditing = { wrap, toggleList, togglePrefix, setHeading, codeBlock, link, wikiLink, horizontalRule, insert, lineBounds };
+  global.NoNotesEditing = { wrap, toggleList, togglePrefix, setHeading, codeBlock, link, wikiLink, horizontalRule, insert, lineBounds, continueLine, indentLines, renumberAll, parseItem };
 })(window);

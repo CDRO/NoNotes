@@ -1140,6 +1140,71 @@ async function main() {
     await ctx15.close();
     step('Fragen: Druck nach Fälligkeit, Export, Index in SQLite');
 
+    // ---------- 16. Listenfortführung, Ein-/Ausrücken, Termin-Abzeichen bei Aufgaben ----------
+    const ctx16 = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'de-CH' });
+    const { page: page16, errors: errors16 } = await openApp(ctx16, 'list');
+    await page16.click('#newBtn');
+    await page16.fill('#title', 'Listen');
+    const setBody = async (text, pos) => page16.evaluate(([t, p]) => { const b = document.querySelector('#body'); b.value = t; b.dispatchEvent(new Event('input', { bubbles: true })); b.focus(); const at = p == null ? t.length : p; b.setSelectionRange(at, at); }, [text, pos == null ? null : pos]);
+    const body = () => page16.inputValue('#body');
+
+    await setBody('- eins');
+    await page16.keyboard.press('Enter');
+    await page16.keyboard.type('zwei');
+    assert.equal(await body(), '- eins\n- zwei');
+    await page16.keyboard.press('Tab');
+    assert.equal(await body(), '- eins\n  - zwei', 'Tab rückt ein');
+    await page16.keyboard.press('Enter');
+    assert.equal(await body(), '- eins\n  - zwei\n  - ', 'Einrückung bleibt');
+    await page16.keyboard.press('Enter');
+    assert.equal(await body(), '- eins\n  - zwei\n- ', 'leeres Element rückt aus');
+    await page16.keyboard.press('Enter');
+    assert.equal(await body(), '- eins\n  - zwei\n', 'leeres Element beendet die Liste');
+    await setBody('1. a\n2. b', 4);
+    await page16.keyboard.press('Enter');
+    await page16.keyboard.type('x');
+    assert.equal(await body(), '1. a\n2. x\n3. b', 'Nummerierung läuft weiter und zählt nach');
+    await setBody('- [x] a @01.01.2020');
+    await page16.keyboard.press('Enter');
+    assert.equal(await body(), '- [x] a @01.01.2020\n- [ ] ', 'Aufgabe: neues offenes Kästchen ohne Termin');
+    await setBody('> z');
+    await page16.keyboard.press('Enter');
+    assert.equal(await body(), '> z\n> ');
+    await setBody('! a');
+    await page16.keyboard.press('Enter');
+    assert.equal(await body(), '! a\n! ');
+    await setBody('? f');
+    await page16.keyboard.press('Enter');
+    assert.equal(await body(), '? f\n', 'Fragen werden nicht weitergeführt');
+    await setBody('- a');
+    await page16.keyboard.press('Shift+Enter');
+    assert.equal(await body(), '- a\n', 'Shift+Enter: normale Zeile');
+    await setBody('- a\n  - b');
+    await page16.keyboard.press('Shift+Tab');
+    assert.equal(await body(), '- a\n- b', 'Shift+Tab rückt aus');
+    await setBody('- ab cd', 4);
+    await page16.keyboard.press('Enter');
+    assert.equal(await body(), '- ab\n-  cd', 'Teilen mitten im Element');
+    await setBody('abc');
+    await page16.keyboard.press('Tab');
+    assert.notEqual(await page16.evaluate(() => document.activeElement && document.activeElement.id), 'body', 'Tab ausserhalb von Listen verlässt das Feld');
+    assert.equal(await body(), 'abc');
+    await waitSaved(page16);
+    step('Editor: Enter führt Listen weiter, Tab rückt ein und aus');
+
+    await setBody('- [ ] Offerte @01.01.2020\n- [x] Fertig @2030-01-01\n? Frage @01.01.2020');
+    await page16.click('#modeSwitch button[data-mode="preview"]');
+    await page16.waitForSelector('#preview li.task .md-due.overdue');
+    assert.equal(await page16.locator('#preview li.task .md-due.overdue').innerText(), 'überfällig · 1.1.2020');
+    assert.equal(await page16.locator('#preview li.task.done .md-due').innerText(), '1.1.2030');
+    assert.ok(!(await page16.locator('#preview').innerText()).includes('@'), 'Termin nicht mehr als Rohtext');
+    assert.equal(await page16.locator('#preview .md-q .md-due.overdue').count(), 1);
+    await page16.click('#modeSwitch button[data-mode="edit"]');
+    await waitSaved(page16);
+    assert.deepEqual(errors16, [], 'keine Konsolenfehler bei Listen');
+    await ctx16.close();
+    step('Vorschau: Termine von Aufgaben und Fragen als Abzeichen');
+
     console.log('\nSmoke-Test bestanden.');
   } finally {
     await browser.close();

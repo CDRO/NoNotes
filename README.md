@@ -172,6 +172,13 @@ Ein Termin darf am Zeilenende stehen: `- [ ] Offerte einholen @15.10.2026`.
   Notiz-Verweis, Bild, Frage und Antwort. Die Knöpfe wirken auf den markierten Text oder die
   aktuellen Zeilen und lassen sich mit einem zweiten Klick wieder aufheben.
   Tastenkürzel: `Ctrl+B`, `Ctrl+I`, `Ctrl+K` für Link.
+- Beim Schreiben führt `Enter` Listen, Aufgaben, Zitate und Antwortzeilen weiter, mit
+  gleichem Zeichen und gleicher Einrückung; nummerierte Listen zählen weiter und werden neu
+  durchnummeriert. Ein leeres Element rückt zuerst aus und beendet dann die Liste.
+  `Tab` und `Shift+Tab` rücken Listenelemente ein und aus, auch über mehrere markierte
+  Zeilen. `Shift+Enter` fügt eine normale neue Zeile ein.
+- Termine von Aufgaben und Fragen erscheinen in der Vorschau und im Druck als Abzeichen,
+  rot bei überfällig, orange bei heute. Im Text bleibt `@15.10.2026` unverändert.
 - Der **?**-Knopf rechts (oder `F1`) öffnet die Hilfe mit allen Schreibweisen, allen
   Tastenkürzeln und einer eigenen Seite zur Datenablage, die auch unter
   *Datenbank → Datenablage erklärt…* zu finden ist.

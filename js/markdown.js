@@ -252,9 +252,21 @@
       }
       let text = m[3];
       let task = null;
+      let dueHtml = '';
       const t = /^\[( |x|X)\]\s+(.*)$/.exec(text);
-      if (t) { task = t[1] !== ' '; text = t[2]; }
-      items.push({ indent: m[1].length, ordered: /\d/.test(m[2]), text: renderInline(text, ctx), task, line: i });
+      if (t) {
+        task = t[1] !== ' ';
+        text = t[2];
+        const D = global.NoNotesDates;
+        if (D) {
+          const split = D.splitDue(text);
+          if (split.due) {
+            text = split.text;
+            dueHtml = `<span class="md-due due ${task ? 'none' : D.urgency(split.due)}">${escapeHtml(task ? D.formatDue(split.due) : D.dueLabel(split.due))}</span>`;
+          }
+        }
+      }
+      items.push({ indent: m[1].length, ordered: /\d/.test(m[2]), text: renderInline(text, ctx) + dueHtml, task, line: i });
       i++;
     }
 

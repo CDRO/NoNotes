@@ -2184,6 +2184,18 @@
     });
     el.body.addEventListener('keydown', e => {
       const mod = e.ctrlKey || e.metaKey;
+      if (e.isComposing || el.body.readOnly) return;
+      // Listen, Aufgaben, Zitate und Antworten weiterführen; Shift+Enter bleibt die normale neue Zeile.
+      if (e.key === 'Enter' && !mod && !e.shiftKey && !e.altKey) {
+        const r = E.continueLine(el.body.value, el.body.selectionStart || 0, el.body.selectionEnd || 0);
+        if (r) { e.preventDefault(); applyEdit(r); }
+        return;
+      }
+      if (e.key === 'Tab' && !mod && !e.altKey) {
+        const r = E.indentLines(el.body.value, el.body.selectionStart || 0, el.body.selectionEnd || 0, e.shiftKey ? -1 : 1);
+        if (r) { e.preventDefault(); applyEdit(r); }
+        return;
+      }
       if (!mod) return;
       const k = e.key.toLowerCase();
       if (e.shiftKey) {
