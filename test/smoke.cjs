@@ -98,6 +98,29 @@ function readZip(buf) {
 
 const PNG_MAGIC = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
+/** Zerlegt eine .ics: Kopfzeilen, Ereignisse mit Eigenschaften (Schlüssel inkl. Parametern) und Erinnerungen.
+    Prüft dabei Zeilenenden, Faltung (höchstens 75 Oktette) und die Klammerung. */
+function parseIcs(text) {
+  assert.ok(text.startsWith('BEGIN:VCALENDAR\r\n'), 'beginnt mit VCALENDAR');
+  assert.ok(text.endsWith('END:VCALENDAR\r\n'), 'endet mit VCALENDAR');
+  for (const l of text.split('\r\n')) assert.ok(Buffer.byteLength(l, 'utf8') <= 75, `Zeile länger als 75 Oktette: ${l}`);
+  const lines = text.replace(/\r\n[ \t]/g, '').split('\r\n').filter(Boolean);
+  const head = {};
+  const events = [];
+  let ev = null;
+  let alarm = null;
+  for (const line of lines) {
+    if (line === 'BEGIN:VEVENT') { ev = { props: {}, alarms: [] }; continue; }
+    if (line === 'END:VEVENT') { events.push(ev); ev = null; continue; }
+    if (line === 'BEGIN:VALARM') { alarm = {}; continue; }
+    if (line === 'END:VALARM') { ev.alarms.push(alarm); alarm = null; continue; }
+    const i = line.indexOf(':');
+    (alarm || (ev ? ev.props : head))[line.slice(0, i)] = line.slice(i + 1);
+  }
+  assert.equal(ev, null, 'VEVENT geschlossen');
+  return { head, events };
+}
+
 async function waitSaved(page) {
   await page.waitForFunction(SAVED, null, { timeout: 10000 });
 }
@@ -1265,6 +1288,177 @@ async function main() {
     assert.deepEqual(errors17, [], 'keine Konsolenfehler bei Zeiten');
     await ctx17.close();
     step('Zeiten: Liste, Druck, Export, Ablage');
+
+    // ---------- 18. Kalenderexport (.ics) ----------
+    const ctx18 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
+    await ctx18.addInitScript(() => {
+      window.__ics = [];
+      window.__pickerCalls = [];
+      // Methoden auf dem Prototyp: so lässt sich das Handle wie ein echtes per structured clone in IndexedDB merken.
+      class MockHandle {
+        constructor(name) { this.kind = 'file'; this.name = name; }
+        async queryPermission() { return 'granted'; }
+        async requestPermission() { return 'granted'; }
+        async createWritable() {
+          const chunks = [];
+          return {
+            write: async d => { chunks.push(typeof d === 'string' ? new TextEncoder().encode(d) : new Uint8Array(d)); },
+            close: async () => {
+              const total = chunks.reduce((n, c) => n + c.length, 0);
+              const out = new Uint8Array(total);
+              let o = 0;
+              for (const c of chunks) { out.set(c, o); o += c.length; }
+              window.__ics.push(new TextDecoder().decode(out));
+            },
+            abort: async () => {},
+          };
+        }
+      }
+      window.showSaveFilePicker = async opts => { window.__pickerCalls.push(opts); return new MockHandle(opts.suggestedName); };
+      window.showOpenFilePicker = async () => [];
+    });
+    const { page: page18, errors: errors18 } = await openApp(ctx18, 'list');
+    const longText = 'Sehr lange Aufgabe mit Umlauten äöü, die sicher über die Grenze von fünfundsiebzig Oktetten hinausgeht; mit Komma, Strichpunkt';
+    const escIcs = t => t.replace(/,/g, '\\,').replace(/;/g, '\\;');
+    await page18.click('#newBtn');
+    await page18.fill('#title', 'Termine');
+    await page18.fill('#body', [
+      '- [ ] Offerte einholen @15.10.2026 14:30',
+      '- [x] Bericht abgeben @16.10.2026',
+      '- [ ] Ganztag @17.10.2026',
+      '- [ ] Ohne Termin',
+      `- [ ] ${longText} @20.10.2026`,
+      '',
+      '? Offene Frage @18.10.2026 09:00',
+      '',
+      '? Beantwortete Frage @19.10.2026',
+      '! Die Antwort',
+    ].join('\n'));
+    await waitSaved(page18);
+    await page18.click('#menuBtn');
+    await page18.click('#calendarBtn');
+    await page18.waitForSelector('#calDialog[open]');
+    assert.equal(await page18.locator('#calSummary').innerText(), '6 Termine: 4 offen, 2 erledigt/beantwortet (als abgesagt)');
+    assert.equal(await page18.locator('#calWriteBtn').innerText(), 'Kalenderdatei anlegen…');
+    assert.equal(await page18.locator('#calPickBtn').isHidden(), true, 'ohne gemerkte Datei kein «Andere Datei wählen»');
+    await page18.click('#calWriteBtn');
+    await page18.waitForFunction(() => window.__ics.length === 1);
+    await page18.waitForFunction(() => !document.querySelector('#calDialog').open);
+    assert.match(await page18.locator('#status').innerText(), /Kalenderdatei „NoNotes\.ics“ aktualisiert: 6 Termine \(Version 1\)/);
+    const picker18 = await page18.evaluate(() => window.__pickerCalls);
+    assert.equal(picker18.length, 1);
+    assert.equal(picker18[0].suggestedName, 'NoNotes.ics');
+    assert.deepEqual(picker18[0].types[0].accept, { 'text/calendar': ['.ics'] });
+    const ics1 = parseIcs(await page18.evaluate(() => window.__ics[0]));
+    assert.equal(ics1.head.VERSION, '2.0');
+    assert.equal(ics1.head.METHOD, 'PUBLISH');
+    assert.match(ics1.head['X-WR-CALNAME'], /^NoNotes · /);
+    assert.deepEqual(ics1.events.map(e => e.props.SUMMARY), [
+      'Aufgabe: Offerte einholen', 'Erledigt: Bericht abgeben', 'Aufgabe: Ganztag', 'Frage: Offene Frage',
+      'Beantwortet: Beantwortete Frage', `Aufgabe: ${escIcs(longText)}`,
+    ], 'nach Termin sortiert, Text escaped');
+    const bySummary = evs => Object.fromEntries(evs.map(e => [e.props.SUMMARY, e]));
+    const e1 = bySummary(ics1.events);
+    const offerte = e1['Aufgabe: Offerte einholen'];
+    assert.equal(offerte.props.DTSTART, '20261015T143000');
+    assert.equal(offerte.props.DTEND, '20261015T150000', 'mit Uhrzeit 30 Minuten');
+    assert.equal(offerte.props.STATUS, 'CONFIRMED');
+    assert.deepEqual(offerte.alarms.map(a => a.TRIGGER), ['-PT30M']);
+    assert.ok(offerte.props.DESCRIPTION.includes('Notiz: Termine'), 'Beschreibung nennt die Notiz');
+    const ganztag = e1['Aufgabe: Ganztag'];
+    assert.equal(ganztag.props['DTSTART;VALUE=DATE'], '20261017');
+    assert.equal(ganztag.props['DTEND;VALUE=DATE'], '20261018', 'ohne Uhrzeit ganztägig');
+    assert.deepEqual(ganztag.alarms.map(a => a.TRIGGER), ['-PT15H'], 'Vortag 9 Uhr');
+    const bericht = e1['Erledigt: Bericht abgeben'];
+    assert.equal(bericht.props.STATUS, 'CANCELLED');
+    assert.equal(bericht.alarms.length, 0, 'abgesagte Termine ohne Erinnerung');
+    const frage = e1['Frage: Offene Frage'];
+    assert.equal(frage.props.DTSTART, '20261018T090000');
+    assert.equal(frage.props.DTEND, '20261018T093000');
+    const beantwortet = e1['Beantwortet: Beantwortete Frage'];
+    assert.equal(beantwortet.props.STATUS, 'CANCELLED');
+    assert.ok(beantwortet.props.DESCRIPTION.includes('\\nAntwort: Die Antwort'), 'Antwort in der Beschreibung');
+    const uids1 = ics1.events.map(e => e.props.UID);
+    assert.equal(new Set(uids1).size, 6, 'UIDs eindeutig');
+    for (const u of uids1) assert.match(u, /^nonotes-[0-9a-f]{16}-(task|question)-\d+@nonotes\.local$/);
+    assert.ok(ics1.events.every(e => e.props.SEQUENCE === '1' && /^\d{8}T\d{6}Z$/.test(e.props.DTSTAMP)));
+    step('Kalender: .ics anlegen, Termine, Status, Erinnerungen, Faltung');
+
+    // Termin verschieben, Aufgabe abhaken, Aufgabe umformulieren: gleiche UIDs, höhere SEQUENCE, Entferntes abgesagt.
+    await page18.fill('#body', (await page18.inputValue('#body'))
+      .replace('Offerte einholen @15.10.2026 14:30', 'Offerte einholen @22.10.2026 16:00')
+      .replace('- [ ] Ganztag', '- [x] Ganztag')
+      .replace(`${longText} @20.10.2026`, 'Kurz @20.10.2026'));
+    await waitSaved(page18);
+    await page18.click('#menuBtn');
+    await page18.click('#calendarBtn');
+    await page18.waitForSelector('#calDialog[open]');
+    assert.equal(await page18.locator('#calSummary').innerText(), '7 Termine: 3 offen, 3 erledigt/beantwortet (als abgesagt), 1 entfernt (als abgesagt)');
+    assert.equal(await page18.locator('#calWriteBtn').innerText(), 'Kalenderdatei aktualisieren');
+    assert.equal(await page18.locator('#calPickBtn').isVisible(), true);
+    assert.match(await page18.locator('#calFileInfo').innerText(), /Gemerkte Datei: „NoNotes\.ics“/);
+    await page18.click('#calWriteBtn');
+    await page18.waitForFunction(() => window.__ics.length === 2);
+    assert.equal(await page18.evaluate(() => window.__pickerCalls.length), 1, 'gemerkte Datei, kein neuer Speicherdialog');
+    const ics2 = parseIcs(await page18.evaluate(() => window.__ics[1]));
+    assert.equal(ics2.events.length, 7);
+    assert.ok(ics2.events.every(e => e.props.SEQUENCE === '2'), 'SEQUENCE erhöht');
+    const e2 = bySummary(ics2.events);
+    assert.equal(e2['Aufgabe: Offerte einholen'].props.UID, offerte.props.UID, 'verschobener Termin behält die UID');
+    assert.equal(e2['Aufgabe: Offerte einholen'].props.DTSTART, '20261022T160000');
+    assert.equal(e2['Erledigt: Ganztag'].props.UID, ganztag.props.UID, 'abgehakte Aufgabe behält die UID');
+    assert.equal(e2['Erledigt: Ganztag'].props.STATUS, 'CANCELLED');
+    const removed = e2[`Entfernt: ${escIcs(longText)}`];
+    assert.ok(removed, 'umformulierte Aufgabe wird unter alter UID abgesagt');
+    assert.equal(removed.props.UID, e1[`Aufgabe: ${escIcs(longText)}`].props.UID);
+    assert.equal(removed.props.STATUS, 'CANCELLED');
+    assert.equal(removed.props['DTSTART;VALUE=DATE'], '20261020');
+    assert.equal(removed.alarms.length, 0);
+    const uids2 = ics2.events.map(e => e.props.UID);
+    assert.equal(new Set(uids2).size, 7);
+    assert.ok(uids1.every(u => uids2.includes(u)), 'alle bisherigen UIDs sind weiterhin enthalten');
+    assert.ok(uids2.includes(e2['Aufgabe: Kurz'].props.UID) && !uids1.includes(e2['Aufgabe: Kurz'].props.UID), 'neuer Text, neue UID');
+    step('Kalender: erneuter Export aktualisiert statt zu duplizieren');
+
+    // Herunterladen ohne Abgesagte und ohne Erinnerungen.
+    await page18.click('#menuBtn');
+    await page18.click('#calendarBtn');
+    await page18.waitForSelector('#calDialog[open]');
+    await page18.click('#calIncludeDone');
+    await page18.waitForFunction(() => document.querySelector('#calSummary').textContent === '3 Termine: 3 offen');
+    await page18.click('#calAlarms');
+    const [dlIcs] = await Promise.all([page18.waitForEvent('download'), page18.click('#calDownloadBtn')]);
+    assert.equal(dlIcs.suggestedFilename(), 'NoNotes.ics');
+    const icsPath = path.join(tmp, 'NoNotes.ics');
+    await dlIcs.saveAs(icsPath);
+    const ics3 = parseIcs(fs.readFileSync(icsPath, 'utf8'));
+    assert.deepEqual(ics3.events.map(e => e.props.SUMMARY), ['Frage: Offene Frage', 'Aufgabe: Kurz', 'Aufgabe: Offerte einholen']);
+    assert.ok(ics3.events.every(e => e.props.STATUS === 'CONFIRMED' && e.props.SEQUENCE === '3' && e.alarms.length === 0));
+    assert.match(await page18.locator('#status').innerText(), /Kalenderdatei heruntergeladen: 3 Termine \(Version 3\)/);
+    await waitSaved(page18);
+
+    // Gemerkte Datei und Kennung überleben das Neuladen; alles liegt in der Datenbank.
+    await page18.reload();
+    await page18.waitForSelector(READY);
+    await page18.click('#menuBtn');
+    await page18.click('#calendarBtn');
+    await page18.waitForSelector('#calDialog[open]');
+    assert.match(await page18.locator('#calFileInfo').innerText(), /Gemerkte Datei: „NoNotes\.ics“/, 'Kalenderdatei bleibt gemerkt');
+    await page18.evaluate(() => document.querySelector('#calDialog').close());
+    await page18.click('#menuBtn');
+    const [dl18] = await Promise.all([page18.waitForEvent('download'), page18.click('#downloadBtn')]);
+    const dl18Path = path.join(tmp, 'kalender.sqlite');
+    await dl18.saveAs(dl18Path);
+    const db18 = new SQL.Database(new Uint8Array(fs.readFileSync(dl18Path)));
+    const meta18 = Object.fromEntries(db18.exec("SELECT key, value FROM meta WHERE key LIKE 'calendar_%'")[0].values);
+    assert.match(meta18.calendar_uid, /^[0-9a-f]{16}$/);
+    assert.equal(String(meta18.calendar_sequence), '3');
+    assert.ok(uids1.every(u => u.includes(`-${meta18.calendar_uid}-`)), 'UIDs tragen die Kennung der Datenbank');
+    assert.deepEqual(Object.keys(JSON.parse(meta18.calendar_known)).sort(), [...uids2].sort(), 'alle je exportierten Termine bleiben bekannt');
+    db18.close();
+    assert.deepEqual(errors18, [], 'keine Konsolenfehler beim Kalenderexport');
+    await ctx18.close();
+    step('Kalender: Herunterladen ohne Abgesagte, gemerkte Datei, Kennung in der Datenbank');
 
     console.log('\nSmoke-Test bestanden.');
   } finally {

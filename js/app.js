@@ -13,6 +13,9 @@
   const E = window.NoNotesEditing;
   const T = window.NoNotesTasks;
   const Dates = window.NoNotesDates;
+  const Cal = window.NoNotesCalendar;
+  const CAL_HANDLE_KEY = 'ics';
+  const CAL_FILENAME = 'NoNotes.ics';
 
   const DEFAULT_FILENAME = 'NoNotes.sqlite';
   const SAVE_DELAY_MS = 600;
@@ -57,6 +60,9 @@
     tList: $('#tList'), tEmpty: $('#tEmpty'),
     taskPrintDialog: $('#taskPrintDialog'), taskPrintForm: $('#taskPrintForm'), taskPrintGoBtn: $('#taskPrintGoBtn'),
     taskScopeFiltered: $('#taskScopeFiltered'),
+    calendarBtn: $('#calendarBtn'), calDialog: $('#calDialog'), calSummary: $('#calSummary'),
+    calIncludeDone: $('#calIncludeDone'), calAlarms: $('#calAlarms'), calFileSet: $('#calFileSet'), calFileInfo: $('#calFileInfo'),
+    calWriteBtn: $('#calWriteBtn'), calPickBtn: $('#calPickBtn'), calDownloadBtn: $('#calDownloadBtn'),
     mapView: $('#mapView'), mapNewBtn: $('#mapNewBtn'), mapFitBtn: $('#mapFitBtn'),
     mapZoomInBtn: $('#mapZoomInBtn'), mapZoomOutBtn: $('#mapZoomOutBtn'),
     mindmap: $('#mindmap'), renameInput: $('#renameInput'), contextMenu: $('#contextMenu'),
@@ -98,6 +104,7 @@
     tQuery: '',
     tTag: '',
     tSearchTimer: null,
+    calHandle: null,          // gemerkte Kalenderdatei (.ics)
     // Speichern: jede Änderung erhöht editSeq; savedSeq ist der zuletzt vollständig gesicherte Stand.
     editSeq: 0,
     savedSeq: 0,
@@ -194,6 +201,7 @@
 
     let openedFromFile = false;
     if (Store.fileAccess.supported) {
+      state.calHandle = await Store.browserStore.loadHandleKey(CAL_HANDLE_KEY);
       const handle = await Store.browserStore.loadHandle();
       if (handle) {
         state.fileHandle = handle;
@@ -499,6 +507,78 @@
     Store.download(bytes, `NoNotes-${todayStamp()}.sqlite`);
     const dirty = state.editSeq !== state.savedSeq;
     setStatus('Kopie heruntergeladen', dirty ? 'dirty' : 'saved');
+  }
+
+  // ---------- Kalenderexport ----------
+
+  function updateCalDialog() {
+    const c = Cal.count(state.db, el.calIncludeDone.checked);
+    el.calSummary.textContent = c.total === 0
+      ? 'Es gibt noch keine Aufgaben oder Fragen mit Termin.'
+      : `${c.total} ${c.total === 1 ? 'Termin' : 'Termine'}: ${c.open} offen`
+        + (c.cancelled ? `, ${c.cancelled} erledigt/beantwortet (als abgesagt)` : '')
+        + (c.removed ? `, ${c.removed} entfernt (als abgesagt)` : '');
+    const fsa = Store.fileAccess.supported;
+    el.calFileSet.hidden = !fsa;
+    el.calWriteBtn.hidden = !fsa;
+    el.calPickBtn.hidden = !fsa || !state.calHandle;
+    if (fsa) {
+      el.calFileInfo.textContent = state.calHandle
+        ? `Gemerkte Datei: „${state.calHandle.name}“. «Kalenderdatei aktualisieren» überschreibt sie mit dem aktuellen Stand.`
+        : 'Noch keine Kalenderdatei gemerkt. «Kalenderdatei anlegen…» fragt einmal nach dem Speicherort und merkt ihn sich.';
+      el.calWriteBtn.textContent = state.calHandle ? 'Kalenderdatei aktualisieren' : 'Kalenderdatei anlegen…';
+    }
+    const disabled = c.total === 0;
+    el.calWriteBtn.disabled = disabled;
+    el.calDownloadBtn.disabled = disabled;
+  }
+
+  function openCalDialog() {
+    closeMenu();
+    updateCalDialog();
+    if (typeof el.calDialog.showModal === 'function') el.calDialog.showModal();
+    else el.calDialog.setAttribute('open', '');
+  }
+
+  function closeCalDialog() {
+    if (el.calDialog.open) el.calDialog.close();
+  }
+
+  function buildCalendar() {
+    const result = Cal.build(state.db, { includeDone: el.calIncludeDone.checked, alarms: el.calAlarms.checked });
+    markEdited(); // Kennung und Versionsnummer liegen in der Datenbank
+    return result;
+  }
+
+  async function runCalendarExport(target) {
+    try {
+      if (target === 'download') {
+        const r = buildCalendar();
+        Store.download(new TextEncoder().encode(r.ics), CAL_FILENAME);
+        closeCalDialog();
+        setStatus(`Kalenderdatei heruntergeladen: ${r.total} Termine (Version ${r.sequence})`, 'dirty');
+        return;
+      }
+      let handle = state.calHandle;
+      if (target === 'pick' || !handle) {
+        handle = await Store.fileAccess.pickNew(CAL_FILENAME, Store.fileAccess.ICS_TYPES);
+      }
+      const perm = await Store.fileAccess.permission(handle, true);
+      if (perm !== 'granted') { setStatus('Kein Schreibzugriff auf die Kalenderdatei', 'error'); return; }
+      const r = buildCalendar();
+      await Store.fileAccess.write(handle, new TextEncoder().encode(r.ics));
+      if (handle !== state.calHandle) {
+        state.calHandle = handle;
+        try { await Store.browserStore.saveHandleKey(CAL_HANDLE_KEY, handle); }
+        catch (e) { console.warn('Kalenderdatei kann nicht gemerkt werden', e); }
+      }
+      closeCalDialog();
+      setStatus(`Kalenderdatei „${handle.name}“ aktualisiert: ${r.total} Termine (Version ${r.sequence})`, 'dirty');
+    } catch (e) {
+      if (isAbort(e)) return;
+      console.error(e);
+      setStatus('Kalenderexport fehlgeschlagen: ' + e.message, 'error');
+    }
   }
 
   // ---------- Export ----------
@@ -1802,7 +1882,7 @@
   }
 
   function anyDialogOpen() {
-    return [el.exportDialog, el.printDialog, el.qaPrintDialog, el.taskPrintDialog, el.helpDialog].some(d => d.open);
+    return [el.exportDialog, el.printDialog, el.qaPrintDialog, el.taskPrintDialog, el.helpDialog, el.calDialog].some(d => d.open);
   }
 
   function onQuestionSearchInput() {
@@ -2325,6 +2405,11 @@
     el.downloadBtn.addEventListener('click', downloadCopy);
     el.importBtn.addEventListener('click', startImport);
     el.exportBtn.addEventListener('click', openExportDialog);
+    el.calendarBtn.addEventListener('click', openCalDialog);
+    el.calIncludeDone.addEventListener('change', updateCalDialog);
+    el.calWriteBtn.addEventListener('click', () => runCalendarExport('write'));
+    el.calPickBtn.addEventListener('click', () => runCalendarExport('pick'));
+    el.calDownloadBtn.addEventListener('click', () => runCalendarExport('download'));
     el.exportDirBtn.addEventListener('click', () => runExport('dir'));
     el.exportZipBtn.addEventListener('click', () => runExport('zip'));
     el.importInput.addEventListener('change', importFromInput);

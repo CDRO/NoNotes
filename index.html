@@ -42,6 +42,7 @@
           <button type="button" id="importBtn" role="menuitem">Aus Datei importieren…</button>
           <div class="sep" role="separator"></div>
           <button type="button" id="exportBtn" role="menuitem">Als Markdown exportieren…</button>
+          <button type="button" id="calendarBtn" role="menuitem">Termine in Kalender exportieren (.ics)…</button>
           <div class="sep" role="separator"></div>
           <button type="button" id="storageHelpBtn" role="menuitem">Datenablage erklärt…</button>
           <button type="button" id="menuHelpBtn" role="menuitem">Hilfe (F1)</button>
@@ -288,6 +289,29 @@
     </form>
   </dialog>
 
+  <dialog id="calDialog" class="dialog" aria-labelledby="calTitle">
+    <form method="dialog" id="calForm">
+      <h2 id="calTitle">Termine in Kalender exportieren</h2>
+      <p class="dialog-lead" id="calSummary"></p>
+      <fieldset class="dialog-fieldset">
+        <legend>Inhalt</legend>
+        <label class="suboption"><input type="checkbox" id="calIncludeDone" checked> Erledigte, beantwortete und nicht mehr vorhandene Einträge als abgesagte Termine mitschreiben (damit sie im Kalender verschwinden)</label>
+        <label class="suboption"><input type="checkbox" id="calAlarms" checked> Erinnerungen: 30 Minuten vorher, bei Ganztagesterminen am Vortag um 9 Uhr</label>
+      </fieldset>
+      <fieldset class="dialog-fieldset" id="calFileSet">
+        <legend>Kalenderdatei</legend>
+        <p class="dialog-lead" id="calFileInfo"></p>
+      </fieldset>
+      <div class="row">
+        <button type="button" id="calWriteBtn" class="primary">Kalenderdatei anlegen…</button>
+        <button type="button" id="calPickBtn">Andere Datei wählen…</button>
+        <button type="button" id="calDownloadBtn">Herunterladen</button>
+        <button type="submit" value="cancel" class="ghost">Abbrechen</button>
+      </div>
+      <p class="hint">Jeder Export erhöht die Versionsnummer der Termine; Kalenderprogramme aktualisieren bestehende Einträge anhand ihrer festen Kennung statt sie zu duplizieren. Anleitung unter Hilfe → Datenablage.</p>
+    </form>
+  </dialog>
+
   <dialog id="helpDialog" class="dialog dialog-wide" aria-labelledby="helpTitle">
     <form method="dialog" class="help">
       <div class="help-head">
@@ -394,6 +418,15 @@
           <li><strong>Als Markdown exportieren…</strong> schreibt alle Notizen samt Mindmap-Bild und Bildern als lesbare Textdateien, unabhängig von NoNotes.</li>
           <li>Bilder in Notizen liegen in derselben Datenbank. Grosse Bilder werden beim Einfügen verkleinert, damit die Datei handlich bleibt.</li>
         </ul>
+        <h3>Termine in den Kalender (.ics)</h3>
+        <p>Unter <em>Datenbank → Termine in Kalender exportieren…</em> schreibt NoNotes alle Aufgaben und Fragen mit Termin als Kalenderdatei. Jeder Termin hat eine feste Kennung (UID) und eine mit jedem Export steigende Versionsnummer. Erledigte und beantwortete Einträge werden als abgesagt mitgeschrieben, ebenso früher exportierte Einträge, die es nicht mehr gibt (umformuliert, gelöscht oder Notiz im Papierkorb). Mit Uhrzeit dauert ein Termin 30 Minuten, ohne Uhrzeit ist er ganztägig. Erinnerung 30 Minuten vorher bzw. am Vortag um 9 Uhr.</p>
+        <ul class="help-list">
+          <li><strong>Empfohlen: feste Datei.</strong> Beim ersten Mal <em>Kalenderdatei anlegen…</em>, z. B. <code>NoNotes.ics</code>. Die App merkt sich die Datei; jeder weitere Export überschreibt sie mit dem aktuellen Stand, es entstehen nie Duplikate.</li>
+          <li><strong>Thunderbird:</strong> Neuer Kalender → Im Netzwerk → Format iCalendar (ICS) → als Adresse den Pfad der Datei (<code>file:///C:/…/NoNotes.ics</code>). Der Kalender liest die Datei bei jeder Änderung neu.</li>
+          <li><strong>Outlook (Desktop):</strong> Datei → Öffnen und exportieren → Importieren/Exportieren → iCalendar-Datei importieren → <em>Importieren</em> (nicht «Als neu öffnen»). Beim erneuten Import werden Termine mit bekannter Kennung aktualisiert. Legt dein Outlook dennoch Duplikate an, lösche die NoNotes-Termine vor dem Import oder nutze einen eigenen Kalenderordner dafür.</li>
+          <li><strong>Google Kalender:</strong> Einstellungen → Importieren und exportieren → Datei wählen und in einen eigenen Kalender «NoNotes» importieren. Google erkennt die Kennung und aktualisiert bestehende Termine.</li>
+          <li><strong>Apple Kalender:</strong> Datei → Importieren; bestehende Termine mit gleicher Kennung werden ersetzt.</li>
+        </ul>
         <h3>Aktueller Stand</h3>
         <p id="helpStorageStatus" class="help-status"></p>
       </section>
@@ -440,6 +473,7 @@
   <script src="js/mindmap.js"></script>
   <script src="js/zip.js"></script>
   <script src="js/export.js"></script>
+  <script src="js/ical.js"></script>
   <script src="js/print.js"></script>
   <script src="js/app.js"></script>
 </body>

@@ -131,6 +131,24 @@
         try { await idbDel(KEY_HANDLE); } catch (e) { /* nichts zu tun */ }
       }
     },
+
+    /** Weitere gemerkte Datei-Handles (z. B. die Kalenderdatei) unter eigenem Schlüssel. */
+    async loadHandleKey(key) {
+      if (this.backend !== 'indexeddb') return null;
+      try { return (await idbGet('handle:' + key)) || null; }
+      catch (e) { return null; }
+    },
+
+    async saveHandleKey(key, handle) {
+      if (this.backend !== 'indexeddb') throw new Error('Ohne IndexedDB kann sich die App die Datei nicht merken');
+      await idbSet('handle:' + key, handle);
+    },
+
+    async clearHandleKey(key) {
+      if (this.backend === 'indexeddb') {
+        try { await idbDel('handle:' + key); } catch (e) { /* nichts zu tun */ }
+      }
+    },
   };
 
   // ---------- Datei auf der Platte (File System Access API) ----------
@@ -139,13 +157,18 @@
     description: 'SQLite-Datenbank',
     accept: { 'application/vnd.sqlite3': ['.sqlite', '.sqlite3', '.db'] },
   }];
+  const ICS_TYPES = [{
+    description: 'Kalenderdatei (iCalendar)',
+    accept: { 'text/calendar': ['.ics'] },
+  }];
 
   const fileAccess = {
     supported: typeof global.showSaveFilePicker === 'function'
       && typeof global.showOpenFilePicker === 'function',
+    ICS_TYPES,
 
-    async pickNew(suggestedName) {
-      return global.showSaveFilePicker({ suggestedName, types: FILE_TYPES });
+    async pickNew(suggestedName, types) {
+      return global.showSaveFilePicker({ suggestedName, types: types || FILE_TYPES });
     },
 
     async pickExisting() {

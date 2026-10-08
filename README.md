@@ -87,6 +87,31 @@ Fragen und Antworten werden zu Zitatblöcken (`> **Offene Frage:** …`, `> **An
 `[[Titel]]` zu normalen Markdown-Links. Ziel ist wahlweise ein Ordner deiner Wahl (Edge und
 andere Chromium-Browser) oder ein ZIP zum Herunterladen.
 
+### Termine in den Kalender (.ics)
+
+`Datenbank → Termine in Kalender exportieren (.ics)…` schreibt alle Aufgaben und Fragen mit
+Termin als iCalendar-Datei, die sich in Outlook, Thunderbird, Google Kalender oder Apple
+Kalender importieren oder abonnieren lässt.
+
+- Mit Uhrzeit dauert ein Termin 30 Minuten, ohne Uhrzeit ist er ganztägig. Erinnerung
+  30 Minuten vorher bzw. am Vortag um 9 Uhr (abschaltbar).
+- Jeder Termin trägt eine feste Kennung (UID) aus einer Kennung der Datenbank und der Nummer
+  des Eintrags. Sie bleibt erhalten, wenn Termin oder Status wechseln; die Versionsnummer
+  (SEQUENCE) steigt mit jedem Export. Kalenderprogramme aktualisieren deshalb bestehende
+  Termine, statt sie zu duplizieren.
+- Erledigte Aufgaben und beantwortete Fragen werden als abgesagt (`STATUS:CANCELLED`)
+  mitgeschrieben, damit sie im Kalender verschwinden. Dasselbe gilt für früher exportierte
+  Einträge, die es nicht mehr gibt (umformuliert, gelöscht, Notiz im Papierkorb): Die App
+  merkt sich alle je exportierten Kennungen und sagt sie noch ein Jahr über den Termin hinaus
+  ab. Abschaltbar, dann enthält die Datei nur offene Termine.
+- **Empfohlen: feste Datei.** «Kalenderdatei anlegen…» fragt einmal nach dem Speicherort
+  (z. B. `NoNotes.ics`) und merkt ihn sich; jeder weitere Export überschreibt die Datei mit
+  dem aktuellen Stand. Thunderbird bindet eine solche Datei direkt als Kalender ein (Neuer
+  Kalender → Im Netzwerk → iCalendar, Adresse `file:///C:/…/NoNotes.ics`) und liest Änderungen
+  automatisch. Alternativ **Herunterladen** und im Kalenderprogramm importieren; beim erneuten
+  Import werden Termine mit bekannter Kennung ersetzt. Die Hilfe (`?` → Datenablage) beschreibt
+  den Weg für Outlook, Google und Apple.
+
 ## Bedienung
 
 ### Mindmap (Startansicht)
@@ -163,6 +188,8 @@ Dasselbe gilt für Fragen.
   gruppiert nach Fälligkeit oder Notiz. Der Export schreibt eine Liste «Offene Aufgaben» in
   die Übersicht.
 - `/` startet in jeder Ansicht die Suche.
+- `Datenbank → Termine in Kalender exportieren (.ics)…` schreibt alle Aufgaben und Fragen
+  mit Termin in eine Kalenderdatei (siehe oben).
 
 ### Editor und Markdown
 
@@ -211,6 +238,7 @@ Dasselbe gilt für Fragen.
 | Toolleiste | `js/editing.js`: reine Textfunktionen (umschliessen, Zeilenpräfixe, Überschriften, Links), in Node prüfbar |
 | Export | `js/export.js` baut die Dateien, `js/zip.js` ist ein kleiner ZIP-Writer; das Bild liefert `NoNotesMindmap.toSvgString`, PNG über ein Canvas |
 | Druck | `js/print.js` baut das Druckdokument in `#printArea`; `@media print` blendet den Rest der App aus |
+| Kalender | `js/ical.js`: iCalendar nach RFC 5545 mit festen UIDs, SEQUENCE, VALARM, Zeilenfaltung; gemerkte Kennungen in `meta` |
 | Datenbank | [sql.js](https://github.com/sql-js/sql.js) (SQLite nach JavaScript kompiliert) in `vendor/sql.js/`; Schema und Abfragen in `js/db.js` |
 | Persistenz | `js/storage.js`: IndexedDB (ersatzweise localStorage) plus File System Access API für die Datei |
 | Start | `start.ps1` (nur Cmdlets, läuft im Constrained Language Mode), `start.cmd` |
@@ -235,7 +263,8 @@ CREATE TABLE notes (
   collapsed  INTEGER NOT NULL DEFAULT 0,
   deleted_at TEXT             -- gesetzt = im Papierkorb
 );
-CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);  -- schema_version, created_at, map_title
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);  -- schema_version, created_at, map_title,
+                                                                -- calendar_uid, calendar_sequence, calendar_known
 CREATE TABLE questions (          -- Index über die ?/!-Zeilen, wird aus dem Text abgeleitet
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   note_id     INTEGER NOT NULL,
@@ -267,7 +296,8 @@ Der Smoke-Test öffnet die App wie ein Benutzer per `file://` in headless Chromi
 prüft Anlegen, Suchen, Speichern, Neuladen, Herunterladen, Importieren, Löschen, das
 Schreiben in die Datenbankdatei, die Mindmap-Bedienung, die Fragen, Markdown-Vorschau, Tags,
 Papierkorb, Suche, Umsortieren per Drag & Drop, Bild-Anhänge, den Export (Ordner und ZIP),
-das Drucken (mit gestubbtem `window.print`), Toolleiste und Hilfe, Aufgaben und die Migration alter Datenbanken:
+das Drucken (mit gestubbtem `window.print`), Toolleiste und Hilfe, Aufgaben, Termine mit Uhrzeit,
+den Kalenderexport und die Migration alter Datenbanken:
 
 ```bash
 npm install
