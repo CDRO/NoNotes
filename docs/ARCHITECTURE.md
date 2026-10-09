@@ -70,5 +70,5 @@ Entwickeln geht auch ohne Build: `editions/local/index.html` direkt im Browser Ã
 ## Tests
 
 `npm test` baut und fÃ¼hrt der Reihe nach aus: `i18n lint`, `i18n check`, `test/backend.cjs`,
-`test/smoke.cjs`, `test/i18n.cjs`. Getestet wird immer das Gebaute (`dist/NoNotes`) per `file://` in
+`test/smoke.cjs`, `test/palette.cjs`, `test/i18n.cjs`. Getestet wird immer das Gebaute (`dist/NoNotes`) per `file://` in
 Chromium, also genau das, was der Benutzer bekommt.

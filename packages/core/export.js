@@ -220,8 +220,14 @@
     return files;
   }
 
+  /** Hauptfarbe der Datenbank (helle Fassung) für das Mindmap-Bild. */
+  async function accentOf(backend) {
+    const P = global.NoNotesPalette;
+    return P.light(await backend.getMeta('accent'));
+  }
+
   async function renderSvg(backend, options) {
-    return Mindmap().toSvgString(await backend.getTree({ archive: !!(options && options.archived) }), { mapTitle: await backend.getMapTitle(), expandAll: true });
+    return Mindmap().toSvgString(await backend.getTree({ archive: !!(options && options.archived) }), { mapTitle: await backend.getMapTitle(), expandAll: true, accent: await accentOf(backend) });
   }
 
   /** SVG-Zeichenkette → PNG-Bytes über ein Canvas. */
@@ -283,5 +289,5 @@
     return `NoNotes-${slugify(await backend.getMapTitle())}-${stamp()}.zip`;
   }
 
-  global.NoNotesExport = { buildFiles, renderSvg, svgToPng, writeToDirectory, suggestedZipName, slugify, bodyToMarkdown, treeOrder };
+  global.NoNotesExport = { buildFiles, renderSvg, accentOf, svgToPng, writeToDirectory, suggestedZipName, slugify, bodyToMarkdown, treeOrder };
 })(window);

@@ -6,6 +6,7 @@
   const t = I18n.t;
   const tn = I18n.tn;
   const Backend = window.NoNotesBackend;
+  const Palette = window.NoNotesPalette;
   const Store = window.NoNotesStorage;
   const Mindmap = window.NoNotesMindmap;
   const Q = window.NoNotesQuestions;
@@ -19,6 +20,7 @@
   const Cal = window.NoNotesCalendar;
   const joinParts = (...parts) => parts.filter(Boolean).join(', ');
   const errorText = e => Backend.errorText(e);
+  const ACCENT_KEY = 'nonotes.accent'; // Zwischenspeicher der Hauptfarbe; massgebend ist meta 'accent' der Datenbank
   const CAL_HANDLE_KEY = 'ics';
   const CAL_FILENAME = 'NoNotes.ics';
 
@@ -30,6 +32,22 @@
 
   I18n.init();
   I18n.translateDom(document.body);
+
+  /** Setzt die Farbvariablen der Seite für eine Hauptfarbe (Vorgabe Blau: das Stylesheet gilt). */
+  function paintAccent(id) {
+    const css = Palette.css(id);
+    let style = document.getElementById('accentStyle');
+    if (!css) { if (style) style.remove(); return; }
+    if (!style) {
+      style = document.createElement('style');
+      style.id = 'accentStyle';
+      document.head.appendChild(style);
+    }
+    style.textContent = css;
+  }
+
+  // Sofort aus dem Zwischenspeicher, damit beim Start nichts umspringt; die Datenbank gleicht danach ab.
+  try { paintAccent(Palette.normalize(localStorage.getItem(ACCENT_KEY))); } catch (e) { /* ohne Zwischenspeicher: Vorgabe */ }
 
   const $ = sel => document.querySelector(sel);
   const el = {
@@ -63,7 +81,7 @@
     qaScopeFiltered: $('#qaScopeFiltered'), qaLines: $('#qaLines'), qSort: $('#qSort'),
     mdToolbar: $('#mdToolbar'), headingSelect: $('#headingSelect'), helpBtn: $('#helpBtn'),
     helpDialog: $('#helpDialog'), helpTabs: $('#helpTabs'), helpStorageStatus: $('#helpStorageStatus'),
-    storageHelpBtn: $('#storageHelpBtn'), menuHelpBtn: $('#menuHelpBtn'), langRow: $('#langRow'), langSelect: $('#langSelect'),
+    storageHelpBtn: $('#storageHelpBtn'), menuHelpBtn: $('#menuHelpBtn'), langRow: $('#langRow'), langSelect: $('#langSelect'), accentSwatches: $('#accentSwatches'),
     viewTasksBtn: $('#viewTasksBtn'), tasksView: $('#tasksView'), tFilter: $('#tFilter'), tSort: $('#tSort'),
     tSearch: $('#tSearch'), tTagFilter: $('#tTagFilter'), tPrintBtn: $('#tPrintBtn'), tCount: $('#tCount'),
     tList: $('#tList'), tEmpty: $('#tEmpty'),
@@ -87,6 +105,8 @@
     view: 'map',
     map: null,
     mapDirty: true,
+    accent: Palette.DEFAULT,
+    accentStale: false,   // nach Datei öffnen oder Import: Hauptfarbe neu aus der Datenbank lesen
     mapSelection: null,   // 'root' | Zahl | null
     rename: null,         // { id, isNew }
     qStatus: 'open',
@@ -195,6 +215,7 @@
     state.query = '';
     state.mapSelection = null;
     state.mapDirty = true;
+    state.accentStale = true;
     state.tagFilter = '';
     state.qTag = '';
     state.listScope = 'live';
@@ -226,6 +247,7 @@
     if (!edition) throw new Error(t('Es ist keine Ausprägung geladen.'));
     shell = edition.createShell(shellHost());
     B = await shell.start();
+    await loadAccent();
     if (Store.fileAccess.supported) state.calHandle = await Store.browserStore.loadHandleKey(CAL_HANDLE_KEY);
 
     state.map = Mindmap.create(el.mindmap, {
@@ -457,6 +479,7 @@
   // ---------- Darstellung ----------
 
   async function renderAll() {
+    if (state.accentStale) await loadAccent();
     await renderTagFilters();
     await renderList();
     await renderEditor();
@@ -466,6 +489,45 @@
     await renderTaskCounts();
     if (state.view === 'questions') await renderQuestions();
     if (state.view === 'tasks') await renderTasks();
+  }
+
+  // ---------- Hauptfarbe ----------
+
+  /** Wendet eine Hauptfarbe an: Seite, Zwischenspeicher, Auswahl im Menü. */
+  function applyAccent(id) {
+    id = Palette.normalize(id);
+    state.accent = id;
+    paintAccent(id);
+    try { localStorage.setItem(ACCENT_KEY, id); } catch (e) { /* egal */ }
+    for (const b of el.accentSwatches.children) b.setAttribute('aria-pressed', String(b.dataset.accent === id));
+  }
+
+  /** Liest die Hauptfarbe der Datenbank (fehlt sie, gilt die Vorgabe Blau). */
+  async function loadAccent() {
+    state.accentStale = false;
+    applyAccent(await B.getMeta('accent'));
+  }
+
+  async function chooseAccent(id) {
+    applyAccent(id);
+    await B.setMeta('accent', state.accent);
+    setStatus(t('Hauptfarbe: {farbe}', { farbe: Palette.name(state.accent) }), saveState());
+  }
+
+  function setupAccent() {
+    el.accentSwatches.replaceChildren(...Palette.COLORS.map(c => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'swatch';
+      b.dataset.accent = c.id;
+      b.style.setProperty('--sw-l', c.light.accent);
+      b.style.setProperty('--sw-d', c.dark.accent);
+      b.title = Palette.name(c.id);
+      b.setAttribute('aria-label', Palette.name(c.id));
+      b.setAttribute('aria-pressed', String(c.id === state.accent));
+      b.addEventListener('click', () => chooseAccent(c.id));
+      return b;
+    }));
   }
 
   async function renderTaskCounts() {
@@ -2268,6 +2330,7 @@
     el.helpBtn.addEventListener('click', () => openHelp('editor'));
     el.menuHelpBtn.addEventListener('click', () => openHelp('editor'));
     setupLanguage();
+    setupAccent();
     el.storageHelpBtn.addEventListener('click', () => openHelp('storage'));
     el.helpTabs.addEventListener('click', async e => {
       const b = e.target.closest('button[data-tab]');

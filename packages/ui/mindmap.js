@@ -553,8 +553,10 @@
 
     const c = {
       bg: '#ffffff', panel: '#ffffff', text: '#1c1e22', muted: '#6b7280', border: '#d7dbe2',
-      accent: '#2563eb', accentContrast: '#ffffff', warn: '#b45309',
+      accent: '#2563eb', accentContrast: '#ffffff', tint: '#e3ecfd', warn: '#b45309',
     };
+    // Hauptfarbe der Datenbank (NoNotesPalette.light): options.accent = { accent, contrast, tint }
+    if (options.accent) Object.assign(c, { accent: options.accent.accent, accentContrast: options.accent.contrast, tint: options.accent.tint });
     const parts = [];
     parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" font-family="${esc(FONT_FAMILY.replace(/"/g, "'"))}">`);
     parts.push(`<title>${esc(options.mapTitle || 'Mindmap')}</title>`);
@@ -581,7 +583,7 @@
       parts.push(`<text x="${n.w / 2}" y="${n.h / 2}" text-anchor="middle" dominant-baseline="central" fill="${textFill}" style="font: ${font} ${esc(FONT_FAMILY.replace(/"/g, "'"))}">${esc(n.label)}</text>`);
       if (!n.isRoot && n.collapsed && n.children.length) {
         const tx = n.dir > 0 ? n.w + 11 : -11;
-        parts.push(`<g transform="translate(${tx} ${n.h / 2})"><circle r="10" fill="#e3ecfd" stroke="${c.accent}" stroke-width="1.5"/><text text-anchor="middle" dominant-baseline="central" fill="${c.text}" style="font: 600 11px ${esc(FONT_FAMILY.replace(/"/g, "'"))}">${n.hiddenCount}</text></g>`);
+        parts.push(`<g transform="translate(${tx} ${n.h / 2})"><circle r="10" fill="${c.tint}" stroke="${c.accent}" stroke-width="1.5"/><text text-anchor="middle" dominant-baseline="central" fill="${c.text}" style="font: 600 11px ${esc(FONT_FAMILY.replace(/"/g, "'"))}">${n.hiddenCount}</text></g>`);
       }
       if (n.shownBadge > 0) {
         const bx = n.dir < 0 ? 0 : n.w;
@@ -589,7 +591,7 @@
       }
       if (n.shownTBadge > 0) {
         const bx = n.dir < 0 ? 0 : n.w;
-        parts.push(`<g transform="translate(${bx} ${n.h})"><circle r="9" fill="${c.accent}"/><text text-anchor="middle" dominant-baseline="central" fill="#fff" style="font: 700 11px ${esc(FONT_FAMILY.replace(/"/g, "'"))}">${n.shownTBadge > 99 ? '99+' : n.shownTBadge}</text></g>`);
+        parts.push(`<g transform="translate(${bx} ${n.h})"><circle r="9" fill="${c.accent}"/><text text-anchor="middle" dominant-baseline="central" fill="${c.accentContrast}" style="font: 700 11px ${esc(FONT_FAMILY.replace(/"/g, "'"))}">${n.shownTBadge > 99 ? '99+' : n.shownTBadge}</text></g>`);
       }
       parts.push('</g>');
     }

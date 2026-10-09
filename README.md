@@ -131,6 +131,15 @@ Die Notizen bilden einen Baum um einen zentralen Knoten, dessen Titel du per Dop
 | Navigieren | Pfeiltasten wandern durch den Baum. Mausrad zoomt, Ziehen der Fläche verschiebt, `0` oder **Einpassen** zeigt alles. |
 | Mehrere auswählen | `Ctrl`+Klick (oder `Shift`+Klick) sammelt Knoten; die Leiste unten zeigt die Anzahl, bietet **Drucken…** und **Auswahl aufheben** (`Esc`). In der Liste geht `Ctrl`+Klick ebenso. |
 
+### Hauptfarbe
+
+Unter **Datenbank → Hauptfarbe** stehen acht Farben zur Wahl: Blau (Vorgabe), Türkis, Grün, Gelb, Orange,
+Rot, Violett und Grau. Die Wahl wirkt sofort auf Knöpfe, Wurzelknoten, Abzeichen, Links und Auswahl, jeweils
+mit einer passenden hellen und dunklen Fassung (je nach Einstellung des Systems) und einer Schriftfarbe, die auf
+der Fläche gut lesbar bleibt. Die Farbe wird **in der Datenbankdatei** gespeichert (Tabelle `meta`, Schlüssel
+`accent`), gehört also zur Datei und wandert mit ihr; ein Zwischenspeicher im Browser verhindert, dass beim Start
+kurz Blau aufblitzt. Das Mindmap-Bild in Export und Druck übernimmt die Farbe.
+
 ### Liste, Suche, Tags, Papierkorb, Archiv
 
 Der Umschalter oben wechselt zur klassischen Liste mit Suche und Editor nebeneinander.
@@ -289,6 +298,7 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | Export | `packages/core/export.js` baut die Dateien, `zip.js` ist ein kleiner ZIP-Writer; das Bild liefert `NoNotesMindmap.toSvgString`, PNG über ein Canvas |
 | Druck | `packages/ui/print.js` baut das Druckdokument in `#printArea`; `@media print` blendet den Rest der App aus |
 | Scroll-Sync | `packages/ui/scrollsync.js`: Spiegel des Textes misst Zeilenhöhen, Vorschau-Blöcke tragen `data-line`, lineare Interpolation dazwischen |
+| Hauptfarbe | `packages/core/palette.js`: acht Farben mit heller und dunkler Fassung (Fläche, Schrift auf der Fläche, Farbe als Schrift, Tönung); die Seite setzt sie über CSS-Variablen, Export und Druck über `toSvgString` |
 | Kalender | `packages/core/ical.js`: iCalendar nach RFC 5545 mit festen UIDs, SEQUENCE, VALARM, Zeilenfaltung; gemerkte Kennungen in `meta` |
 | Backend | `packages/core/backend.js`: asynchrone Schnittstelle für alle Datenzugriffe; `packages/store-local/backend-local.js` setzt sie über SQLite um |
 | Datenbank | [sql.js](https://github.com/sql-js/sql.js) (SQLite nach JavaScript kompiliert) in `vendor/sql.js/`; Schema und Abfragen in `packages/data/db.js` |
@@ -317,7 +327,7 @@ CREATE TABLE notes (
   deleted_at TEXT,            -- gesetzt = im Papierkorb
   archived_at TEXT            -- gesetzt = im Archiv (ausgeblendet, durchsuchbar, schreibgeschützt)
 );
-CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);  -- schema_version, created_at, map_title,
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);  -- schema_version, created_at, map_title, accent,
                                                                 -- calendar_uid, calendar_sequence, calendar_known
 CREATE TABLE questions (          -- Index über die ?/!-Zeilen, wird aus dem Text abgeleitet
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -359,8 +369,8 @@ in die Datenbankdatei, die Mindmap-Bedienung, Fragen, Markdown-Vorschau, Tags, P
 Umsortieren per Drag & Drop, Bild-Anhänge, den Export (Ordner und ZIP), das Drucken (mit gestubbtem
 `window.print`), Toolleiste und Hilfe, Aufgaben, Termine mit Uhrzeit, den Kalenderexport, das synchrone
 Scrollen der geteilten Ansicht, Unteraufgaben, das Archiv und die Migration alter Datenbanken. Dazu
-kommen der Vertrag der Backend-Schnittstelle (`test/backend.cjs`) und die Sprachprüfungen
-(`test/i18n.cjs`, `tools/i18n.cjs lint` und `check`):
+kommen der Vertrag der Backend-Schnittstelle (`test/backend.cjs`), die Hauptfarbe (`test/palette.cjs`) und die
+Sprachprüfungen (`test/i18n.cjs`, `tools/i18n.cjs lint` und `check`):
 
 ```bash
 npm install
