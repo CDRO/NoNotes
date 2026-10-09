@@ -5,7 +5,8 @@
   "description": "Lokale Notiz-App: läuft als Datei im Browser, speichert in SQLite (sql.js). Kein Server, keine Installation.",
   "license": "UNLICENSED",
   "scripts": {
-    "test": "node test/smoke.cjs"
+    "build": "node tools/build.cjs",
+    "test": "node tools/build.cjs && node test/smoke.cjs"
   },
   "devDependencies": {
     "playwright": "1.56.1"

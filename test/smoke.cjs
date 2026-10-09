@@ -8,7 +8,8 @@ const os = require('node:os');
 const assert = require('node:assert/strict');
 
 const ROOT = path.resolve(__dirname, '..');
-const APP_URL = 'file://' + path.join(ROOT, 'index.html');
+// Getestet wird das Gebaute (dist/NoNotes), also genau das, was im ZIP liegt. Vorher: node tools/build.cjs
+const APP_URL = 'file://' + path.join(ROOT, 'dist', 'NoNotes', 'index.html');
 
 function loadPlaywright() {
   try { return require('playwright'); }

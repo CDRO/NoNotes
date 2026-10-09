@@ -35,7 +35,7 @@ jobs:
       - name: Chromium für Playwright installieren
         run: npx playwright install --with-deps chromium
 
-      - name: Smoke-Test (App per file:// in Chromium)
+      - name: Bauen und Smoke-Test (das Gebaute per file:// in Chromium)
         run: npm test
 
       - name: Version bestimmen
@@ -62,19 +62,11 @@ jobs:
           echo "release=${RELEASE}" >> "$GITHUB_OUTPUT"
           echo "Version: ${VERSION} (Release: ${RELEASE})"
 
-      - name: Version in die App schreiben
-        run: |
-          printf "// Von GitHub Actions gesetzt.\nwindow.NONOTES_VERSION = '%s';\n" "${{ steps.version.outputs.version }}" > js/version.js
-          cat js/version.js
-
-      - name: ZIP bauen
+      - name: ZIP bauen (lokale Ausprägung, mit der Versionsnummer in der App)
         run: |
           set -euo pipefail
-          STAGE="dist/NoNotes"
-          mkdir -p "$STAGE"
-          cp -r index.html css js vendor start.ps1 start.cmd README.md "$STAGE/"
-          rm -f "$STAGE"/vendor/sql.js/*.zip
-          (cd "$STAGE" && zip -r -X "../NoNotes-${{ steps.version.outputs.version }}.zip" .)
+          node tools/build.cjs --edition local --version "${{ steps.version.outputs.version }}"
+          (cd dist/NoNotes && zip -r -X "../NoNotes-${{ steps.version.outputs.version }}.zip" .)
           ls -la dist
           unzip -l dist/NoNotes-*.zip
 

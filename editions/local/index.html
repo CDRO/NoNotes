@@ -7,7 +7,7 @@
   <meta name="description" content="NoNotes – lokale Notizen als Mindmap, gespeichert in einer SQLite-Datei. Läuft ohne Server direkt im Browser.">
   <title>NoNotes</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Ctext x='16' y='22' font-family='system-ui,sans-serif' font-size='18' font-weight='700' fill='white' text-anchor='middle'%3EN%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="../../packages/ui/app.css">
 </head>
 <body data-ready="false" class="view-map">
 
@@ -476,21 +476,22 @@
   <input type="file" id="importInput" accept=".sqlite,.sqlite3,.db,application/vnd.sqlite3,application/x-sqlite3" hidden>
   <input type="file" id="attachInput" accept="image/*" multiple hidden>
 
-  <script src="js/version.js"></script>
-  <script src="vendor/sql.js/sql-asm.js"></script>
-  <script src="js/dates.js"></script>
-  <script src="js/questions.js"></script>
-  <script src="js/tasks.js"></script>
-  <script src="js/markdown.js"></script>
-  <script src="js/editing.js"></script>
-  <script src="js/db.js"></script>
-  <script src="js/storage.js"></script>
-  <script src="js/mindmap.js"></script>
-  <script src="js/zip.js"></script>
-  <script src="js/export.js"></script>
-  <script src="js/ical.js"></script>
-  <script src="js/print.js"></script>
-  <script src="js/scrollsync.js"></script>
-  <script src="js/app.js"></script>
+  <script src="version.js"></script>
+  <script src="../../vendor/sql.js/sql-asm.js"></script>
+  <!-- LANG-PACKS -->
+  <script src="../../packages/core/dates.js"></script>
+  <script src="../../packages/core/questions.js"></script>
+  <script src="../../packages/core/tasks.js"></script>
+  <script src="../../packages/core/markdown.js"></script>
+  <script src="../../packages/core/editing.js"></script>
+  <script src="../../packages/data/db.js"></script>
+  <script src="../../packages/store-local/storage.js"></script>
+  <script src="../../packages/ui/mindmap.js"></script>
+  <script src="../../packages/core/zip.js"></script>
+  <script src="../../packages/core/export.js"></script>
+  <script src="../../packages/core/ical.js"></script>
+  <script src="../../packages/ui/print.js"></script>
+  <script src="../../packages/ui/scrollsync.js"></script>
+  <script src="../../packages/ui/app.js"></script>
 </body>
 </html>
