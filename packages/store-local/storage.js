@@ -7,6 +7,8 @@
 (function (global) {
   'use strict';
 
+  const { t } = global.NoNotesI18n;
+
   const IDB_NAME = 'nonotes';
   const IDB_STORE = 'kv';
   const KEY_DB = 'db';
@@ -17,14 +19,14 @@
 
   function idbOpen() {
     return new Promise((resolve, reject) => {
-      if (!global.indexedDB) { reject(new Error('IndexedDB nicht verfügbar')); return; }
+      if (!global.indexedDB) { reject(new Error(t('IndexedDB nicht verfügbar'))); return; }
       let req;
       try { req = indexedDB.open(IDB_NAME, 1); }
       catch (e) { reject(e); return; }
       req.onupgradeneeded = () => { req.result.createObjectStore(IDB_STORE); };
       req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error || new Error('IndexedDB konnte nicht geöffnet werden'));
-      req.onblocked = () => reject(new Error('IndexedDB ist blockiert'));
+      req.onerror = () => reject(req.error || new Error(t('IndexedDB konnte nicht geöffnet werden')));
+      req.onblocked = () => reject(new Error(t('IndexedDB ist blockiert')));
     });
   }
 
@@ -38,8 +40,8 @@
         const req = fn(store);
         if (req) req.onsuccess = () => { result = req.result; };
         tx.oncomplete = () => resolve(result);
-        tx.onerror = () => reject(tx.error || new Error('IndexedDB-Transaktion fehlgeschlagen'));
-        tx.onabort = () => reject(tx.error || new Error('IndexedDB-Transaktion abgebrochen'));
+        tx.onerror = () => reject(tx.error || new Error(t('IndexedDB-Transaktion fehlgeschlagen')));
+        tx.onabort = () => reject(tx.error || new Error(t('IndexedDB-Transaktion abgebrochen')));
       });
     } finally {
       db.close();
@@ -92,7 +94,7 @@
     label() {
       return this.backend === 'indexeddb' ? 'IndexedDB'
         : this.backend === 'localstorage' ? 'localStorage'
-        : 'kein Browser-Speicher';
+        : t('kein Browser-Speicher');
     },
 
     async loadDb() {
@@ -110,7 +112,7 @@
     async saveDb(bytes) {
       if (this.backend === 'indexeddb') { await idbSet(KEY_DB, bytes); return; }
       if (this.backend === 'localstorage') { localStorage.setItem(LS_KEY_DB, bytesToB64(bytes)); return; }
-      throw new Error('Kein Browser-Speicher verfügbar');
+      throw new Error(t('Kein Browser-Speicher verfügbar'));
     },
 
     async loadHandle() {
@@ -121,7 +123,7 @@
 
     async saveHandle(handle) {
       if (this.backend !== 'indexeddb') {
-        throw new Error('Ohne IndexedDB kann sich die App die Datei nicht merken');
+        throw new Error(t('Ohne IndexedDB kann sich die App die Datei nicht merken'));
       }
       await idbSet(KEY_HANDLE, handle);
     },
@@ -140,7 +142,7 @@
     },
 
     async saveHandleKey(key, handle) {
-      if (this.backend !== 'indexeddb') throw new Error('Ohne IndexedDB kann sich die App die Datei nicht merken');
+      if (this.backend !== 'indexeddb') throw new Error(t('Ohne IndexedDB kann sich die App die Datei nicht merken'));
       await idbSet('handle:' + key, handle);
     },
 
@@ -158,7 +160,7 @@
     accept: { 'application/vnd.sqlite3': ['.sqlite', '.sqlite3', '.db'] },
   }];
   const ICS_TYPES = [{
-    description: 'Kalenderdatei (iCalendar)',
+    description: t('Kalenderdatei (iCalendar)'),
     accept: { 'text/calendar': ['.ics'] },
   }];
 

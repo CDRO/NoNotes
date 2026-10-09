@@ -5,11 +5,12 @@
 (function (global) {
   'use strict';
 
+  const { t, tn } = global.NoNotesI18n;
+
   const Q = () => global.NoNotesQuestions;
   const Mindmap = () => global.NoNotesMindmap;
 
-  const fmtDateTime = new Intl.DateTimeFormat('de-CH', { dateStyle: 'medium', timeStyle: 'short' });
-  const fmtDate = iso => { const d = new Date(iso); return isNaN(d) ? '' : fmtDateTime.format(d); };
+  const fmtDate = iso => { const d = new Date(iso); return isNaN(d) ? '' : new Intl.DateTimeFormat(global.NoNotesI18n.locale(), { dateStyle: 'medium', timeStyle: 'short' }).format(d); };
 
   function slugify(text) {
     const map = { ä: 'ae', ö: 'oe', ü: 'ue', Ä: 'ae', Ö: 'oe', Ü: 'ue', ß: 'ss', é: 'e', è: 'e', ê: 'e', à: 'a', â: 'a', ç: 'c' };
@@ -22,7 +23,7 @@
   function uniqueSlugs(nodes) {
     const used = new Map();
     for (const n of nodes) {
-      const base = slugify(n.title.trim() || 'Ohne Titel');
+      const base = slugify(n.title.trim() || t('Ohne Titel'));
       const count = used.get(base) || 0;
       used.set(base, count + 1);
       n.slug = count === 0 ? base : `${base}-${count + 1}`;
@@ -51,7 +52,7 @@
   function pathTitles(node) {
     const parts = [];
     let p = node.parentNode;
-    while (p) { parts.unshift(p.title.trim() || 'Ohne Titel'); p = p.parentNode; }
+    while (p) { parts.unshift(p.title.trim() || t('Ohne Titel')); p = p.parentNode; }
     return parts;
   }
 
@@ -68,18 +69,18 @@
         while (j < lines.length && /^\s*!(?!\[)\s?/.test(lines[j])) answers.push(lines[j++].replace(/^\s*!(?!\[)\s?/, '').trim());
         const answered = answers.join('').trim().length > 0;
         if (out.length && out[out.length - 1].trim() !== '' && !out[out.length - 1].startsWith('>')) out.push('');
-        out.push(`> **${answered ? 'Frage (beantwortet)' : 'Offene Frage'}:** ${inline(q[1].trim(), resolveLink, resolveAttachment)}`);
+        out.push(`> **${answered ? t('Frage (beantwortet)') : t('Offene Frage')}:** ${inline(q[1].trim(), resolveLink, resolveAttachment)}`);
         if (answered) {
           const rendered = answers.map(a => inline(a, resolveLink, resolveAttachment));
-          if (rendered.length === 1) out.push(`> **Antwort:** ${rendered[0]}`);
-          else { out.push('> **Antwort:**'); for (const a of rendered) out.push(`> ${a}`); } // Listen in Antworten bleiben Listen
+          if (rendered.length === 1) out.push(`> **${t('Antwort')}:** ${rendered[0]}`);
+          else { out.push(`> **${t('Antwort')}:**`); for (const a of rendered) out.push(`> ${a}`); } // Listen in Antworten bleiben Listen
         }
         if (j < lines.length && lines[j].trim() !== '') out.push('');
         i = j - 1;
         continue;
       }
       const a = /^\s*!(?!\[)\s?(.*)$/.exec(line);
-      if (a) { out.push(`> **Antwort:** ${inline(a[1].trim(), resolveLink, resolveAttachment)}`); continue; }
+      if (a) { out.push(`> **${t('Antwort')}:** ${inline(a[1].trim(), resolveLink, resolveAttachment)}`); continue; }
       out.push(inline(line, resolveLink, resolveAttachment));
     }
     return out.join('\n').trim();
@@ -103,26 +104,26 @@
   async function metaLines(backend, node, note) {
     const lines = [];
     const path = pathTitles(node);
-    if (path.length) lines.push(`*Pfad: ${path.join(' › ')}*  `);
-    lines.push(`*Erstellt ${fmtDate(note.created_at)} · Geändert ${fmtDate(note.updated_at)}${note.archived_at ? ' · Archiviert ' + fmtDate(note.archived_at) : ''}*  `);
+    if (path.length) lines.push(`*${t('Pfad: {pfad}', { pfad: path.join(' › ') })}*  `);
+    lines.push(`*${t('Erstellt {erstellt} · Geändert {geaendert}', { erstellt: fmtDate(note.created_at), geaendert: fmtDate(note.updated_at) })}${note.archived_at ? ' · ' + t('Archiviert {datum}', { datum: fmtDate(note.archived_at) }) : ''}*  `);
     const tags = await backend.getTags(node.id);
-    if (tags.length) lines.push(`*Tags: ${tags.join(', ')}*  `);
+    if (tags.length) lines.push(`*${t('Tags: {tags}', { tags: tags.join(', ') })}*  `);
     return lines;
   }
 
   function tocLines(nodes, hrefOf) {
-    return nodes.map(n => `${'  '.repeat(n.depth - 1)}- [${n.title.trim() || 'Ohne Titel'}](${hrefOf(n)})${n.archived_at ? ' *(archiviert)*' : ''}`);
+    return nodes.map(n => `${'  '.repeat(n.depth - 1)}- [${n.title.trim() || t('Ohne Titel')}](${hrefOf(n)})${n.archived_at ? ' *(' + t('archiviert') + ')*' : ''}`);
   }
 
   async function openQuestionLines(backend, nodes, hrefOf, archived) {
     const D = global.NoNotesDates;
     const byId = new Map(nodes.map(n => [n.id, n]));
     const rows = await backend.listQuestions({ status: 'open', sort: 'due', archived });
-    if (!rows.length) return ['Keine offenen Fragen.'];
+    if (!rows.length) return [t('Keine offenen Fragen.')];
     return rows.map(r => {
       const n = byId.get(r.note_id);
-      const due = r.due && D ? ` (bis ${D.formatDue(r.due)})` : '';
-      return n ? `- ${r.text}${due} — aus [${n.title.trim() || 'Ohne Titel'}](${hrefOf(n)})` : `- ${r.text}${due}`;
+      const due = r.due && D ? ' (' + t('bis {datum}', { datum: D.formatDue(r.due) }) + ')' : '';
+      return n ? `- ${r.text}${due} — ${t('aus')} [${n.title.trim() || t('Ohne Titel')}](${hrefOf(n)})` : `- ${r.text}${due}`;
     });
   }
 
@@ -130,11 +131,11 @@
     const T = global.NoNotesTasks;
     const byId = new Map(nodes.map(n => [n.id, n]));
     const rows = await backend.listTasks({ status: 'open', sort: 'due', archived });
-    if (!rows.length) return ['Keine offenen Aufgaben.'];
+    if (!rows.length) return [t('Keine offenen Aufgaben.')];
     return rows.map(r => {
       const n = byId.get(r.note_id);
-      const due = (r.due ? ` (bis ${T.formatDue(r.due)})` : '') + (r.parent_text ? ` · Teil von „${r.parent_text}“` : '');
-      return n ? `- [ ] ${r.text}${due} — aus [${n.title.trim() || 'Ohne Titel'}](${hrefOf(n)})` : `- [ ] ${r.text}${due}`;
+      const due = (r.due ? ' (' + t('bis {datum}', { datum: T.formatDue(r.due) }) + ')' : '') + (r.parent_text ? ' · ' + t('Teil von „{aufgabe}“', { aufgabe: r.parent_text }) : '');
+      return n ? `- [ ] ${r.text}${due} — ${t('aus')} [${n.title.trim() || t('Ohne Titel')}](${hrefOf(n)})` : `- [ ] ${r.text}${due}`;
     });
   }
 
@@ -143,7 +144,7 @@
     return [
       `# ${title}`,
       '',
-      `*Exportiert am ${fmtDate(new Date().toISOString())} mit NoNotes ${version || ''}*`.trim(),
+      `*${t('Exportiert am {datum} mit NoNotes {version}', { datum: fmtDate(new Date().toISOString()), version: version || '' })}*`.trim(),
       '',
       '![Mindmap](mindmap.svg)',
       '',
@@ -176,37 +177,37 @@
     if (mode === 'folder') {
       const hrefFromIndex = n => `notes/${n.slug}.md`;
       const hrefFromNote = n => `${n.slug}.md`;
-      const resolveFromNote = title => { const t = byTitle.get(title.toLowerCase()); return t ? hrefFromNote(t) : null; };
+      const resolveFromNote = title => { const target = byTitle.get(title.toLowerCase()); return target ? hrefFromNote(target) : null; };
       const index = await header(backend, options.version);
       index.push('## Inhalt', '');
-      index.push(...(nodes.length ? tocLines(nodes, hrefFromIndex) : ['Noch keine Notizen.']));
-      index.push('', '## Offene Fragen', '', ...await openQuestionLines(backend, nodes, hrefFromIndex, archived), '');
-      index.push('## Offene Aufgaben', '', ...await openTaskLines(backend, nodes, hrefFromIndex, archived), '');
+      index.push(...(nodes.length ? tocLines(nodes, hrefFromIndex) : [t('Noch keine Notizen.')]));
+      index.push('', '## ' + t('Offene Fragen'), '', ...await openQuestionLines(backend, nodes, hrefFromIndex, archived), '');
+      index.push('## ' + t('Offene Aufgaben'), '', ...await openTaskLines(backend, nodes, hrefFromIndex, archived), '');
       files.push({ path: 'index.md', data: index.join('\n') });
       for (const n of nodes) {
         const note = await backend.getNote(n.id);
-        const lines = [`# ${n.title.trim() || 'Ohne Titel'}`, '', ...await metaLines(backend, n, note), ''];
+        const lines = [`# ${n.title.trim() || t('Ohne Titel')}`, '', ...await metaLines(backend, n, note), ''];
         const body = bodyToMarkdown(note.body, resolveFromNote, attFrom('../'));
         if (body) lines.push(body, '');
         if (n.children.length) {
           lines.push('---', '', '**Unternotizen**', '');
-          for (const c of n.children) lines.push(`- [${c.title.trim() || 'Ohne Titel'}](${hrefFromNote(c)})`);
+          for (const c of n.children) lines.push(`- [${c.title.trim() || t('Ohne Titel')}](${hrefFromNote(c)})`);
           lines.push('');
         }
         files.push({ path: `notes/${n.slug}.md`, data: lines.join('\n') });
       }
     } else {
       const anchorOf = n => `#${n.slug}`;
-      const resolve = title => { const t = byTitle.get(title.toLowerCase()); return t ? anchorOf(t) : null; };
+      const resolve = title => { const target = byTitle.get(title.toLowerCase()); return target ? anchorOf(target) : null; };
       const doc = await header(backend, options.version);
       doc.push('## Inhalt', '');
-      doc.push(...(nodes.length ? tocLines(nodes, anchorOf) : ['Noch keine Notizen.']));
-      doc.push('', '## Offene Fragen', '', ...await openQuestionLines(backend, nodes, anchorOf, archived), '');
-      doc.push('## Offene Aufgaben', '', ...await openTaskLines(backend, nodes, anchorOf, archived), '');
+      doc.push(...(nodes.length ? tocLines(nodes, anchorOf) : [t('Noch keine Notizen.')]));
+      doc.push('', '## ' + t('Offene Fragen'), '', ...await openQuestionLines(backend, nodes, anchorOf, archived), '');
+      doc.push('## ' + t('Offene Aufgaben'), '', ...await openTaskLines(backend, nodes, anchorOf, archived), '');
       for (const n of nodes) {
         const note = await backend.getNote(n.id);
         const level = Math.min(6, n.depth + 1);
-        doc.push('---', '', `<a id="${n.slug}"></a>`, '', `${'#'.repeat(level)} ${n.title.trim() || 'Ohne Titel'}`, '', ...await metaLines(backend, n, note), '');
+        doc.push('---', '', `<a id="${n.slug}"></a>`, '', `${'#'.repeat(level)} ${n.title.trim() || t('Ohne Titel')}`, '', ...await metaLines(backend, n, note), '');
         const body = bodyToMarkdown(note.body, resolve, attFrom(''));
         if (body) doc.push(body, '');
       }
@@ -232,7 +233,7 @@
       const img = new Image();
       await new Promise((resolve, reject) => {
         img.onload = () => resolve();
-        img.onerror = () => reject(new Error('Die Mindmap konnte nicht als Bild gerendert werden.'));
+        img.onerror = () => reject(new Error(t('Die Mindmap konnte nicht als Bild gerendert werden.')));
         img.src = url;
       });
       const m = /width="(\d+)" height="(\d+)"/.exec(svgString);
@@ -246,7 +247,7 @@
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.scale(k, k);
       ctx.drawImage(img, 0, 0);
-      const png = await new Promise((resolve, reject) => canvas.toBlob(b => b ? resolve(b) : reject(new Error('PNG konnte nicht erzeugt werden.')), 'image/png'));
+      const png = await new Promise((resolve, reject) => canvas.toBlob(b => b ? resolve(b) : reject(new Error(t('PNG konnte nicht erzeugt werden.'))), 'image/png'));
       return new Uint8Array(await png.arrayBuffer());
     } finally {
       URL.revokeObjectURL(url);

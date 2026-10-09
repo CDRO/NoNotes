@@ -9,6 +9,8 @@
 (function (global) {
   'use strict';
 
+  const { t, tn } = global.NoNotesI18n;
+
   const TASK_RE = /^(\s*)([-*+]|\d+[.)])\s+\[([ xX])\]\s+(.*)$/;
   const D = () => global.NoNotesDates;
 
@@ -65,12 +67,12 @@
   }
 
   function indexOfLine(parsed, lineIndex) {
-    return parsed.findIndex(t => t.lineIndex === lineIndex);
+    return parsed.findIndex(p => p.lineIndex === lineIndex);
   }
 
   /** Hinweistext, wenn eine Aufgabe wegen offener Unteraufgaben nicht abgeschlossen werden kann. */
   function openMessage(n) {
-    return `${n} ${n === 1 ? 'Unteraufgabe ist' : 'Unteraufgaben sind'} noch offen`;
+    return tn('{n} Unteraufgabe ist noch offen', '{n} Unteraufgaben sind noch offen', n);
   }
 
   /** Anzahl noch offener Unteraufgaben der Aufgabe in dieser Zeile. */
@@ -129,9 +131,9 @@
   /** Findet die Aufgabe zu einem Indexeintrag: zuerst über die Zeile, sonst über den Text. */
   function locate(body, row) {
     const parsed = parse(body);
-    let t = parsed.find(p => p.lineIndex === row.line_no && p.norm === row.norm);
-    if (!t) t = parsed.find(p => p.norm === row.norm);
-    return t || null;
+    let found = parsed.find(p => p.lineIndex === row.line_no && p.norm === row.norm);
+    if (!found) found = parsed.find(p => p.norm === row.norm);
+    return found || null;
   }
 
   const splitDue = raw => D().splitDue(raw);

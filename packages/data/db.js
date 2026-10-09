@@ -4,9 +4,18 @@
   'use strict';
 
   const SCHEMA_VERSION = 10;
-  const DEFAULT_MAP_TITLE = 'Meine Notizen';
+  let defaultMapTitle = 'Meine Notizen'; // Anfangswert; die Ausprägung setzt ihn über configure() in der Sprache der Oberfläche
 
   function nowIso() { return new Date().toISOString(); }
+
+  /** Fehler mit Kennung. Die Oberfläche übersetzt über die Kennung (NoNotesBackend.errorText); die deutsche
+   *  Meldung dient nur als Rückfall und für Protokolle. params sind JSON-sichere Werte für Platzhalter. */
+  function fail(code, message, params) {
+    const err = new Error(message);
+    err.code = code;
+    if (params) err.params = params;
+    return err;
+  }
 
   // Alle Zeilen einer Abfrage als Objekte. Statement wird immer freigegeben.
   function selectAll(db, sql, params) {
@@ -122,7 +131,7 @@
     `);
     setMeta(db, 'schema_version', SCHEMA_VERSION);
     setMeta(db, 'created_at', nowIso());
-    setMeta(db, 'map_title', DEFAULT_MAP_TITLE);
+    setMeta(db, 'map_title', defaultMapTitle);
   }
 
   /** Fügt der Aufgabentabelle die Spalten für Unteraufgaben hinzu, falls sie fehlen (ältere Datenbanken). */
@@ -152,7 +161,7 @@
       // Bestehende Notizen hängen an der Wurzel, in der Reihenfolge ihres Entstehens.
       selectAll(db, 'SELECT id FROM notes ORDER BY created_at, id')
         .forEach((row, i) => db.run('UPDATE notes SET sort_order = ? WHERE id = ?', [i, row.id]));
-      if (getMeta(db, 'map_title') == null) setMeta(db, 'map_title', DEFAULT_MAP_TITLE);
+      if (getMeta(db, 'map_title') == null) setMeta(db, 'map_title', defaultMapTitle);
       version = 2;
     }
 
@@ -266,11 +275,11 @@
       if (!tables.length) {
         createSchema(db);
       } else if (!tables.some(t => t.name === 'notes')) {
-        throw new Error('Diese SQLite-Datei stammt nicht von NoNotes (keine Tabelle "notes").');
+        throw fail('NOT_NONOTES_FILE', 'Diese SQLite-Datei stammt nicht von NoNotes (keine Tabelle "notes").');
       } else {
         const version = hasTable(db, 'meta') ? Number(getMeta(db, 'schema_version') || 1) : 1;
         if (version > SCHEMA_VERSION) {
-          throw new Error(`Diese Datenbank hat Schema-Version ${version}, diese App versteht nur bis ${SCHEMA_VERSION}. Bitte App aktualisieren.`);
+          throw fail('SCHEMA_TOO_NEW', `Diese Datenbank hat Schema-Version ${version}, diese App versteht nur bis ${SCHEMA_VERSION}. Bitte App aktualisieren.`, { version, unterstuetzt: SCHEMA_VERSION });
         }
         if (version < SCHEMA_VERSION) migrate(db);
       }
@@ -390,7 +399,7 @@
   function createNote(db, parentId) {
     const ts = nowIso();
     const pid = parentId == null ? null : parentId;
-    if (pid != null && isArchived(db, pid)) throw new Error('Unter einer archivierten Notiz lässt sich nichts anlegen.');
+    if (pid != null && isArchived(db, pid)) throw fail('ARCHIVED_NO_CHILD', 'Unter einer archivierten Notiz lässt sich nichts anlegen.');
     db.run(
       "INSERT INTO notes (title, body, created_at, updated_at, parent_id, sort_order) VALUES ('', '', ?, ?, ?, ?)",
       [ts, ts, pid, nextSortOrder(db, pid)]);
@@ -426,9 +435,9 @@
   /** Hängt eine Notiz samt Unterbaum an einen anderen Knoten (null = Wurzel). */
   function setParent(db, id, parentId) {
     const pid = parentId == null ? null : parentId;
-    if (isArchived(db, id) || (pid != null && isArchived(db, pid))) throw new Error('Archivierte Notizen lassen sich nicht umhängen.');
+    if (isArchived(db, id) || (pid != null && isArchived(db, pid))) throw fail('ARCHIVED_NO_MOVE', 'Archivierte Notizen lassen sich nicht umhängen.');
     if (pid != null && isDescendantOf(db, pid, id)) {
-      throw new Error('Eine Notiz kann nicht unter sich selbst hängen.');
+      throw fail('MOVE_INTO_SELF', 'Eine Notiz kann nicht unter sich selbst hängen.');
     }
     db.run('UPDATE notes SET parent_id = ?, sort_order = ?, updated_at = ? WHERE id = ?',
       [pid, nextSortOrder(db, pid), nowIso(), id]);
@@ -439,11 +448,11 @@
   function moveNote(db, id, anchorId, where) {
     if (id === anchorId) return;
     const anchor = getNote(db, anchorId);
-    if (!anchor || anchor.deleted_at) throw new Error('Zielnotiz nicht gefunden.');
-    if (isArchived(db, id) || anchor.archived_at) throw new Error('Archivierte Notizen lassen sich nicht umhängen.');
+    if (!anchor || anchor.deleted_at) throw fail('TARGET_NOT_FOUND', 'Zielnotiz nicht gefunden.');
+    if (isArchived(db, id) || anchor.archived_at) throw fail('ARCHIVED_NO_MOVE', 'Archivierte Notizen lassen sich nicht umhängen.');
     const pid = anchor.parent_id == null ? null : anchor.parent_id;
     if (pid != null && isDescendantOf(db, pid, id)) {
-      throw new Error('Eine Notiz kann nicht unter sich selbst hängen.');
+      throw fail('MOVE_INTO_SELF', 'Eine Notiz kann nicht unter sich selbst hängen.');
     }
     const siblings = selectAll(db,
       pid == null
@@ -451,7 +460,7 @@
         : 'SELECT id FROM notes WHERE parent_id = ? AND deleted_at IS NULL ORDER BY sort_order, id',
       pid == null ? undefined : [pid]).map(r => r.id).filter(sid => sid !== id);
     const idx = siblings.indexOf(anchorId);
-    if (idx < 0) throw new Error('Zielnotiz nicht gefunden.');
+    if (idx < 0) throw fail('TARGET_NOT_FOUND', 'Zielnotiz nicht gefunden.');
     siblings.splice(where === 'after' ? idx + 1 : idx, 0, id);
     db.run('UPDATE notes SET parent_id = ?, updated_at = ? WHERE id = ?', [pid, nowIso(), id]);
     siblings.forEach((sid, i) => db.run('UPDATE notes SET sort_order = ? WHERE id = ?', [i, sid]));
@@ -701,11 +710,11 @@
   function locateTask(db, taskId) {
     const T = global.NoNotesTasks;
     const row = getTask(db, taskId);
-    if (!row) throw new Error('Aufgabe nicht gefunden.');
+    if (!row) throw fail('TASK_NOT_FOUND', 'Aufgabe nicht gefunden.');
     const note = getNote(db, row.note_id);
-    if (!note) throw new Error('Notiz nicht gefunden.');
+    if (!note) throw fail('NOTE_NOT_FOUND', 'Notiz nicht gefunden.');
     const t = T.locate(note.body, row);
-    if (!t) throw new Error('Die Aufgabe steht nicht mehr so im Text.');
+    if (!t) throw fail('TASK_STALE', 'Die Aufgabe steht nicht mehr so im Text.');
     return { note, line: t.lineIndex };
   }
 
@@ -934,11 +943,11 @@
   function answerQuestion(db, questionId, answerText) {
     const Q = global.NoNotesQuestions;
     const row = getQuestion(db, questionId);
-    if (!row) throw new Error('Frage nicht gefunden.');
+    if (!row) throw fail('QUESTION_NOT_FOUND', 'Frage nicht gefunden.');
     const note = getNote(db, row.note_id);
-    if (!note) throw new Error('Notiz nicht gefunden.');
+    if (!note) throw fail('NOTE_NOT_FOUND', 'Notiz nicht gefunden.');
     const q = Q.locate(note.body, row);
-    if (!q) throw new Error('Die Frage steht nicht mehr so im Text.');
+    if (!q) throw fail('QUESTION_STALE', 'Die Frage steht nicht mehr so im Text.');
     const body = Q.writeAnswer(note.body, q, answerText);
     updateNote(db, note.id, note.title, body);
     return note.id;
@@ -950,12 +959,17 @@
     return scalar(db, `SELECT count(*) FROM notes WHERE deleted_at IS NULL${live}`);
   }
 
+  /** Einstellungen der Ausprägung: defaultMapTitle (Titel einer neuen Mindmap, in der Sprache der Oberfläche). */
+  function configure(options) {
+    if (options && typeof options.defaultMapTitle === 'string' && options.defaultMapTitle.trim()) defaultMapTitle = options.defaultMapTitle.trim();
+  }
+
   function getMapTitle(db) {
-    return getMeta(db, 'map_title') || DEFAULT_MAP_TITLE;
+    return getMeta(db, 'map_title') || defaultMapTitle;
   }
 
   function setMapTitle(db, title) {
-    setMeta(db, 'map_title', (title || '').trim() || DEFAULT_MAP_TITLE);
+    setMeta(db, 'map_title', (title || '').trim() || defaultMapTitle);
   }
 
   /** Datenbank als Bytes (echte SQLite-Datei). */
@@ -967,7 +981,7 @@
 
   global.NoNotesDB = {
     SCHEMA_VERSION,
-    DEFAULT_MAP_TITLE,
+    configure,
     open,
     listNotes,
     getTree,

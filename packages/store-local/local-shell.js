@@ -17,6 +17,7 @@
   const I18n = global.NoNotesI18n;
   const t = I18n.t;
   const tn = I18n.tn;
+  const errorText = e => global.NoNotesBackend.errorText(e);
 
   const DEFAULT_FILENAME = 'NoNotes.sqlite';
   const SAVE_DELAY_MS = 600;
@@ -62,6 +63,7 @@
         throw new Error(t('SQLite konnte nicht geladen werden.') + '\n' + (e && e.message ? e.message : e));
       }
 
+      DB.configure({ defaultMapTitle: t('Meine Notizen') });
       s.storageKind = await Store.browserStore.detect();
       if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
@@ -145,7 +147,7 @@
         } catch (e) {
           ok = false;
           console.warn('Browser-Speicher', e);
-          setStatus(t('Browser-Speicher nicht beschreibbar: {fehler}', { fehler: e.message }), 'error');
+          setStatus(t('Browser-Speicher nicht beschreibbar: {fehler}', { fehler: errorText(e) }), 'error');
         }
         if (s.fileHandle && s.filePermission === 'granted') {
           try {
@@ -153,7 +155,7 @@
           } catch (e) {
             ok = false;
             console.warn('Dateischreiben', e);
-            setStatus(t('Datei konnte nicht geschrieben werden: {fehler}', { fehler: e.message }), 'error');
+            setStatus(t('Datei konnte nicht geschrieben werden: {fehler}', { fehler: errorText(e) }), 'error');
           }
         }
         if (ok) {
@@ -163,7 +165,7 @@
       } catch (e) {
         ok = false;
         console.error(e);
-        setStatus(t('Speichern fehlgeschlagen: {fehler}', { fehler: e.message }), 'error');
+        setStatus(t('Speichern fehlgeschlagen: {fehler}', { fehler: errorText(e) }), 'error');
       } finally {
         s.saving = false;
         if (ok && s.editSeq !== seq) persistNow(); // zwischenzeitlich kam Neues
@@ -255,7 +257,7 @@
         setStatus(t('Mit „{name}“ verbunden', { name: handle.name }), 'saved');
       } catch (e) {
         console.error(e);
-        setStatus(t('Verbinden fehlgeschlagen: {fehler}', { fehler: e.message }), 'error');
+        setStatus(t('Verbinden fehlgeschlagen: {fehler}', { fehler: errorText(e) }), 'error');
       }
     }
 
@@ -291,7 +293,7 @@
       } catch (e) {
         if (isAbort(e)) return;
         console.error(e);
-        setStatus(t('Datei anlegen fehlgeschlagen: {fehler}', { fehler: e.message }), 'error');
+        setStatus(t('Datei anlegen fehlgeschlagen: {fehler}', { fehler: errorText(e) }), 'error');
       }
     }
 
@@ -315,7 +317,7 @@
       } catch (e) {
         if (isAbort(e)) return;
         console.error(e);
-        setStatus(t('Datei öffnen fehlgeschlagen: {fehler}', { fehler: e.message }), 'error');
+        setStatus(t('Datei öffnen fehlgeschlagen: {fehler}', { fehler: errorText(e) }), 'error');
       }
     }
 
@@ -365,7 +367,7 @@
         if (!isDirty()) setStatus(t('„{name}“ importiert', { name: file.name }), 'saved');
       } catch (e) {
         console.error(e);
-        setStatus(t('Import fehlgeschlagen: {fehler}', { fehler: e.message }), 'error');
+        setStatus(t('Import fehlgeschlagen: {fehler}', { fehler: errorText(e) }), 'error');
       } finally {
         el.importInput.value = '';
       }

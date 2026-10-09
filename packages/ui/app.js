@@ -17,6 +17,8 @@
   const T = window.NoNotesTasks;
   const Dates = window.NoNotesDates;
   const Cal = window.NoNotesCalendar;
+  const joinParts = (...parts) => parts.filter(Boolean).join(', ');
+  const errorText = e => Backend.errorText(e);
   const CAL_HANDLE_KEY = 'ics';
   const CAL_FILENAME = 'NoNotes.ics';
 
@@ -125,8 +127,8 @@
     return () => state.renderTokens[key] === n;
   }
 
-  const fmtDateTime = new Intl.DateTimeFormat('de-CH', { dateStyle: 'medium', timeStyle: 'short' });
-  const fmtTime = new Intl.DateTimeFormat('de-CH', { timeStyle: 'short' });
+  const fmtDateTime = new Intl.DateTimeFormat(I18n.locale(), { dateStyle: 'medium', timeStyle: 'short' });
+  const fmtTime = new Intl.DateTimeFormat(I18n.locale(), { timeStyle: 'short' });
 
   function fmtDate(iso) {
     const d = new Date(iso);
@@ -278,19 +280,20 @@
   async function updateCalDialog() {
     const c = await Cal.count(B, el.calIncludeDone.checked);
     el.calSummary.textContent = c.total === 0
-      ? 'Es gibt noch keine Aufgaben oder Fragen mit Termin.'
-      : `${c.total} ${c.total === 1 ? 'Termin' : 'Termine'}: ${c.open} offen`
-        + (c.cancelled ? `, ${c.cancelled} erledigt/beantwortet (als abgesagt)` : '')
-        + (c.removed ? `, ${c.removed} entfernt (als abgesagt)` : '');
+      ? t('Es gibt noch keine Aufgaben oder Fragen mit Termin.')
+      : joinParts(
+        tn('{n} Termin: {offen} offen', '{n} Termine: {offen} offen', c.total, { offen: c.open }),
+        c.cancelled ? t('{n} erledigt/beantwortet (als abgesagt)', { n: c.cancelled }) : '',
+        c.removed ? t('{n} entfernt (als abgesagt)', { n: c.removed }) : '');
     const fsa = Store.fileAccess.supported;
     el.calFileSet.hidden = !fsa;
     el.calWriteBtn.hidden = !fsa;
     el.calPickBtn.hidden = !fsa || !state.calHandle;
     if (fsa) {
       el.calFileInfo.textContent = state.calHandle
-        ? `Gemerkte Datei: „${state.calHandle.name}“. «Kalenderdatei aktualisieren» überschreibt sie mit dem aktuellen Stand.`
-        : 'Noch keine Kalenderdatei gemerkt. «Kalenderdatei anlegen…» fragt einmal nach dem Speicherort und merkt ihn sich.';
-      el.calWriteBtn.textContent = state.calHandle ? 'Kalenderdatei aktualisieren' : 'Kalenderdatei anlegen…';
+        ? t('Gemerkte Datei: „{name}“. «Kalenderdatei aktualisieren» überschreibt sie mit dem aktuellen Stand.', { name: state.calHandle.name })
+        : t('Noch keine Kalenderdatei gemerkt. «Kalenderdatei anlegen…» fragt einmal nach dem Speicherort und merkt ihn sich.');
+      el.calWriteBtn.textContent = state.calHandle ? t('Kalenderdatei aktualisieren') : t('Kalenderdatei anlegen…');
     }
     const disabled = c.total === 0;
     el.calWriteBtn.disabled = disabled;
@@ -320,7 +323,7 @@
         const r = await buildCalendar();
         Store.download(new TextEncoder().encode(r.ics), CAL_FILENAME);
         closeCalDialog();
-        setStatus(`Kalenderdatei heruntergeladen: ${r.total} Termine (Version ${r.sequence})`, 'dirty');
+        setStatus(t('Kalenderdatei heruntergeladen: {gesamt} Termine (Version {version})', { gesamt: r.total, version: r.sequence }), 'dirty');
         return;
       }
       let handle = state.calHandle;
@@ -328,7 +331,7 @@
         handle = await Store.fileAccess.pickNew(CAL_FILENAME, Store.fileAccess.ICS_TYPES);
       }
       const perm = await Store.fileAccess.permission(handle, true);
-      if (perm !== 'granted') { setStatus('Kein Schreibzugriff auf die Kalenderdatei', 'error'); return; }
+      if (perm !== 'granted') { setStatus(t('Kein Schreibzugriff auf die Kalenderdatei'), 'error'); return; }
       const r = await buildCalendar();
       await Store.fileAccess.write(handle, new TextEncoder().encode(r.ics));
       if (handle !== state.calHandle) {
@@ -337,11 +340,11 @@
         catch (e) { console.warn('Kalenderdatei kann nicht gemerkt werden', e); }
       }
       closeCalDialog();
-      setStatus(`Kalenderdatei „${handle.name}“ aktualisiert: ${r.total} Termine (Version ${r.sequence})`, 'dirty');
+      setStatus(t('Kalenderdatei „{name}“ aktualisiert: {gesamt} Termine (Version {version})', { name: handle.name, gesamt: r.total, version: r.sequence }), 'dirty');
     } catch (e) {
       if (isAbort(e)) return;
       console.error(e);
-      setStatus('Kalenderexport fehlgeschlagen: ' + e.message, 'error');
+      setStatus(t('Kalenderexport fehlgeschlagen: {fehler}', { fehler: errorText(e) }), 'error');
     }
   }
 
@@ -351,7 +354,7 @@
     closeMenu();
     el.exportDirBtn.hidden = typeof window.showDirectoryPicker !== 'function';
     el.exportHint.textContent = el.exportDirBtn.hidden
-      ? 'Dieser Browser kann nicht direkt in Ordner schreiben; das ZIP enthält dieselben Dateien.'
+      ? t('Dieser Browser kann nicht direkt in Ordner schreiben; das ZIP enthält dieselben Dateien.')
       : '';
     if (typeof el.exportDialog.showModal === 'function') el.exportDialog.showModal();
     else el.exportDialog.setAttribute('open', '');
@@ -363,7 +366,7 @@
 
   async function runExport(target) {
     const mode = (el.exportForm.querySelector('input[name="exportMode"]:checked') || {}).value || 'folder';
-    el.exportHint.textContent = 'Export wird vorbereitet…';
+    el.exportHint.textContent = t('Export wird vorbereitet…');
     el.exportDirBtn.disabled = true;
     el.exportZipBtn.disabled = true;
     try {
@@ -378,17 +381,17 @@
         const dir = await window.showDirectoryPicker({ mode: 'readwrite' });
         await Exporter.writeToDirectory(dir, files);
         closeExportDialog();
-        setStatus(`Export gespeichert: ${n} Dateien in „${dir.name}“` + (png ? '' : ' (ohne PNG)'), saveState());
+        setStatus(t('Export gespeichert: {n} Dateien in „{name}“', { n, name: dir.name }) + (png ? '' : ' (ohne PNG)'), saveState());
       } else {
         const bytes = Zip.create(files);
         Store.download(bytes, await Exporter.suggestedZipName(B));
         closeExportDialog();
-        setStatus(`Export als ZIP heruntergeladen (${n} Dateien)` + (png ? '' : ', ohne PNG'), saveState());
+        setStatus(t('Export als ZIP heruntergeladen ({n} Dateien)', { n }) + (png ? '' : ', ohne PNG'), saveState());
       }
     } catch (e) {
       if (isAbort(e)) { el.exportHint.textContent = ''; return; }
       console.error(e);
-      el.exportHint.textContent = 'Export fehlgeschlagen: ' + e.message;
+      el.exportHint.textContent = t('Export fehlgeschlagen: {fehler}', { fehler: errorText(e) });
     } finally {
       el.exportDirBtn.disabled = false;
       el.exportZipBtn.disabled = false;
@@ -450,12 +453,12 @@
   async function renderTaskCounts() {
     const c = await B.countTasks(Dates.nowIso());
     el.viewTasksBtn.replaceChildren();
-    el.viewTasksBtn.append('Aufgaben');
+    el.viewTasksBtn.append(t('Aufgaben'));
     if (c.open > 0) {
       const b = document.createElement('span');
       b.className = 'count tasks' + (c.overdue > 0 ? ' overdue' : '');
       b.textContent = String(c.open);
-      b.title = (c.open === 1 ? '1 offene Aufgabe' : `${c.open} offene Aufgaben`) + (c.overdue ? `, ${c.overdue} überfällig` : '');
+      b.title = joinParts(tn('{n} offene Aufgabe', '{n} offene Aufgaben', c.open), c.overdue ? t('{n} überfällig', { n: c.overdue }) : '');
       el.viewTasksBtn.appendChild(b);
     }
   }
@@ -466,7 +469,7 @@
       const frag = document.createDocumentFragment();
       const all = document.createElement('option');
       all.value = '';
-      all.textContent = 'Alle Tags';
+      all.textContent = t('Alle Tags');
       frag.appendChild(all);
       for (const tag of tags) {
         const o = document.createElement('option');
@@ -492,12 +495,12 @@
   async function renderQuestionCounts() {
     const c = await B.countQuestions(Dates.nowIso());
     el.viewQuestionsBtn.replaceChildren();
-    el.viewQuestionsBtn.append('Fragen');
+    el.viewQuestionsBtn.append(t('Fragen'));
     if (c.open > 0) {
       const b = document.createElement('span');
       b.className = 'count' + (c.overdue > 0 ? ' q-overdue' : '');
       b.textContent = String(c.open);
-      b.title = (c.open === 1 ? '1 offene Frage' : `${c.open} offene Fragen`) + (c.overdue ? `, ${c.overdue} überfällig` : '');
+      b.title = joinParts(tn('{n} offene Frage', '{n} offene Fragen', c.open), c.overdue ? t('{n} überfällig', { n: c.overdue }) : '');
       el.viewQuestionsBtn.appendChild(b);
     }
   }
@@ -515,7 +518,7 @@
       // Treffer im Archiv werden samt ihren archivierten Vorfahren eingeblendet, auch bei ausgeblendetem Archiv.
       if (!reveal) { const archivedHits = hits.filter(r => r.archived_at).map(r => r.id); if (archivedHits.length) reveal = archivedHits; }
       el.mapMatches.hidden = false;
-      el.mapMatches.textContent = state.mapMatches.length === 1 ? '1 Treffer' : `${state.mapMatches.length} Treffer`;
+      el.mapMatches.textContent = tn('{n} Treffer', '{n} Treffer', state.mapMatches.length);
     } else {
       state.mapMatches = [];
       state.mapMatchIndex = -1;
@@ -544,7 +547,7 @@
   async function renderArchiveButton() {
     const n = await B.countArchived();
     el.mapArchiveBtn.setAttribute('aria-pressed', String(state.showArchive));
-    el.mapArchiveBtn.textContent = (state.showArchive ? 'Archiv ausblenden' : 'Archiv anzeigen') + (n ? ` (${n})` : '');
+    el.mapArchiveBtn.textContent = (state.showArchive ? t('Archiv ausblenden') : t('Archiv anzeigen')) + (n ? ` (${n})` : '');
   }
 
   async function toggleArchiveView() {
@@ -567,7 +570,7 @@
   function renderMulti() {
     const n = state.multi.size;
     el.multiBar.hidden = n === 0 || state.view === 'questions' || state.view === 'tasks';
-    el.multiCount.textContent = n === 1 ? '1 Notiz ausgewählt' : `${n} Notizen ausgewählt`;
+    el.multiCount.textContent = tn('{n} Notiz ausgewählt', '{n} Notizen ausgewählt', n);
     if (state.map) state.map.setMulti(state.multi);
     for (const li of el.list.children) li.classList.toggle('multi', state.multi.has(Number(li.dataset.id)));
   }
@@ -610,17 +613,17 @@
     const archived = el.printArchive.checked;
     const noteId = state.printNoteId;
     const note = noteId != null ? await B.getNote(noteId) : null;
-    const title = note ? (note.title.trim() || 'Ohne Titel') : null;
+    const title = note ? (note.title.trim() || t('Ohne Titel')) : null;
     const sub = noteId != null ? await subtreeCount(noteId, archived) : 0;
     const total = archived ? await B.countNotes() : await B.countNotes({ archived: false });
     const radios = Object.fromEntries([...el.printForm.querySelectorAll('input[name="printScope"]')].map(r => [r.value, r]));
     radios.current.disabled = !note;
     radios.subtree.disabled = !note || sub <= 1;
     radios.selection.disabled = state.multi.size === 0;
-    el.printScopeCurrent.textContent = note ? `Diese Notiz: „${title}“` : 'Diese Notiz';
-    el.printScopeSubtree.textContent = note ? `„${title}“ mit Unternotizen (${sub})` : 'Diese Notiz mit Unternotizen';
-    el.printScopeSelection.textContent = state.multi.size ? `Ausgewählte Notizen (${state.multi.size})` : 'Ausgewählte Notizen (keine Auswahl)';
-    el.printScopeAll.textContent = `Alle Notizen (${total})`;
+    el.printScopeCurrent.textContent = note ? t('Diese Notiz: „{titel}“', { titel: title }) : t('Diese Notiz');
+    el.printScopeSubtree.textContent = note ? t('„{titel}“ mit Unternotizen ({anzahl})', { titel: title, anzahl: sub }) : t('Diese Notiz mit Unternotizen');
+    el.printScopeSelection.textContent = state.multi.size ? t('Ausgewählte Notizen ({anzahl})', { anzahl: state.multi.size }) : t('Ausgewählte Notizen (keine Auswahl)');
+    el.printScopeAll.textContent = t('Alle Notizen ({gesamt})', { gesamt: total });
     return sub;
   }
 
@@ -650,8 +653,11 @@
     hideContextMenu();
     closeMenu();
     const shown = (await B.listQuestions({ status: state.qStatus, query: state.qQuery, tag: state.qTag })).length;
-    const label = state.qStatus === 'open' ? 'offene' : state.qStatus === 'answered' ? 'beantwortete' : 'alle';
-    el.qaScopeFiltered.textContent = `Wie angezeigt: ${label} Fragen${state.qTag ? `, Tag „${state.qTag}“` : ''}${state.qQuery.trim() ? `, Suche „${state.qQuery.trim()}“` : ''} (${shown})`;
+    const label = state.qStatus === 'open' ? t('offene Fragen') : state.qStatus === 'answered' ? t('beantwortete Fragen') : t('alle Fragen');
+    el.qaScopeFiltered.textContent = t('Wie angezeigt: {filter} ({anzahl})', {
+      filter: joinParts(label, state.qTag ? t('Tag „{tag}“', { tag: state.qTag }) : '', state.qQuery.trim() ? t('Suche „{suche}“', { suche: state.qQuery.trim() }) : ''),
+      anzahl: shown,
+    });
     if (typeof el.qaPrintDialog.showModal === 'function') el.qaPrintDialog.showModal();
     else el.qaPrintDialog.setAttribute('open', '');
   }
@@ -686,7 +692,7 @@
     state.mapSelection = id;
     await renderMap();
     state.map.ensureVisible(id);
-    el.mapMatches.textContent = `Treffer ${state.mapMatchIndex + 1} von ${state.mapMatches.length}`;
+    el.mapMatches.textContent = t('Treffer {n} von {anzahl}', { n: state.mapMatchIndex + 1, anzahl: state.mapMatches.length });
   }
 
   /** Textausschnitt um den ersten Treffer herum, sonst Anfang des Textes. */
@@ -718,7 +724,7 @@
 
       const titleEl = document.createElement('div');
       titleEl.className = 'note-title';
-      titleEl.innerHTML = M.highlightText(n.title.trim() || 'Ohne Titel', q);
+      titleEl.innerHTML = M.highlightText(n.title.trim() || t('Ohne Titel'), q);
 
       const s = document.createElement('div');
       s.className = 'note-snippet';
@@ -726,8 +732,8 @@
 
       const d = document.createElement('div');
       d.className = 'note-date';
-      d.textContent = trash && n.deleted_at ? `Gelöscht ${fmtDate(n.deleted_at)}`
-        : n.archived_at ? `Archiviert ${fmtDate(n.archived_at)}` : fmtDate(n.updated_at);
+      d.textContent = trash && n.deleted_at ? t('Gelöscht {datum}', { datum: fmtDate(n.deleted_at) })
+        : n.archived_at ? t('Archiviert {datum}', { datum: fmtDate(n.archived_at) }) : fmtDate(n.updated_at);
 
       li.append(titleEl, s, d);
       if (n.tags) {
@@ -747,10 +753,10 @@
 
     const empty = notes.length === 0;
     el.listEmpty.hidden = !empty;
-    el.listEmpty.textContent = q || state.tagFilter ? 'Keine Treffer.'
-      : trash ? 'Der Papierkorb ist leer.'
-      : state.listScope === 'archive' ? 'Das Archiv ist leer. Archivierte Notizen sind ausgeblendet, bleiben aber durchsuchbar.'
-      : 'Noch keine Notizen. Lege mit „Neue Notiz“ los.';
+    el.listEmpty.textContent = q || state.tagFilter ? t('Keine Treffer.')
+      : trash ? t('Der Papierkorb ist leer.')
+      : state.listScope === 'archive' ? t('Das Archiv ist leer. Archivierte Notizen sind ausgeblendet, bleiben aber durchsuchbar.')
+      : t('Noch keine Notizen. Lege mit „Neue Notiz“ los.');
     el.emptyTrashBtn.hidden = !(trash && trashCount > 0);
   }
 
@@ -783,7 +789,7 @@
     if (!isLatest()) return;
     el.trashBar.hidden = !trashed;
     el.archiveBar.hidden = !archived;
-    if (archived) el.archiveBarText.textContent = `Diese Notiz ist archiviert (seit ${fmtDate(note.archived_at)}) und schreibgeschützt.`;
+    if (archived) el.archiveBarText.textContent = t('Diese Notiz ist archiviert (seit {datum}) und schreibgeschützt.', { datum: fmtDate(note.archived_at) });
     el.editor.classList.toggle('readonly', locked);
     el.title.readOnly = locked;
     el.body.readOnly = locked;
@@ -804,8 +810,8 @@
       const x = document.createElement('button');
       x.type = 'button';
       x.textContent = '×';
-      x.title = `Tag „${name}“ entfernen`;
-      x.setAttribute('aria-label', `Tag ${name} entfernen`);
+      x.title = t('Tag „{name}“ entfernen', { name });
+      x.setAttribute('aria-label', t('Tag {name} entfernen', { name }));
       x.addEventListener('click', () => removeTag(name));
       chip.appendChild(x);
       return chip;
@@ -875,7 +881,7 @@
       const img = document.createElement('img');
       img.src = urls[i] || '';
       img.alt = a.name;
-      img.title = 'In den Text einfügen';
+      img.title = t('In den Text einfügen');
       img.addEventListener('click', () => insertAttachmentRef(a));
       const name = document.createElement('div');
       name.className = 'name';
@@ -885,12 +891,12 @@
       row.className = 'row';
       const ins = document.createElement('button');
       ins.type = 'button';
-      ins.textContent = 'Einfügen';
+      ins.textContent = t('Einfügen');
       ins.addEventListener('click', () => insertAttachmentRef(a));
       const del = document.createElement('button');
       del.type = 'button';
       del.className = 'danger';
-      del.textContent = 'Löschen';
+      del.textContent = t('Löschen');
       del.addEventListener('click', () => removeAttachment(a));
       if (readonly) { ins.disabled = true; del.disabled = true; }
       row.append(ins, del);
@@ -920,7 +926,7 @@
   }
 
   async function removeAttachment(a) {
-    if (!confirm(`Bild „${a.name}“ aus dieser Notiz entfernen? Verweise im Text zeigen danach ins Leere.`)) return;
+    if (!confirm(t('Bild „{name}“ aus dieser Notiz entfernen? Verweise im Text zeigen danach ins Leere.', { name: a.name }))) return;
     await B.deleteAttachment(a.id);
     forgetAttachmentUrl(a.id);
     await renderAttachments(state.currentId, false);
@@ -975,8 +981,8 @@
     const note = await B.getNote(state.currentId);
     if (!note || note.deleted_at || note.archived_at) return;
     const images = [...files].filter(f => f && f.type && f.type.startsWith('image/'));
-    if (!images.length) { setStatus('Nur Bilder können angehängt werden.', 'error'); return; }
-    setStatus(images.length === 1 ? 'Bild wird eingefügt…' : `${images.length} Bilder werden eingefügt…`, 'saving');
+    if (!images.length) { setStatus(t('Nur Bilder können angehängt werden.'), 'error'); return; }
+    setStatus(tn('Bild wird eingefügt…', '{n} Bilder werden eingefügt…', images.length), 'saving');
     try {
       for (const file of images) {
         const prepared = await prepareImage(file);
@@ -989,7 +995,7 @@
       markEdited();
     } catch (e) {
       console.error(e);
-      setStatus('Bild konnte nicht eingefügt werden: ' + e.message, 'error');
+      setStatus(t('Bild konnte nicht eingefügt werden: {fehler}', { fehler: errorText(e) }), 'error');
     }
   }
 
@@ -1068,7 +1074,7 @@
     el.body.value = r.body;
     await onEdit();
     await renderPreview();
-    hint(r.action === 'completed' ? 'Aufgabe mit allen Unteraufgaben erledigt' : 'Aufgabe wieder geöffnet');
+    hint(r.action === 'completed' ? t('Aufgabe mit allen Unteraufgaben erledigt') : t('Aufgabe wieder geöffnet'));
   }
 
   function schedulePreview() {
@@ -1084,7 +1090,7 @@
       e.preventDefault();
       if (a.dataset.noteId) { await openNote(Number(a.dataset.noteId)); return; }
       const title = a.dataset.title;
-      if (!confirm(`Es gibt keine Notiz „${title}“. Jetzt als Unternotiz anlegen?`)) return;
+      if (!confirm(t('Es gibt keine Notiz „{titel}“. Jetzt als Unternotiz anlegen?', { titel: title }))) return;
       const id = await B.createNote(state.currentId);
       await B.renameNote(id, title);
       markEdited();
@@ -1103,7 +1109,7 @@
     if (a.classList.contains('md-wiki')) {
       e.preventDefault();
       if (a.dataset.noteId) await openNote(Number(a.dataset.noteId));
-      else setStatus(`Es gibt keine Notiz „${a.dataset.title}“`, 'error');
+      else setStatus(t('Es gibt keine Notiz „{titel}“', { titel: a.dataset.title }), 'error');
     } else if (a.getAttribute('href') === '#') {
       e.preventDefault();
     }
@@ -1113,12 +1119,12 @@
     const parsed = Q.parse(body);
     const open = parsed.filter(q => !q.answer).length;
     el.noteQuestions.textContent = parsed.length === 0 ? ''
-      : open === 0 ? `${parsed.length === 1 ? '1 Frage' : parsed.length + ' Fragen'}, alle beantwortet`
-      : `${open === 1 ? '1 offene Frage' : open + ' offene Fragen'} von ${parsed.length}`;
+      : open === 0 ? tn('{n} Frage, alle beantwortet', '{n} Fragen, alle beantwortet', parsed.length)
+      : tn('{n} offene Frage von {gesamt}', '{n} offene Fragen von {gesamt}', open, { gesamt: parsed.length });
   }
 
   function renderMeta(createdAt, updatedAt) {
-    el.noteMeta.textContent = `Erstellt ${fmtDate(createdAt)} · Geändert ${fmtDate(updatedAt)}`;
+    el.noteMeta.textContent = t('Erstellt {erstellt} · Geändert {geaendert}', { erstellt: fmtDate(createdAt), geaendert: fmtDate(updatedAt) });
   }
 
   async function renderCrumbs(note) {
@@ -1138,30 +1144,30 @@
     add(await B.getMapTitle(), async () => {
       if (state.view === 'map') { await closeEditor(); state.mapSelection = 'root'; state.map.setSelected('root'); }
     });
-    for (const p of path) add(p.title.trim() || 'Ohne Titel', () => openNote(p.id));
+    for (const p of path) add(p.title.trim() || t('Ohne Titel'), () => openNote(p.id));
     el.crumbs.replaceChildren(frag);
   }
 
   async function renderCount() {
     if (state.listScope === 'trash') {
       const trash = await B.countTrash();
-      el.count.textContent = trash === 1 ? '1 Notiz im Papierkorb' : `${trash} Notizen im Papierkorb`;
+      el.count.textContent = tn('{n} Notiz im Papierkorb', '{n} Notizen im Papierkorb', trash);
       return;
     }
     if (state.listScope === 'archive') {
       const a = await B.countArchived();
-      el.count.textContent = a === 1 ? '1 Notiz im Archiv' : `${a} Notizen im Archiv`;
+      el.count.textContent = tn('{n} Notiz im Archiv', '{n} Notizen im Archiv', a);
       return;
     }
     const n = await B.countNotes({ archived: false });
     const a = await B.countArchived();
-    el.count.textContent = (n === 1 ? '1 Notiz' : `${n} Notizen`) + (a ? ` · ${a} im Archiv` : '');
+    el.count.textContent = tn('{n} Notiz', '{n} Notizen', n) + (a ? ' · ' + t('{n} im Archiv', { n: a }) : '');
   }
 
   async function updateListItem(id, title, body, ts) {
     const li = el.list.querySelector(`li[data-id="${id}"]`);
     if (!li) { await renderList(); return; }
-    li.querySelector('.note-title').textContent = title.trim() || 'Ohne Titel';
+    li.querySelector('.note-title').textContent = title.trim() || t('Ohne Titel');
     li.querySelector('.note-snippet').textContent = snippetOf(body) || '…';
     li.querySelector('.note-date').textContent = fmtDate(ts);
     if (el.list.firstElementChild !== li) el.list.prepend(li);
@@ -1245,7 +1251,7 @@
 
   async function newNoteInMap(parentId) {
     hideContextMenu();
-    if (parentId != null && await B.isArchived(parentId)) { hint('Unter einer archivierten Notiz lässt sich nichts anlegen. Erst zurückholen.'); return; }
+    if (parentId != null && await B.isArchived(parentId)) { hint(t('Unter einer archivierten Notiz lässt sich nichts anlegen. Erst zurückholen.')); return; }
     if (parentId != null) {
       const info = state.map.nodeInfo(parentId);
       if (info && info.collapsed) await B.setCollapsed(parentId, false);
@@ -1262,7 +1268,7 @@
   async function newChildOfCurrent() {
     if (state.currentId == null) return;
     const parentId = state.currentId;
-    if (await B.isArchived(parentId)) { hint('Unter einer archivierten Notiz lässt sich nichts anlegen. Erst zurückholen.'); return; }
+    if (await B.isArchived(parentId)) { hint(t('Unter einer archivierten Notiz lässt sich nichts anlegen. Erst zurückholen.')); return; }
     const id = await B.createNote(parentId);
     const info = state.map.nodeInfo(parentId);
     if (info && info.collapsed) await B.setCollapsed(parentId, false);
@@ -1387,7 +1393,7 @@
     const rows = await B.listQuestions({ status: state.qStatus, query: state.qQuery, tag: state.qTag, sort: state.qSort });
     const counts = await B.countQuestions(today);
     if (!isLatest()) return;
-    el.qCount.textContent = `${rows.length} von ${counts.total} · ${counts.open} offen` + (counts.overdue ? ` · ${counts.overdue} überfällig` : '');
+    el.qCount.textContent = t('{anzahl} von {gesamt} · {offen} offen', { anzahl: rows.length, gesamt: counts.total, offen: counts.open }) + (counts.overdue ? ' · ' + t('{n} überfällig', { n: counts.overdue }) : '');
 
     const groups = new Map();
     for (const r of rows) {
@@ -1395,7 +1401,7 @@
       const key = byDue ? (r.answer ? 'answered' : Dates.urgency(r.due, today)) : `n${r.note_id}`;
       if (!groups.has(key)) {
         groups.set(key, {
-          title: byDue ? Dates.URGENCY_LABELS[key] : (r.note_title.trim() || 'Ohne Titel'),
+          title: byDue ? Dates.urgencyLabel(key) : (r.note_title.trim() || t('Ohne Titel')),
           noteId: byDue ? null : r.note_id,
           cls: byDue ? `urgency-${key}` : '',
           items: [],
@@ -1414,14 +1420,14 @@
         const nb = document.createElement('button');
         nb.type = 'button';
         nb.textContent = g.title;
-        nb.title = 'Notiz öffnen';
+        nb.title = t('Notiz öffnen');
         nb.addEventListener('click', () => openNote(g.noteId));
         h.appendChild(nb);
       } else {
         h.append(g.title);
       }
       const cnt = document.createElement('span');
-      cnt.textContent = g.items.length === 1 ? '1 Frage' : `${g.items.length} Fragen`;
+      cnt.textContent = tn('{n} Frage', '{n} Fragen', g.items.length);
       h.appendChild(cnt);
       section.appendChild(h);
       for (const r of g.items) section.appendChild(renderQuestionItem(r, today, resolve));
@@ -1429,10 +1435,10 @@
     }
     el.qList.replaceChildren(frag);
     el.qEmpty.hidden = rows.length > 0;
-    el.qEmpty.textContent = state.qQuery || state.qTag ? 'Keine Treffer.'
-      : state.qStatus === 'open' ? 'Keine offenen Fragen. Eine Zeile, die mit „?“ beginnt, wird zur Frage, optional mit „@15.10.2026“ am Ende.'
-      : state.qStatus === 'answered' ? 'Noch keine beantworteten Fragen.'
-      : 'Noch keine Fragen. Eine Zeile, die mit „?“ beginnt, wird zur Frage.';
+    el.qEmpty.textContent = state.qQuery || state.qTag ? t('Keine Treffer.')
+      : state.qStatus === 'open' ? t('Keine offenen Fragen. Eine Zeile, die mit „?“ beginnt, wird zur Frage, optional mit „@15.10.2026“ am Ende.')
+      : state.qStatus === 'answered' ? t('Noch keine beantworteten Fragen.')
+      : t('Noch keine Fragen. Eine Zeile, die mit „?“ beginnt, wird zur Frage.');
   }
 
   function renderQuestionItem(r, today, resolve) {
@@ -1470,28 +1476,28 @@
     const answerBtn = document.createElement('button');
     answerBtn.type = 'button';
     answerBtn.className = r.answer ? '' : 'primary';
-    answerBtn.textContent = r.answer ? 'Antwort bearbeiten' : 'Beantworten';
+    answerBtn.textContent = r.answer ? t('Antwort bearbeiten') : t('Beantworten');
     answerBtn.addEventListener('click', () => openAnswerForm(item, r));
     const gotoBtn = document.createElement('button');
     gotoBtn.type = 'button';
     gotoBtn.className = 'ghost';
-    gotoBtn.textContent = 'Zur Notiz';
+    gotoBtn.textContent = t('Zur Notiz');
     gotoBtn.addEventListener('click', () => openNote(r.note_id, { line: r.line_no }));
     actions.append(answerBtn, gotoBtn);
     if (state.qSort === 'due') {
       const from = document.createElement('span');
       from.className = 't-note';
-      from.append('aus ');
+      from.append(t('aus') + ' ');
       const nb = document.createElement('button');
       nb.type = 'button';
-      nb.textContent = r.note_title.trim() || 'Ohne Titel';
+      nb.textContent = r.note_title.trim() || t('Ohne Titel');
       nb.addEventListener('click', () => openNote(r.note_id));
       from.appendChild(nb);
       actions.appendChild(from);
     }
     const meta = document.createElement('span');
     meta.className = 'q-meta';
-    meta.textContent = r.answer && r.answered_at ? `Beantwortet ${fmtDate(r.answered_at)}` : `Gestellt ${fmtDate(r.created_at)}`;
+    meta.textContent = r.answer && r.answered_at ? t('Beantwortet {datum}', { datum: fmtDate(r.answered_at) }) : t('Gestellt {datum}', { datum: fmtDate(r.created_at) });
     actions.appendChild(meta);
     item.appendChild(actions);
 
@@ -1499,17 +1505,17 @@
     form.className = 'q-form';
     form.hidden = true;
     const ta = document.createElement('textarea');
-    ta.placeholder = 'Antwort…';
-    ta.setAttribute('aria-label', 'Antwort');
+    ta.placeholder = t('Antwort…');
+    ta.setAttribute('aria-label', t('Antwort'));
     const row = document.createElement('div');
     row.className = 'row';
     const save = document.createElement('button');
     save.type = 'submit';
     save.className = 'primary';
-    save.textContent = 'Speichern';
+    save.textContent = t('Speichern');
     const cancel = document.createElement('button');
     cancel.type = 'button';
-    cancel.textContent = 'Abbrechen';
+    cancel.textContent = t('Abbrechen');
     cancel.addEventListener('click', () => { form.hidden = true; actions.hidden = false; state.qAnswering = null; state.qDraft = null; });
     row.append(save, cancel);
     form.append(ta, row);
@@ -1548,9 +1554,9 @@
       await renderQuestionCounts();
       await renderQuestions();
       if (state.currentId === noteId) await renderEditor();
-      setStatus(text.trim() ? 'Antwort gespeichert' : 'Antwort entfernt', 'dirty');
+      setStatus(text.trim() ? t('Antwort gespeichert') : t('Antwort entfernt'), 'dirty');
     } catch (e) {
-      setStatus('Antwort konnte nicht gespeichert werden: ' + e.message, 'error');
+      setStatus(t('Antwort konnte nicht gespeichert werden: {fehler}', { fehler: errorText(e) }), 'error');
     }
   }
 
@@ -1566,7 +1572,6 @@
     await renderTasks();
   }
 
-  const URGENCY_LABELS = { overdue: 'Überfällig', today: 'Heute', week: 'Diese Woche', later: 'Später', none: 'Ohne Termin', done: 'Erledigt' };
   const URGENCY_ORDER = ['overdue', 'today', 'week', 'later', 'none', 'done', 'answered'];
 
   /** Gruppen nach Dringlichkeit in fester Reihenfolge, sonst in Reihenfolge des Auftretens. */
@@ -1584,14 +1589,14 @@
     const rows = await B.listTasks({ status: state.tStatus, query: state.tQuery, tag: state.tTag, sort: state.tSort });
     const counts = await B.countTasks(today);
     if (!isLatest()) return;
-    el.tCount.textContent = `${rows.length} von ${counts.total} · ${counts.open} offen` + (counts.overdue ? ` · ${counts.overdue} überfällig` : '');
+    el.tCount.textContent = t('{anzahl} von {gesamt} · {offen} offen', { anzahl: rows.length, gesamt: counts.total, offen: counts.open }) + (counts.overdue ? ' · ' + t('{n} überfällig', { n: counts.overdue }) : '');
 
     const groups = new Map();
     for (const r of rows) {
       const key = state.tSort === 'note' ? `n${r.note_id}` : (r.done ? 'done' : T.urgency(r.due, today));
       if (!groups.has(key)) {
         groups.set(key, {
-          title: state.tSort === 'note' ? (r.note_title.trim() || 'Ohne Titel') : URGENCY_LABELS[key],
+          title: state.tSort === 'note' ? (r.note_title.trim() || t('Ohne Titel')) : Dates.urgencyLabel(key),
           noteId: state.tSort === 'note' ? r.note_id : null,
           cls: state.tSort === 'note' ? '' : `urgency-${key}`,
           items: [],
@@ -1610,14 +1615,14 @@
         const nb = document.createElement('button');
         nb.type = 'button';
         nb.textContent = g.title;
-        nb.title = 'Notiz öffnen';
+        nb.title = t('Notiz öffnen');
         nb.addEventListener('click', () => openNote(g.noteId));
         h.appendChild(nb);
       } else {
         h.append(g.title);
       }
       const cnt = document.createElement('span');
-      cnt.textContent = g.items.length === 1 ? '1 Aufgabe' : `${g.items.length} Aufgaben`;
+      cnt.textContent = tn('{n} Aufgabe', '{n} Aufgaben', g.items.length);
       h.appendChild(cnt);
       section.appendChild(h);
       for (const r of g.items) section.appendChild(renderTaskItem(r, today, resolve));
@@ -1625,10 +1630,10 @@
     }
     el.tList.replaceChildren(frag);
     el.tEmpty.hidden = rows.length > 0;
-    el.tEmpty.textContent = state.tQuery || state.tTag ? 'Keine Treffer.'
-      : state.tStatus === 'open' ? 'Keine offenen Aufgaben. Eine Zeile „- [ ] Text“ wird zur Aufgabe, optional mit „@15.10.2026“ am Ende.'
-      : state.tStatus === 'done' ? 'Noch keine erledigten Aufgaben.'
-      : 'Noch keine Aufgaben. Eine Zeile „- [ ] Text“ wird zur Aufgabe.';
+    el.tEmpty.textContent = state.tQuery || state.tTag ? t('Keine Treffer.')
+      : state.tStatus === 'open' ? t('Keine offenen Aufgaben. Eine Zeile „- [ ] Text“ wird zur Aufgabe, optional mit „@15.10.2026“ am Ende.')
+      : state.tStatus === 'done' ? t('Noch keine erledigten Aufgaben.')
+      : t('Noch keine Aufgaben. Eine Zeile „- [ ] Text“ wird zur Aufgabe.');
   }
 
   function renderTaskItem(r, today, resolve) {
@@ -1643,12 +1648,12 @@
     box.type = 'checkbox';
     box.className = 't-check';
     box.checked = !!r.done;
-    box.setAttribute('aria-label', r.done ? 'Aufgabe wieder öffnen' : 'Aufgabe abhaken');
+    box.setAttribute('aria-label', r.done ? t('Aufgabe wieder öffnen') : t('Aufgabe abhaken'));
     box.addEventListener('change', () => toggleTaskDone(r.id, box.checked));
     const text = document.createElement('div');
     text.className = 'q-text';
     text.innerHTML = M.inline(r.text, { highlight: state.tQuery.trim() || null, resolveTitle: resolve });
-    text.title = 'Doppelklick: Aufgabe samt Unteraufgaben abschliessen';
+    text.title = t('Doppelklick: Aufgabe samt Unteraufgaben abschliessen');
     text.addEventListener('dblclick', async e => {
       if (e.target.closest('a')) return;
       window.getSelection().removeAllRanges();
@@ -1659,15 +1664,15 @@
       const warn = r.done && r.sub_open > 0;
       const prog = document.createElement('span');
       prog.className = 't-progress' + (warn ? ' warn' : r.sub_open === 0 ? ' complete' : '');
-      prog.textContent = `${r.sub_done}/${r.sub_total}` + (warn ? ' · Unteraufgaben offen' : '');
-      prog.title = warn ? `Erledigt, aber ${r.sub_open} von ${r.sub_total} Unteraufgaben offen` : `${r.sub_done} von ${r.sub_total} Unteraufgaben erledigt`;
+      prog.textContent = `${r.sub_done}/${r.sub_total}` + (warn ? ' · ' + t('Unteraufgaben offen') : '');
+      prog.title = warn ? t('Erledigt, aber {offen} von {gesamt} Unteraufgaben offen', { offen: r.sub_open, gesamt: r.sub_total }) : t('{erledigt} von {gesamt} Unteraufgaben erledigt', { erledigt: r.sub_done, gesamt: r.sub_total });
       head.appendChild(prog);
     }
     if (r.due) {
       const due = document.createElement('span');
       const u = r.done ? 'none' : T.urgency(r.due, today);
       due.className = 'due ' + u;
-      due.textContent = (u === 'overdue' ? 'überfällig · ' : u === 'today' ? 'heute · ' : '') + T.formatDue(r.due);
+      due.textContent = (u === 'overdue' ? t('überfällig') + ' · ' : u === 'today' ? t('heute') + ' · ' : '') + T.formatDue(r.due);
       head.appendChild(due);
     }
     item.appendChild(head);
@@ -1677,16 +1682,16 @@
     if (r.parent_text && state.tSort !== 'note') {
       const part = document.createElement('span');
       part.className = 't-note t-part';
-      part.textContent = `Teil von „${r.parent_text}“`;
+      part.textContent = t('Teil von „{aufgabe}“', { aufgabe: r.parent_text });
       actions.appendChild(part);
     }
     if (state.tSort !== 'note') {
       const from = document.createElement('span');
       from.className = 't-note';
-      from.append('aus ');
+      from.append(t('aus') + ' ');
       const nb = document.createElement('button');
       nb.type = 'button';
-      nb.textContent = r.note_title.trim() || 'Ohne Titel';
+      nb.textContent = r.note_title.trim() || t('Ohne Titel');
       nb.addEventListener('click', () => openNote(r.note_id));
       from.appendChild(nb);
       actions.appendChild(from);
@@ -1694,12 +1699,12 @@
     const gotoBtn = document.createElement('button');
     gotoBtn.type = 'button';
     gotoBtn.className = 'ghost';
-    gotoBtn.textContent = 'Zur Notiz';
+    gotoBtn.textContent = t('Zur Notiz');
     gotoBtn.addEventListener('click', () => openNote(r.note_id, { line: r.line_no }));
     actions.appendChild(gotoBtn);
     const meta = document.createElement('span');
     meta.className = 'q-meta';
-    meta.textContent = r.done && r.done_at ? `Erledigt ${fmtDate(r.done_at)}` : `Erfasst ${fmtDate(r.created_at)}`;
+    meta.textContent = r.done && r.done_at ? t('Erledigt {datum}', { datum: fmtDate(r.done_at) }) : t('Erfasst {datum}', { datum: fmtDate(r.created_at) });
     actions.appendChild(meta);
     item.appendChild(actions);
     return item;
@@ -1712,10 +1717,10 @@
       await renderTaskCounts();
       await renderTasks();
       if (state.currentId === noteId) { await renderEditor(); if (state.editorMode !== 'edit') await renderPreview(); }
-      setStatus(done ? 'Aufgabe erledigt' : 'Aufgabe wieder geöffnet', 'dirty');
+      setStatus(done ? t('Aufgabe erledigt') : t('Aufgabe wieder geöffnet'), 'dirty');
     } catch (e) {
-      if (e.code === 'SUBTASKS_OPEN') hint(e.message);
-      else setStatus('Aufgabe konnte nicht geändert werden: ' + e.message, 'error');
+      if (e.code === 'SUBTASKS_OPEN') hint(errorText(e));
+      else setStatus(t('Aufgabe konnte nicht geändert werden: {fehler}', { fehler: errorText(e) }), 'error');
       await renderTasks();
     }
   }
@@ -1728,9 +1733,9 @@
       await renderTaskCounts();
       await renderTasks();
       if (state.currentId === r.noteId) { await renderEditor(); if (state.editorMode !== 'edit') await renderPreview(); }
-      setStatus(r.action === 'completed' ? 'Aufgabe mit allen Unteraufgaben erledigt' : 'Aufgabe wieder geöffnet', 'dirty');
+      setStatus(r.action === 'completed' ? t('Aufgabe mit allen Unteraufgaben erledigt') : t('Aufgabe wieder geöffnet'), 'dirty');
     } catch (e) {
-      setStatus('Aufgabe konnte nicht geändert werden: ' + e.message, 'error');
+      setStatus(t('Aufgabe konnte nicht geändert werden: {fehler}', { fehler: errorText(e) }), 'error');
       await renderTasks();
     }
   }
@@ -1748,8 +1753,11 @@
     hideContextMenu();
     closeMenu();
     const shown = (await B.listTasks({ status: state.tStatus, query: state.tQuery, tag: state.tTag })).length;
-    const label = state.tStatus === 'open' ? 'offene' : state.tStatus === 'done' ? 'erledigte' : 'alle';
-    el.taskScopeFiltered.textContent = `Wie angezeigt: ${label} Aufgaben${state.tTag ? `, Tag „${state.tTag}“` : ''}${state.tQuery.trim() ? `, Suche „${state.tQuery.trim()}“` : ''} (${shown})`;
+    const label = state.tStatus === 'open' ? t('offene Aufgaben') : state.tStatus === 'done' ? t('erledigte Aufgaben') : t('alle Aufgaben');
+    el.taskScopeFiltered.textContent = t('Wie angezeigt: {filter} ({anzahl})', {
+      filter: joinParts(label, state.tTag ? t('Tag „{tag}“', { tag: state.tTag }) : '', state.tQuery.trim() ? t('Suche „{suche}“', { suche: state.tQuery.trim() }) : ''),
+      anzahl: shown,
+    });
     if (typeof el.taskPrintDialog.showModal === 'function') el.taskPrintDialog.showModal();
     else el.taskPrintDialog.setAttribute('open', '');
   }
@@ -1797,11 +1805,11 @@
     hideContextMenu();
     const note = await B.getNote(id);
     if (!note) return;
-    const name = note.title.trim() ? `„${note.title.trim()}“` : 'diese Notiz';
+    const name = note.title.trim() ? t('„{titel}“', { titel: note.title.trim() }) : t('diese Notiz');
     const info = state.map ? state.map.nodeInfo(id) : null;
     const kids = info ? info.childCount : 0;
-    const hint = kids ? `\n\n${kids === 1 ? 'Die Unternotiz rückt' : kids + ' Unternotizen rücken'} zum übergeordneten Knoten auf.` : '';
-    if (!confirm(`Soll ${name} in den Papierkorb verschoben werden?${hint}`)) return;
+    const hint = kids ? '\n\n' + tn('Die Unternotiz rückt zum übergeordneten Knoten auf.', '{n} Unternotizen rücken zum übergeordneten Knoten auf.', kids) : '';
+    if (!confirm(t('Soll {name} in den Papierkorb verschoben werden?{hinweis}', { name, hinweis: hint }))) return;
 
     const parentId = note.parent_id;
     let nextInList = null;
@@ -1828,17 +1836,21 @@
     hideContextMenu();
     await pruneMulti();
     const targets = (await Promise.all([...new Set(ids)].map(id => B.getNote(id)))).filter(n => n && !n.deleted_at && !n.archived_at).map(n => n.id);
-    if (!targets.length) { hint('Nichts zu archivieren'); return; }
+    if (!targets.length) { hint(t('Nichts zu archivieren')); return; }
     const count = await B.archiveCount(targets);
     let message;
     if (targets.length === 1) {
       const n = await B.getNote(targets[0]);
-      const name = n.title.trim() ? `„${n.title.trim()}“` : 'diese Notiz';
-      message = count > 1 ? `${name} und ${count - 1} ${count - 1 === 1 ? 'Unternotiz' : 'Unternotizen'} archivieren?` : `${name} archivieren?`;
+      const name = n.title.trim() ? t('„{titel}“', { titel: n.title.trim() }) : t('diese Notiz');
+      message = count > 1
+        ? tn('{name} und {n} Unternotiz archivieren?', '{name} und {n} Unternotizen archivieren?', count - 1, { name })
+        : t('{name} archivieren?', { name });
     } else {
-      message = `${targets.length} Notizen archivieren` + (count > targets.length ? ` (mit Unternotizen insgesamt ${count})` : '') + '?';
+      message = count > targets.length
+        ? t('{n} Notizen archivieren (mit Unternotizen insgesamt {gesamt})?', { n: targets.length, gesamt: count })
+        : t('{n} Notizen archivieren?', { n: targets.length });
     }
-    if (!confirm(message + '\n\nArchivierte Notizen sind ausgeblendet, bleiben aber durchsuchbar und lassen sich einzeln zurückholen.')) return;
+    if (!confirm(message + '\n\n' + t('Archivierte Notizen sind ausgeblendet, bleiben aber durchsuchbar und lassen sich einzeln zurückholen.'))) return;
 
     const first = await B.getNote(targets[0]);
     const archivedIds = new Set();
@@ -1861,7 +1873,7 @@
     markEdited();
     await renderAll();
     if (state.currentId == null) showEditorView(false);
-    setStatus(`${archivedIds.size === 1 ? '1 Notiz' : archivedIds.size + ' Notizen'} archiviert`, 'dirty');
+    setStatus(tn('{n} Notiz archiviert', '{n} Notizen archiviert', archivedIds.size), 'dirty');
     if (state.view === 'map') el.mindmap.focus({ preventScroll: true });
   }
 
@@ -1876,8 +1888,10 @@
     markEdited();
     await renderAll();
     const extra = done.length - 1;
-    const name = note.title.trim() ? `„${note.title.trim()}“` : 'Notiz';
-    setStatus(`${name} zurückgeholt` + (extra ? `, dazu ${extra} übergeordnete ${extra === 1 ? 'Notiz' : 'Notizen'}` : ''), 'dirty');
+    const name = note.title.trim() ? t('„{titel}“', { titel: note.title.trim() }) : t('Notiz');
+    setStatus(extra
+      ? tn('{name} zurückgeholt, dazu {n} übergeordnete Notiz', '{name} zurückgeholt, dazu {n} übergeordnete Notizen', extra, { name })
+      : t('{name} zurückgeholt', { name }), 'dirty');
   }
 
   async function restoreCurrent() {
@@ -1889,14 +1903,14 @@
     el.listScope.value = state.listScope;
     markEdited();
     await renderAll();
-    setStatus(restored && restored.archived_at ? 'Notiz wiederhergestellt (liegt weiterhin im Archiv)' : 'Notiz wiederhergestellt', 'dirty');
+    setStatus(restored && restored.archived_at ? t('Notiz wiederhergestellt (liegt weiterhin im Archiv)') : t('Notiz wiederhergestellt'), 'dirty');
   }
 
   async function purgeCurrent() {
     if (state.currentId == null) return;
     const note = await B.getNote(state.currentId);
-    const name = note && note.title.trim() ? `„${note.title.trim()}“` : 'diese Notiz';
-    if (!confirm(`Soll ${name} endgültig gelöscht werden? Das lässt sich nicht rückgängig machen.`)) return;
+    const name = note && note.title.trim() ? t('„{titel}“', { titel: note.title.trim() }) : t('diese Notiz');
+    if (!confirm(t('Soll {name} endgültig gelöscht werden? Das lässt sich nicht rückgängig machen.', { name }))) return;
     await B.purgeNote(state.currentId);
     state.currentId = null;
     markEdited();
@@ -1907,7 +1921,7 @@
   async function emptyTrash() {
     const n = await B.countTrash();
     if (!n) return;
-    if (!confirm(`${n === 1 ? 'Die Notiz' : 'Alle ' + n + ' Notizen'} im Papierkorb endgültig löschen?`)) return;
+    if (!confirm(tn('Die Notiz im Papierkorb endgültig löschen?', 'Alle {n} Notizen im Papierkorb endgültig löschen?', n))) return;
     await B.emptyTrash();
     if (state.currentId != null && !await B.getNote(state.currentId)) state.currentId = null;
     markEdited();
@@ -1937,7 +1951,7 @@
       await renderMap();
       if (state.currentId === id) await renderEditor();
     } catch (e) {
-      setStatus(e.message, 'error');
+      setStatus(errorText(e), 'error');
       await renderMap();
     }
   }
@@ -1987,7 +2001,7 @@
   async function beginRename(id, opts) {
     hideContextMenu();
     await cancelRename();
-    if (id !== 'root' && await B.isArchived(id)) { hint('Archivierte Notizen sind schreibgeschützt. Erst zurückholen.'); return; }
+    if (id !== 'root' && await B.isArchived(id)) { hint(t('Archivierte Notizen sind schreibgeschützt. Erst zurückholen.')); return; }
     const rect = state.map.screenRectOf(id);
     if (!rect) return;
     state.rename = { id, isNew: !!(opts && opts.isNew) };
@@ -2079,24 +2093,24 @@
   function showNodeMenu(id, x, y) {
     if (id == null) {
       showContextMenu([
-        { label: 'Neue Notiz', key: 'Tab', action: () => newNoteInMap(null) },
-        { label: 'Einpassen', key: '0', action: () => state.map.fit() },
+        { label: t('Neue Notiz'), key: 'Tab', action: () => newNoteInMap(null) },
+        { label: t('Einpassen'), key: '0', action: () => state.map.fit() },
         'sep',
-        { label: 'Alles ausklappen', action: () => setAllCollapsed(false) },
-        { label: 'Alles einklappen', action: () => setAllCollapsed(true) },
+        { label: t('Alles ausklappen'), action: () => setAllCollapsed(false) },
+        { label: t('Alles einklappen'), action: () => setAllCollapsed(true) },
       ], x, y);
       return;
     }
     if (id === 'root') {
       showContextMenu([
-        { label: 'Neue Notiz', key: 'Tab', action: () => newNoteInMap(null) },
-        { label: 'Titel ändern', key: 'F2', action: () => beginRename('root') },
+        { label: t('Neue Notiz'), key: 'Tab', action: () => newNoteInMap(null) },
+        { label: t('Titel ändern'), key: 'F2', action: () => beginRename('root') },
         'sep',
-        { label: 'Alles ausklappen', action: () => setAllCollapsed(false) },
-        { label: 'Alles einklappen', action: () => setAllCollapsed(true) },
-        { label: 'Einpassen', key: '0', action: () => state.map.fit() },
+        { label: t('Alles ausklappen'), action: () => setAllCollapsed(false) },
+        { label: t('Alles einklappen'), action: () => setAllCollapsed(true) },
+        { label: t('Einpassen'), key: '0', action: () => state.map.fit() },
         'sep',
-        { label: 'Alles drucken…', action: () => openPrintDialog({ scope: 'all' }) },
+        { label: t('Alles drucken…'), action: () => openPrintDialog({ scope: 'all' }) },
       ], x, y);
       return;
     }
@@ -2104,29 +2118,29 @@
     if (info && info.archived) {
       // Archivierte Notizen: nur ansehen, zurückholen, ein-/ausklappen, löschen
       const archivedItems = [
-        { label: 'Öffnen', key: 'Enter', action: () => openNote(id) },
-        { label: 'Zurückholen', action: () => unarchiveById(id) },
+        { label: t('Öffnen'), key: 'Enter', action: () => openNote(id) },
+        { label: t('Zurückholen'), action: () => unarchiveById(id) },
       ];
-      if (info.childCount) archivedItems.push({ label: info.collapsed ? 'Ausklappen' : 'Einklappen', action: () => toggleCollapse(id) });
-      archivedItems.push('sep', { label: 'Löschen', key: 'Entf', danger: true, action: () => deleteNoteById(id) });
+      if (info.childCount) archivedItems.push({ label: info.collapsed ? t('Ausklappen') : t('Einklappen'), action: () => toggleCollapse(id) });
+      archivedItems.push('sep', { label: t('Löschen'), key: t('Entf'), danger: true, action: () => deleteNoteById(id) });
       showContextMenu(archivedItems, x, y);
       return;
     }
     const items = [
-      { label: 'Öffnen', key: 'Enter', action: () => openNote(id) },
-      { label: 'Unternotiz anlegen', key: 'Tab', action: () => newNoteInMap(id) },
-      { label: 'Umbenennen', key: 'F2', action: () => beginRename(id) },
+      { label: t('Öffnen'), key: 'Enter', action: () => openNote(id) },
+      { label: t('Unternotiz anlegen'), key: 'Tab', action: () => newNoteInMap(id) },
+      { label: t('Umbenennen'), key: 'F2', action: () => beginRename(id) },
     ];
     if (info && info.childCount) {
-      items.push({ label: info.collapsed ? 'Ausklappen' : 'Einklappen', action: () => toggleCollapse(id) });
+      items.push({ label: info.collapsed ? t('Ausklappen') : t('Einklappen'), action: () => toggleCollapse(id) });
     }
     items.push(
-      { label: 'Drucken…', action: () => openPrintDialog({ noteId: id, scope: 'subtree' }) },
-      { label: 'Archivieren…', action: () => archiveNotes([id]) },
-      { label: 'Nach oben', key: 'Alt+↑', action: async () => { state.mapSelection = id; await moveSelected(-1); } },
-      { label: 'Nach unten', key: 'Alt+↓', action: async () => { state.mapSelection = id; await moveSelected(1); } },
+      { label: t('Drucken…'), action: () => openPrintDialog({ noteId: id, scope: 'subtree' }) },
+      { label: t('Archivieren…'), action: () => archiveNotes([id]) },
+      { label: t('Nach oben'), key: 'Alt+↑', action: async () => { state.mapSelection = id; await moveSelected(-1); } },
+      { label: t('Nach unten'), key: 'Alt+↓', action: async () => { state.mapSelection = id; await moveSelected(1); } },
       'sep',
-      { label: 'Löschen', key: 'Entf', danger: true, action: () => deleteNoteById(id) },
+      { label: t('Löschen'), key: t('Entf'), danger: true, action: () => deleteNoteById(id) },
     );
     showContextMenu(items, x, y);
   }
@@ -2420,6 +2434,6 @@
 
   boot().catch(e => {
     console.error(e);
-    bootError('NoNotes konnte nicht starten.\n' + (e && e.message ? e.message : e));
+    bootError(t('NoNotes konnte nicht starten.') + '\n' + (e && e.message ? e.message : e));
   });
 })();

@@ -7,6 +7,8 @@
 (function (global) {
   'use strict';
 
+  const { t } = global.NoNotesI18n;
+
   const D = () => global.NoNotesDates;
 
   const DURATION_MIN = 30;
@@ -98,10 +100,10 @@
   /** Alle Aufgaben und Fragen mit Termin, vereinheitlicht. */
   async function collect(backend, includeDone) {
     const items = [];
-    const path = async noteId => (await backend.getPath(noteId)).map(p => p.title.trim() || 'Ohne Titel');
-    for (const t of await backend.listTasks({ status: includeDone ? 'all' : 'open', sort: 'due' })) {
-      if (!t.due) continue;
-      items.push({ kind: 'task', id: t.id, text: t.text, due: t.due, closed: !!t.done, noteId: t.note_id, noteTitle: t.note_title, path: await path(t.note_id), tags: await backend.getTags(t.note_id), answer: null });
+    const path = async noteId => (await backend.getPath(noteId)).map(p => p.title.trim() || t('Ohne Titel'));
+    for (const task of await backend.listTasks({ status: includeDone ? 'all' : 'open', sort: 'due' })) {
+      if (!task.due) continue;
+      items.push({ kind: 'task', id: task.id, text: task.text, due: task.due, closed: !!task.done, noteId: task.note_id, noteTitle: task.note_title, path: await path(task.note_id), tags: await backend.getTags(task.note_id), answer: null });
     }
     for (const q of await backend.listQuestions({ status: includeDone ? 'all' : 'open', sort: 'due' })) {
       if (!q.due) continue;
@@ -140,19 +142,22 @@
     push('CALSCALE:GREGORIAN');
     push('METHOD:PUBLISH');
     push(`X-WR-CALNAME:${escapeText('NoNotes · ' + mapTitle)}`);
-    push('X-WR-CALDESC:Termine von Aufgaben und Fragen aus NoNotes');
+    push('X-WR-CALDESC:' + escapeText(t('Termine von Aufgaben und Fragen aus NoNotes')));
 
     let open = 0, cancelled = 0;
     for (const it of items) {
       const timed = D().hasTime(it.due);
-      const label = it.kind === 'task' ? 'Aufgabe' : 'Frage';
-      const summary = it.closed ? `${it.kind === 'task' ? 'Erledigt' : 'Beantwortet'}: ${it.text}` : `${label}: ${it.text}`;
+      const isTask = it.kind === 'task';
+      const label = isTask ? t('Aufgabe') : t('Frage');
+      const summary = it.closed
+        ? (isTask ? t('Erledigt: {text}', { text: it.text }) : t('Beantwortet: {text}', { text: it.text }))
+        : (isTask ? t('Aufgabe: {text}', { text: it.text }) : t('Frage: {text}', { text: it.text }));
       const desc = [
-        `${label} aus NoNotes`,
-        `Notiz: ${it.noteTitle.trim() || 'Ohne Titel'}`,
-        it.path.length ? `Pfad: ${[mapTitle, ...it.path].join(' › ')}` : `Pfad: ${mapTitle}`,
-        it.tags.length ? `Tags: ${it.tags.join(', ')}` : null,
-        it.answer ? `Antwort: ${it.answer}` : null,
+        isTask ? t('Aufgabe aus NoNotes') : t('Frage aus NoNotes'),
+        t('Notiz: {titel}', { titel: it.noteTitle.trim() || t('Ohne Titel') }),
+        t('Pfad: {pfad}', { pfad: [mapTitle, ...it.path].join(' › ') }),
+        it.tags.length ? t('Tags: {tags}', { tags: it.tags.join(', ') }) : null,
+        it.answer ? t('Antwort: {antwort}', { antwort: it.answer }) : null,
       ].filter(Boolean).join('\n');
       if (it.closed) cancelled++; else open++;
 
@@ -185,11 +190,11 @@
         push(`DTSTAMP:${stamp}`);
         push(`LAST-MODIFIED:${stamp}`);
         push(`SEQUENCE:${seq}`);
-        push(`SUMMARY:${escapeText('Entfernt: ' + r.text)}`);
+        push(`SUMMARY:${escapeText(t('Entfernt: {text}', { text: r.text }))}`);
         pushDates(r.due);
         push('STATUS:CANCELLED');
-        push(`CATEGORIES:NoNotes,${r.kind === 'task' ? 'Aufgabe' : 'Frage'}`);
-        push(`DESCRIPTION:${escapeText('Dieser Eintrag existiert in NoNotes nicht mehr (umformuliert, gelöscht oder Notiz im Papierkorb).')}`);
+        push(`CATEGORIES:NoNotes,${r.kind === 'task' ? t('Aufgabe') : t('Frage')}`);
+        push(`DESCRIPTION:${escapeText(t('Dieser Eintrag existiert in NoNotes nicht mehr (umformuliert, gelöscht oder Notiz im Papierkorb).'))}`);
         push(`X-NONOTES-KIND:${r.kind}`);
         push('END:VEVENT');
       }

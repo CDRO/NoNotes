@@ -5,6 +5,8 @@
 (function (global) {
   'use strict';
 
+  const { t, tn } = global.NoNotesI18n;
+
   const DUE_RE = /\s*@(?:(\d{1,2})\.(\d{1,2})\.(\d{4})|(\d{4})-(\d{2})-(\d{2}))(?:[ T](\d{1,2})[:.](\d{2}))?\s*$/;
 
   function pad(n) { return String(n).padStart(2, '0'); }
@@ -74,14 +76,21 @@
     return day <= week ? 'week' : 'later';
   }
 
-  const URGENCY_LABELS = { overdue: 'Überfällig', today: 'Heute', week: 'Diese Woche', later: 'Später', none: 'Ohne Termin', done: 'Erledigt', answered: 'Beantwortet' };
+  /** Überschrift einer Dringlichkeitsgruppe. */
+  function urgencyLabel(key) {
+    const labels = {
+      overdue: t('Überfällig'), today: t('Heute'), week: t('Diese Woche'), later: t('Später'),
+      none: t('Ohne Termin'), done: t('Erledigt'), answered: t('Beantwortet'),
+    };
+    return labels[key];
+  }
 
   /** Text für ein Fälligkeits-Abzeichen, z. B. "überfällig · 4.10.2026, 14:30" oder "heute · 14:30". */
   function dueLabel(iso, now) {
     const u = urgency(iso, now);
-    if (u === 'today') return 'heute · ' + (hasTime(iso) ? timePart(iso) : formatDue(iso));
-    return (u === 'overdue' ? 'überfällig · ' : '') + formatDue(iso);
+    if (u === 'today') return t('heute') + ' · ' + (hasTime(iso) ? timePart(iso) : formatDue(iso));
+    return (u === 'overdue' ? t('überfällig') + ' · ' : '') + formatDue(iso);
   }
 
-  global.NoNotesDates = { splitDue, todayIso, nowIso, formatDue, toDate, urgency, dueLabel, hasTime, datePart, timePart, pad, URGENCY_LABELS, DUE_RE };
+  global.NoNotesDates = { splitDue, todayIso, nowIso, formatDue, toDate, urgency, dueLabel, hasTime, datePart, timePart, pad, urgencyLabel, DUE_RE };
 })(window);

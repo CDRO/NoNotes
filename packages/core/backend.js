@@ -14,6 +14,8 @@
 (function (global) {
   'use strict';
 
+  const N_ = global.NoNotesI18n.N_;
+
   /** Alle Methoden, die ein Backend bieten muss. */
   const METHODS = [
     // Einstellungen
@@ -56,10 +58,35 @@
     return new Map(pairs);
   }
 
+  /** Meldungen zu Fehlerkennungen (err.code). Die deutschen Texte sind die Schlüssel für die Übersetzung;
+   *  Platzhalter werden aus err.params gefüllt. N_ markiert den Text für die Extraktion. */
+  const ERRORS = {
+    NOT_NONOTES_FILE: N_('Diese SQLite-Datei stammt nicht von NoNotes (keine Tabelle "notes").'),
+    SCHEMA_TOO_NEW: N_('Diese Datenbank hat Schema-Version {version}, diese App versteht nur bis {unterstuetzt}. Bitte App aktualisieren.'),
+    ARCHIVED_NO_CHILD: N_('Unter einer archivierten Notiz lässt sich nichts anlegen.'),
+    ARCHIVED_NO_MOVE: N_('Archivierte Notizen lassen sich nicht umhängen.'),
+    MOVE_INTO_SELF: N_('Eine Notiz kann nicht unter sich selbst hängen.'),
+    TARGET_NOT_FOUND: N_('Zielnotiz nicht gefunden.'),
+    NOTE_NOT_FOUND: N_('Notiz nicht gefunden.'),
+    TASK_NOT_FOUND: N_('Aufgabe nicht gefunden.'),
+    TASK_STALE: N_('Die Aufgabe steht nicht mehr so im Text.'),
+    QUESTION_NOT_FOUND: N_('Frage nicht gefunden.'),
+    QUESTION_STALE: N_('Die Frage steht nicht mehr so im Text.'),
+  };
+
+  /** Text eines Fehlers in der Sprache der Oberfläche. Kennt ein Backend die Kennung nicht, bleibt seine Meldung. */
+  function errorText(e) {
+    const I18n = global.NoNotesI18n;
+    if (e && e.code === 'SUBTASKS_OPEN' && typeof e.open === 'number' && global.NoNotesTasks) return global.NoNotesTasks.openMessage(e.open);
+    if (e && e.code && ERRORS[e.code]) return I18n.t(ERRORS[e.code], e.params);
+    if (e && e.message) return String(e.message);
+    return I18n.t('Unbekannter Fehler');
+  }
+
   /** Bereinigt einen Tag-Namen (reine Funktion, ohne Datenzugriff): Leerraum zusammenfassen, führendes # weg. */
   function normalizeTag(name) {
     return String(name || '').replace(/\s+/g, ' ').replace(/^#/, '').trim();
   }
 
-  global.NoNotesBackend = { METHODS, MUTATING, missing, titleMap, normalizeTag };
+  global.NoNotesBackend = { METHODS, MUTATING, ERRORS, missing, titleMap, normalizeTag, errorText };
 })(window);

@@ -4,6 +4,9 @@
 (function (global) {
   'use strict';
 
+  // Übersetzung nur, wenn das Sprachsystem geladen ist (die Funktionen laufen auch ohne Browser).
+  const t = key => (global.NoNotesI18n ? global.NoNotesI18n.t(key) : key);
+
   function lineBounds(text, start, end) {
     const from = text.lastIndexOf('\n', start - 1) + 1;
     let to = text.indexOf('\n', Math.max(end, start));
@@ -26,7 +29,7 @@
       return { text: text.slice(0, s - before.length) + sel + text.slice(e + after.length), selStart: s - before.length, selEnd: s - before.length + sel.length };
     }
     if (!sel) {
-      const ph = placeholder || 'Text';
+      const ph = placeholder || t('Text');
       return { text: text.slice(0, s) + before + ph + after + text.slice(e), selStart: s + before.length, selEnd: s + before.length + ph.length };
     }
     return { text: text.slice(0, s) + before + sel + after + text.slice(e), selStart: s + before.length, selEnd: s + before.length + sel.length };
@@ -102,8 +105,9 @@
     const { from, to } = lineBounds(text, s, e);
     const block = text.slice(from, to);
     if (!block.trim()) {
-      const ins = '```\n' + 'Code' + '\n```';
-      return { text: text.slice(0, from) + ins + text.slice(to), selStart: from + 4, selEnd: from + 8 };
+      const code = t('Code');
+      const ins = '```\n' + code + '\n```';
+      return { text: text.slice(0, from) + ins + text.slice(to), selStart: from + 4, selEnd: from + 4 + code.length };
     }
     if (/^```/.test(block) && /```\s*$/.test(block)) {
       const inner = block.replace(/^```[^\n]*\n?/, '').replace(/\n?```\s*$/, '');
@@ -118,10 +122,11 @@
     const sel = text.slice(s, e).trim();
     if (/^(https?:\/\/|www\.|mailto:)\S+$/i.test(sel)) {
       const url = /^www\./i.test(sel) ? 'https://' + sel : sel;
-      const ins = `[Text](${url})`;
-      return { text: text.slice(0, s) + ins + text.slice(e), selStart: s + 1, selEnd: s + 5 };
+      const word = t('Text');
+      const ins = `[${word}](${url})`;
+      return { text: text.slice(0, s) + ins + text.slice(e), selStart: s + 1, selEnd: s + 1 + word.length };
     }
-    const label = sel || 'Text';
+    const label = sel || t('Text');
     const ins = `[${label}](https://)`;
     const urlStart = s + label.length + 3;
     return { text: text.slice(0, s) + ins + text.slice(e), selStart: urlStart, selEnd: urlStart + 8 };
@@ -129,7 +134,7 @@
 
   /** Verweis auf eine Notiz: [[Titel]]. */
   function wikiLink(text, s, e) {
-    return wrap(text, s, e, '[[', ']]', 'Titel');
+    return wrap(text, s, e, '[[', ']]', t('Titel'));
   }
 
   /** Trennlinie auf eigener Zeile. */

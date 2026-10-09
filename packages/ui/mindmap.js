@@ -4,6 +4,8 @@
 (function (global) {
   'use strict';
 
+  const { t, tn } = global.NoNotesI18n;
+
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const FONT_FAMILY = 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
   const FONT = '600 14px ' + FONT_FAMILY;
@@ -66,7 +68,7 @@
   function layoutTree(root) {
     const sizeNode = n => {
       const font = n.isRoot ? ROOT_FONT : FONT;
-      const fit = fitLabel((n.title || '').trim() || 'Ohne Titel', font, MAX_W);
+      const fit = fitLabel((n.title || '').trim() || t('Ohne Titel'), font, MAX_W);
       n.label = fit.label;
       n.w = Math.max(MIN_W, Math.ceil(fit.width) + 2 * PAD_X + (n.isRoot ? 14 : 0));
       n.h = n.isRoot ? ROOT_H : NODE_H;
@@ -200,19 +202,19 @@
         x: n.w / 2, y: n.h / 2, 'text-anchor': 'middle', 'dominant-baseline': 'central',
       }, g);
       text.textContent = n.label;
-      if (n.label !== ((n.title || '').trim() || 'Ohne Titel')) {
+      if (n.label !== ((n.title || '').trim() || t('Ohne Titel'))) {
         svgEl('title', null, g).textContent = n.title;
       }
       if (!n.isRoot && n.children.length) {
         const cx = n.dir > 0 ? n.w + 11 : -11;
-        const t = svgEl('g', {
+        const toggle = svgEl('g', {
           class: 'mm-toggle' + (n.collapsed ? ' mm-collapsed' : ''),
           transform: `translate(${cx} ${n.h / 2})`,
         }, g);
-        svgEl('circle', { r: n.collapsed ? 10 : 7 }, t);
-        const tt = svgEl('text', { 'text-anchor': 'middle', 'dominant-baseline': 'central' }, t);
+        svgEl('circle', { r: n.collapsed ? 10 : 7 }, toggle);
+        const tt = svgEl('text', { 'text-anchor': 'middle', 'dominant-baseline': 'central' }, toggle);
         tt.textContent = n.collapsed ? String(n.hiddenCount) : '–';
-        svgEl('title', null, t).textContent = n.collapsed ? 'Ausklappen' : 'Einklappen';
+        svgEl('title', null, toggle).textContent = n.collapsed ? t('Ausklappen') : t('Einklappen');
       }
       if (n.shownBadge > 0) {
         const bx = n.dir < 0 ? 0 : n.w;
@@ -220,7 +222,7 @@
         svgEl('circle', { r: 9 }, b);
         const bt = svgEl('text', { 'text-anchor': 'middle', 'dominant-baseline': 'central' }, b);
         bt.textContent = n.shownBadge > 99 ? '99+' : String(n.shownBadge);
-        svgEl('title', null, b).textContent = n.shownBadge === 1 ? '1 offene Frage' : `${n.shownBadge} offene Fragen`;
+        svgEl('title', null, b).textContent = tn('{n} offene Frage', '{n} offene Fragen', n.shownBadge);
       }
       if (n.shownTBadge > 0) {
         const bx = n.dir < 0 ? 0 : n.w;
@@ -228,7 +230,7 @@
         svgEl('circle', { r: 9 }, b);
         const bt = svgEl('text', { 'text-anchor': 'middle', 'dominant-baseline': 'central' }, b);
         bt.textContent = n.shownTBadge > 99 ? '99+' : String(n.shownTBadge);
-        svgEl('title', null, b).textContent = n.shownTBadge === 1 ? '1 offene Aufgabe' : `${n.shownTBadge} offene Aufgaben`;
+        svgEl('title', null, b).textContent = tn('{n} offene Aufgabe', '{n} offene Aufgaben', n.shownTBadge);
       }
       return g;
     }

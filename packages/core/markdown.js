@@ -6,6 +6,8 @@
 (function (global) {
   'use strict';
 
+  const { t, tn } = global.NoNotesI18n;
+
   function escapeHtml(s) {
     return String(s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -82,7 +84,7 @@
           if (att) url = ctx.resolveAttachment ? ctx.resolveAttachment(Number(att[1])) : null;
           else url = safeUrl(m[2]);
           if (url) out += `<img src="${escapeHtml(url)}" alt="${escapeHtml(m[1])}"${m[3] ? ` title="${escapeHtml(m[3])}"` : ''}${att ? ` class="md-att" data-attachment-id="${att[1]}"` : ''}>`;
-          else if (att) out += `<span class="md-missing" title="Anhang ${att[1]} fehlt">[Bild „${text(m[1] || 'Anhang')}“ fehlt]</span>`;
+          else if (att) out += `<span class="md-missing" title="${escapeHtml(t('Anhang {nummer} fehlt', { nummer: att[1] }))}">${text(t('[Bild „{name}“ fehlt]', { name: m[1] || t('Anhang') }))}</span>`;
           else emit(m[0]);
           i += m[0].length;
           continue;
@@ -270,10 +272,10 @@
       let text = m[3];
       let task = null;
       let dueHtml = '';
-      const t = /^\[( |x|X)\]\s+(.*)$/.exec(text);
-      if (t) {
-        task = t[1] !== ' ';
-        text = t[2];
+      const tm = /^\[( |x|X)\]\s+(.*)$/.exec(text);
+      if (tm) {
+        task = tm[1] !== ' ';
+        text = tm[2];
         const D = global.NoNotesDates;
         if (D) {
           const split = D.splitDue(text);
@@ -314,12 +316,15 @@
       } else {
         html += '</li>';
       }
-      const box = item.task == null ? '' : `<input type="checkbox"${ctx.interactiveTasks ? '' : ' disabled'}${item.task ? ' checked' : ''} aria-label="${item.task ? 'erledigt' : 'offen'}"> `;
+      const box = item.task == null ? '' : `<input type="checkbox"${ctx.interactiveTasks ? '' : ' disabled'}${item.task ? ' checked' : ''} aria-label="${escapeHtml(item.task ? t('erledigt') : t('offen'))}"> `;
       let progress = '';
       if (item.sub) {
         const open = item.sub.total - item.sub.done;
         const warn = item.task && open > 0;
-        progress = `<span class="md-progress${warn ? ' warn' : open === 0 ? ' complete' : ''}" title="${warn ? `Erledigt, aber ${open} von ${item.sub.total} Unteraufgaben offen` : `${item.sub.done} von ${item.sub.total} Unteraufgaben erledigt`}">${item.sub.done}/${item.sub.total}${warn ? ' · Unteraufgaben offen' : ''}</span>`;
+        const progressTitle = warn
+          ? t('Erledigt, aber {offen} von {gesamt} Unteraufgaben offen', { offen: open, gesamt: item.sub.total })
+          : t('{erledigt} von {gesamt} Unteraufgaben erledigt', { erledigt: item.sub.done, gesamt: item.sub.total });
+        progress = `<span class="md-progress${warn ? ' warn' : open === 0 ? ' complete' : ''}" title="${escapeHtml(progressTitle)}">${item.sub.done}/${item.sub.total}${warn ? ' · ' + escapeHtml(t('Unteraufgaben offen')) : ''}</span>`;
       }
       const content = item.task == null ? `${item.text}${progress}` : `<span class="task-text">${box}${item.text}</span>${progress}`; // Durchstreichen nur am eigenen Text, nicht an Unteraufgaben
       html += `<li${item.task == null ? (ctx.lineMap ? ` data-line="${item.line}"` : '') : ` class="task${item.task ? ' done' : ''}" data-line="${item.line}"`}>${content}`;

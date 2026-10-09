@@ -20,6 +20,7 @@
 
   const packs = new Map();
   let current = SOURCE;
+  let started = false; // init() läuft spätestens beim ersten Gebrauch, wenn alle Sprachpakete registriert sind
 
   const INLINE = new Set(['A', 'B', 'I', 'U', 'S', 'EM', 'STRONG', 'CODE', 'KBD', 'SPAN', 'SMALL', 'BR', 'ABBR', 'MARK', 'SUP', 'SUB', 'DEL']);
   const SKIP = new Set(['SCRIPT', 'STYLE', 'SVG', 'TEXTAREA', 'INPUT']);
@@ -39,9 +40,14 @@
     return text.replace(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g, (m, k) => (k in params ? String(params[k]) : m));
   }
 
-  function pack() { return packs.get(current) || null; }
+  function ensureStarted() { if (!started) init(); }
+
+  function pack() { ensureStarted(); return packs.get(current) || null; }
 
   function wrap(s) { return current === PSEUDO ? `⟦${s}⟧` : s; }
+
+  /** Markiert einen Text für die Extraktion, ohne ihn zu übersetzen (für Texte in Tabellen und Konstanten). */
+  function N_(key) { return key; }
 
   function t(key, params) {
     const p = pack();
@@ -75,9 +81,10 @@
     return p ? p.locale : 'de-CH';
   }
 
-  function language() { return current; }
+  function language() { ensureStarted(); return current; }
 
   function setLanguage(code, remember) {
+    started = true;
     if (code !== PSEUDO && !packs.has(code)) code = SOURCE;
     current = code;
     if (global.document && global.document.documentElement) global.document.documentElement.lang = code === PSEUDO ? SOURCE : code;
@@ -86,6 +93,7 @@
 
   /** Beim Start: gespeicherte Wahl, sonst Browsersprache, sonst Deutsch. */
   function init() {
+    started = true;
     let wanted = null;
     try { wanted = global.localStorage.getItem(STORAGE_KEY); } catch (e) { /* egal */ }
     if (!wanted) {
@@ -147,11 +155,12 @@
   }
 
   function translateDom(root) {
+    ensureStarted();
     if (current === SOURCE && !(pack() && !pack().source)) return;
     walk(root || global.document.body, true);
   }
 
   function collect(root) { return walk(root || global.document.body, false); }
 
-  global.NoNotesI18n = { SOURCE, PSEUDO, register, available, init, setLanguage, language, locale, t, tn, translateDom, collect, format };
+  global.NoNotesI18n = { SOURCE, PSEUDO, N_, register, available, init, setLanguage, language, locale, t, tn, translateDom, collect, format };
 })(window);
