@@ -6,7 +6,7 @@
    Aufruf:  node tools/build.cjs [--edition local] [--version v1.0.0] [--out dist/NoNotes]
 
    Ergebnis (Ausprägung "local"), genau das, was im ZIP liegt:
-     index.html  css/  js/  lang/  vendor/  start.ps1  start.cmd  README.md
+     index.html  css/  js/  lang/  vendor/  docs/  start.ps1  start.cmd  README.md  NOTICE
 */
 'use strict';
 
@@ -89,6 +89,8 @@ function main() {
   }
   place(path.join(ROOT, 'README.md'), 'README.md');
   if (fs.existsSync(path.join(ROOT, 'NOTICE'))) place(path.join(ROOT, 'NOTICE'), 'NOTICE');
+  const docsDir = path.join(ROOT, 'docs'); // die README verweist auf diese Dokumente
+  if (fs.existsSync(docsDir)) for (const f of fs.readdirSync(docsDir).filter(f => f.endsWith('.md')).sort()) place(path.join(docsDir, f), `docs/${f}`);
   // sql.js: nur Lauf-Dateien und Lizenz, keine Archive
   const sqlDir = path.join(ROOT, 'vendor', 'sql.js');
   for (const f of fs.readdirSync(sqlDir)) {

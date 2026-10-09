@@ -190,7 +190,7 @@
         const body = bodyToMarkdown(note.body, resolveFromNote, attFrom('../'));
         if (body) lines.push(body, '');
         if (n.children.length) {
-          lines.push('---', '', '**Unternotizen**', '');
+          lines.push('---', '', `**${t('Unternotizen')}**`, '');
           for (const c of n.children) lines.push(`- [${c.title.trim() || t('Ohne Titel')}](${hrefFromNote(c)})`);
           lines.push('');
         }

@@ -272,21 +272,28 @@ Dasselbe gilt für Fragen.
 
 ## Technik
 
+Der Quelltext liegt in Paketen (`packages/`), eine Ausprägung (`editions/local/`) setzt daraus die
+auslieferbare Version zusammen. Aufbau und Abhängigkeiten: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
+Datenschnittstelle: [docs/BACKEND.md](docs/BACKEND.md), Sprachen: [docs/LANGUAGES.md](docs/LANGUAGES.md).
+Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
+
 | Teil | Umsetzung |
 | --- | --- |
-| Oberfläche | `index.html`, `css/app.css`, `js/app.js` – reines HTML/CSS/JS, keine Frameworks, kein Build |
-| Mindmap | `js/mindmap.js`: eigenes Layout (links/rechts ausbalanciert), SVG, Zoom, Ziehen, Tastatur; archivierte Knoten blass und gestrichelt |
-| Fragen | `js/questions.js`: Parser für `?`/`!`-Zeilen; Index in der Tabelle `questions`, bei jeder Änderung abgeglichen |
-| Aufgaben | `js/tasks.js`: Parser für `- [ ]`-Zeilen mit `@Datum`, Unteraufgaben über die Einrückung, Abschluss-Regeln als reine Textfunktionen; Index in der Tabelle `tasks`, gleiches Prinzip |
-| Termine | `js/dates.js`: gemeinsame Logik für `@TT.MM.JJJJ` bzw. `@JJJJ-MM-TT`, Dringlichkeit, Anzeige |
-| Markdown | `js/markdown.js`: eigener Renderer, escaped allen Text, erlaubt nur sichere Link-Schemata |
-| Toolleiste | `js/editing.js`: reine Textfunktionen (umschliessen, Zeilenpräfixe, Überschriften, Links), in Node prüfbar |
-| Export | `js/export.js` baut die Dateien, `js/zip.js` ist ein kleiner ZIP-Writer; das Bild liefert `NoNotesMindmap.toSvgString`, PNG über ein Canvas |
-| Druck | `js/print.js` baut das Druckdokument in `#printArea`; `@media print` blendet den Rest der App aus |
-| Scroll-Sync | `js/scrollsync.js`: Spiegel des Textes misst Zeilenhöhen, Vorschau-Blöcke tragen `data-line`, lineare Interpolation dazwischen |
-| Kalender | `js/ical.js`: iCalendar nach RFC 5545 mit festen UIDs, SEQUENCE, VALARM, Zeilenfaltung; gemerkte Kennungen in `meta` |
-| Datenbank | [sql.js](https://github.com/sql-js/sql.js) (SQLite nach JavaScript kompiliert) in `vendor/sql.js/`; Schema und Abfragen in `js/db.js` |
-| Persistenz | `js/storage.js`: IndexedDB (ersatzweise localStorage) plus File System Access API für die Datei |
+| Oberfläche | `index.html`, `css/app.css`, `js/app.js` (`packages/ui/`) – reines HTML/CSS/JS, keine Frameworks; der Build kopiert nur |
+| Mindmap | `packages/ui/mindmap.js`: eigenes Layout (links/rechts ausbalanciert), SVG, Zoom, Ziehen, Tastatur; archivierte Knoten blass und gestrichelt |
+| Fragen | `packages/core/questions.js`: Parser für `?`/`!`-Zeilen; Index in der Tabelle `questions`, bei jeder Änderung abgeglichen |
+| Aufgaben | `packages/core/tasks.js`: Parser für `- [ ]`-Zeilen mit `@Datum`, Unteraufgaben über die Einrückung, Abschluss-Regeln als reine Textfunktionen; Index in der Tabelle `tasks`, gleiches Prinzip |
+| Termine | `packages/core/dates.js`: gemeinsame Logik für `@TT.MM.JJJJ` bzw. `@JJJJ-MM-TT`, Dringlichkeit, Anzeige |
+| Markdown | `packages/core/markdown.js`: eigener Renderer, escaped allen Text, erlaubt nur sichere Link-Schemata |
+| Toolleiste | `packages/core/editing.js`: reine Textfunktionen (umschliessen, Zeilenpräfixe, Überschriften, Links) |
+| Export | `packages/core/export.js` baut die Dateien, `zip.js` ist ein kleiner ZIP-Writer; das Bild liefert `NoNotesMindmap.toSvgString`, PNG über ein Canvas |
+| Druck | `packages/ui/print.js` baut das Druckdokument in `#printArea`; `@media print` blendet den Rest der App aus |
+| Scroll-Sync | `packages/ui/scrollsync.js`: Spiegel des Textes misst Zeilenhöhen, Vorschau-Blöcke tragen `data-line`, lineare Interpolation dazwischen |
+| Kalender | `packages/core/ical.js`: iCalendar nach RFC 5545 mit festen UIDs, SEQUENCE, VALARM, Zeilenfaltung; gemerkte Kennungen in `meta` |
+| Backend | `packages/core/backend.js`: asynchrone Schnittstelle für alle Datenzugriffe; `packages/store-local/backend-local.js` setzt sie über SQLite um |
+| Datenbank | [sql.js](https://github.com/sql-js/sql.js) (SQLite nach JavaScript kompiliert) in `vendor/sql.js/`; Schema und Abfragen in `packages/data/db.js` |
+| Persistenz | `packages/store-local/storage.js`: IndexedDB (ersatzweise localStorage) plus File System Access API; `local-shell.js` steuert Speichern, Datei und Browser-Kopie |
+| Sprachen | `packages/core/i18n.js` und `lang/`: der deutsche Text ist der Schlüssel, weitere Sprachen sind Dateien (siehe [docs/LANGUAGES.md](docs/LANGUAGES.md)) |
 | Start | `start.ps1` (nur Cmdlets, läuft im Constrained Language Mode), `start.cmd` |
 
 Warum kein lokaler Webserver? Auf dem Zielrechner steht PowerShell nur im Constrained
@@ -339,20 +346,34 @@ CREATE TABLE attachments (          -- Bilder, im Text als ![Name](att:ID) refer
 
 ## Entwicklung
 
-Für die App selbst ist nichts zu bauen: Dateien ändern, `index.html` neu laden.
+Für die Entwicklung genügt es, `editions/local/index.html` im Browser zu öffnen und nach einer
+Änderung neu zu laden (dann nur Deutsch, ohne Versionsnummer). Die auslieferbare Form entsteht mit
 
-Der Smoke-Test öffnet die App wie ein Benutzer per `file://` in headless Chromium und
-prüft Anlegen, Suchen, Speichern, Neuladen, Herunterladen, Importieren, Löschen, das
-Schreiben in die Datenbankdatei, die Mindmap-Bedienung, die Fragen, Markdown-Vorschau, Tags,
-Papierkorb, Suche, Umsortieren per Drag & Drop, Bild-Anhänge, den Export (Ordner und ZIP),
-das Drucken (mit gestubbtem `window.print`), Toolleiste und Hilfe, Aufgaben, Termine mit Uhrzeit,
-den Kalenderexport, das synchrone Scrollen der geteilten Ansicht, Unteraufgaben, das Archiv und die Migration alter Datenbanken:
+```bash
+npm run build        # schreibt dist/NoNotes
+```
+
+Der Test baut zuerst, öffnet dann das Gebaute wie ein Benutzer per `file://` in headless Chromium
+und prüft Anlegen, Suchen, Speichern, Neuladen, Herunterladen, Importieren, Löschen, das Schreiben
+in die Datenbankdatei, die Mindmap-Bedienung, Fragen, Markdown-Vorschau, Tags, Papierkorb, Suche,
+Umsortieren per Drag & Drop, Bild-Anhänge, den Export (Ordner und ZIP), das Drucken (mit gestubbtem
+`window.print`), Toolleiste und Hilfe, Aufgaben, Termine mit Uhrzeit, den Kalenderexport, das synchrone
+Scrollen der geteilten Ansicht, Unteraufgaben, das Archiv und die Migration alter Datenbanken. Dazu
+kommen der Vertrag der Backend-Schnittstelle (`test/backend.cjs`) und die Sprachprüfungen
+(`test/i18n.cjs`, `tools/i18n.cjs lint` und `check`):
 
 ```bash
 npm install
 npx playwright install --with-deps chromium
 npm test
 ```
+
+## Sprachen
+
+Ausgeliefert wird Deutsch. Weitere Sprachen sind Dateien in `lang/` und kommen mit einem Release dazu:
+`npm run i18n -- init en English en` legt ein Paket mit allen Texten an, `check` prüft es. Ist mehr als eine
+Sprache vorhanden, erscheint die Auswahl im Menü **Datenbank**. Einzelheiten in
+[docs/LANGUAGES.md](docs/LANGUAGES.md).
 
 ## Release
 

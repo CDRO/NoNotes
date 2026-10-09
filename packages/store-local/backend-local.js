@@ -11,7 +11,7 @@
     const backend = { id: 'local' };
     for (const name of C.METHODS) {
       const fn = DB[name];
-      if (typeof fn !== 'function') throw new Error(`Backend-Methode ohne Entsprechung in db.js: ${name}`);
+      if (typeof fn !== 'function') throw new Error(`Backend-Methode ohne Entsprechung in db.js: ${name}`); // i18n-ignore
       const mutating = C.MUTATING.has(name);
       backend[name] = async (...args) => {
         const result = fn(getDb(), ...args);

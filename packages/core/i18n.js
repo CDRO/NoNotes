@@ -109,25 +109,40 @@
 
   // ---------- Festes Markup ----------
 
-  function collapse(s) { return s.replace(/\s+/g, ' ').trim(); }
-  function hasLetters(s) { return /[A-Za-zÄÖÜäöüÀ-ÿ]/.test(s); }
+  const OPAQUE = new Set(['KBD', 'CODE']); // Tastenkürzel und Code zählen nicht als zu übersetzender Text
 
+  function collapse(s) { return s.replace(/\s+/g, ' ').trim(); }
+  function hasWords(s) { return /[A-Za-zÄÖÜäöüÀ-ÿ]{2}/.test(s); }
+
+  /** Sichtbarer Text eines Elements ohne Tastenkürzel und Code. */
+  function ownText(node) {
+    let s = '';
+    for (const c of node.childNodes) {
+      if (c.nodeType === 3) s += c.nodeValue;
+      else if (c.nodeType === 1 && !OPAQUE.has(c.tagName)) s += ownText(c);
+    }
+    return s;
+  }
+
+  /** Nur Text und Textauszeichnung (ohne Elemente mit id, die das Programm anspricht). */
   function isInlineText(node) {
     for (const c of node.childNodes) {
       if (c.nodeType === 3) continue;
-      if (c.nodeType === 1 && INLINE.has(c.tagName) && isInlineText(c)) continue;
+      if (c.nodeType === 1 && INLINE.has(c.tagName) && !c.id && isInlineText(c)) continue;
       return false;
     }
     return true;
   }
 
-  /** Geht das feste Markup durch. Mit apply === false werden nur die Schlüssel gesammelt. */
+  /** Geht das feste Markup durch. Mit apply === false werden nur die Schlüssel gesammelt.
+   *  data-i18n-skip lässt ein Element samt Inhalt aus, data-i18n erzwingt die Übersetzung eines Elements,
+   *  dessen Text nur aus Tastenkürzeln besteht (zum Beispiel <kbd data-i18n>Entf</kbd>). */
   function walk(root, apply) {
     const found = new Set();
     const p = pack();
     const lookup = key => (p && !p.source ? p.messages.get(key) : undefined);
     const emit = (key, set) => {
-      if (!key || !hasLetters(key)) return;
+      if (!key) return;
       found.add(key);
       if (apply) {
         const v = lookup(key);
@@ -136,18 +151,26 @@
       }
     };
     const visit = elm => {
-      if (SKIP.has(elm.tagName.toUpperCase()) || elm.hasAttribute('data-i18n-skip')) return;
+      if (elm.hasAttribute('data-i18n-skip')) return;
       for (const a of ATTRS) {
-        if (elm.hasAttribute(a)) emit(collapse(elm.getAttribute(a)), (text, ok) => { if (ok) elm.setAttribute(a, text); });
+        if (elm.hasAttribute(a)) {
+          const val = collapse(elm.getAttribute(a));
+          if (hasWords(val)) emit(val, (text, ok) => { if (ok) elm.setAttribute(a, text); });
+        }
       }
+      if (SKIP.has(elm.tagName.toUpperCase())) return; // Inhalt von Skripten, Feldern usw. bleibt unberührt
+      const forced = elm.hasAttribute('data-i18n');
       if (elm.tagName === 'OPTION' || (elm.childNodes.length && isInlineText(elm))) {
-        const raw = elm.innerHTML;
-        emit(collapse(raw), (text, ok) => { if (ok) elm.innerHTML = text; });
+        if (forced || hasWords(ownText(elm))) {
+          emit(collapse(elm.innerHTML), (text, ok) => { if (ok) elm.innerHTML = text; });
+        }
         return;
       }
       for (const c of [...elm.childNodes]) {
-        if (c.nodeType === 3) emit(collapse(c.nodeValue), (text, ok) => { if (ok) c.nodeValue = text; });
-        else if (c.nodeType === 1) visit(c);
+        if (c.nodeType === 3) {
+          const val = collapse(c.nodeValue);
+          if (hasWords(val)) emit(val, (text, ok) => { if (ok) c.nodeValue = text; });
+        } else if (c.nodeType === 1) visit(c);
       }
     };
     visit(root);

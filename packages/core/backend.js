@@ -78,7 +78,7 @@
   function errorText(e) {
     const I18n = global.NoNotesI18n;
     if (e && e.code === 'SUBTASKS_OPEN' && typeof e.open === 'number' && global.NoNotesTasks) return global.NoNotesTasks.openMessage(e.open);
-    if (e && e.code && ERRORS[e.code]) return I18n.t(ERRORS[e.code], e.params);
+    if (e && e.code && ERRORS[e.code]) return I18n.t(ERRORS[e.code], e.params); // i18n-dynamic
     if (e && e.message) return String(e.message);
     return I18n.t('Unbekannter Fehler');
   }

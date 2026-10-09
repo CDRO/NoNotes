@@ -4,7 +4,7 @@
   'use strict';
 
   const SCHEMA_VERSION = 10;
-  let defaultMapTitle = 'Meine Notizen'; // Anfangswert; die Ausprägung setzt ihn über configure() in der Sprache der Oberfläche
+  let defaultMapTitle = 'Meine Notizen'; // i18n-ignore: Anfangswert; die Ausprägung setzt ihn über configure() in der Sprache der Oberfläche
 
   function nowIso() { return new Date().toISOString(); }
 

@@ -5,7 +5,7 @@
   'use strict';
 
   // Übersetzung nur, wenn das Sprachsystem geladen ist (die Funktionen laufen auch ohne Browser).
-  const t = key => (global.NoNotesI18n ? global.NoNotesI18n.t(key) : key);
+  const t = key => (global.NoNotesI18n ? global.NoNotesI18n.t(key) : key); // i18n-dynamic
 
   function lineBounds(text, start, end) {
     const from = text.lastIndexOf('\n', start - 1) + 1;

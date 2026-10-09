@@ -7,7 +7,7 @@
   const { t, tn } = global.NoNotesI18n;
 
   const SVG_NS = 'http://www.w3.org/2000/svg';
-  const FONT_FAMILY = 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+  const FONT_FAMILY = 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'; // i18n-ignore
   const FONT = '600 14px ' + FONT_FAMILY;
   const ROOT_FONT = '700 16px ' + FONT_FAMILY;
 

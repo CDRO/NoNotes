@@ -13,9 +13,9 @@
 
   <div id="app" class="app" hidden>
     <header class="topbar">
-      <div class="brand">
+      <div class="brand" data-i18n-skip>
         <span class="logo" aria-hidden="true">N</span>
-        <span>NoNotes</span>
+        <span data-i18n-skip>NoNotes</span>
         <span class="version" id="version"></span>
       </div>
 
@@ -46,6 +46,10 @@
           <div class="sep" role="separator"></div>
           <button type="button" id="storageHelpBtn" role="menuitem">Datenablage erklärt…</button>
           <button type="button" id="menuHelpBtn" role="menuitem">Hilfe (F1)</button>
+          <div class="menu-lang" id="langRow" hidden>
+            <label for="langSelect">Sprache</label>
+            <select id="langSelect" data-i18n-skip></select>
+          </div>
           <div class="sep" role="separator"></div>
           <div class="hint" id="menuHint"></div>
         </div>
@@ -400,7 +404,7 @@
               <dt><kbd>Tab</kbd></dt><dd>Unternotiz zur Auswahl (ohne Auswahl: zur Wurzel)</dd>
               <dt><kbd>Enter</kbd></dt><dd>Notiz öffnen</dd>
               <dt><kbd>F2</kbd></dt><dd>Umbenennen</dd>
-              <dt><kbd>Entf</kbd></dt><dd>In den Papierkorb</dd>
+              <dt><kbd data-i18n>Entf</kbd></dt><dd>In den Papierkorb</dd>
               <dt><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Durch den Baum wandern</dd>
               <dt><kbd>Alt</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd></dt><dd>Reihenfolge ändern</dd>
               <dt><kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd></dt><dd>Zoom, Einpassen</dd>

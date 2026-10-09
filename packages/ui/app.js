@@ -63,7 +63,7 @@
     qaScopeFiltered: $('#qaScopeFiltered'), qaLines: $('#qaLines'), qSort: $('#qSort'),
     mdToolbar: $('#mdToolbar'), headingSelect: $('#headingSelect'), helpBtn: $('#helpBtn'),
     helpDialog: $('#helpDialog'), helpTabs: $('#helpTabs'), helpStorageStatus: $('#helpStorageStatus'),
-    storageHelpBtn: $('#storageHelpBtn'), menuHelpBtn: $('#menuHelpBtn'),
+    storageHelpBtn: $('#storageHelpBtn'), menuHelpBtn: $('#menuHelpBtn'), langRow: $('#langRow'), langSelect: $('#langSelect'),
     viewTasksBtn: $('#viewTasksBtn'), tasksView: $('#tasksView'), tFilter: $('#tFilter'), tSort: $('#tSort'),
     tSearch: $('#tSearch'), tTagFilter: $('#tTagFilter'), tPrintBtn: $('#tPrintBtn'), tCount: $('#tCount'),
     tList: $('#tList'), tEmpty: $('#tEmpty'),
@@ -258,6 +258,24 @@
     await renderAll();
     shell.afterReady();
     document.body.dataset.ready = 'true';
+  }
+
+  /** Sprachwahl im Menü, nur sichtbar, wenn mehr als eine Sprache vorhanden ist. Der Wechsel lädt die Seite neu. */
+  function setupLanguage() {
+    const langs = I18n.available();
+    el.langRow.hidden = langs.length < 2;
+    el.langSelect.replaceChildren(...langs.map(l => {
+      const o = document.createElement('option');
+      o.value = l.code;
+      o.textContent = l.name;
+      return o;
+    }));
+    el.langSelect.value = I18n.language();
+    el.langSelect.addEventListener('change', async () => {
+      I18n.setLanguage(el.langSelect.value, true);
+      try { await shell.flush(); } catch (e) { /* neu laden trotzdem */ }
+      location.reload();
+    });
   }
 
   function bootError(message) {
@@ -955,7 +973,7 @@
       bitmap.close && bitmap.close();
       const keepPng = mime === 'image/png' && bytes.length <= 2 * MAX_ATTACHMENT_BYTES;
       const outMime = keepPng ? 'image/png' : 'image/jpeg';
-      const blob = await new Promise((res, rej) => canvas.toBlob(b => b ? res(b) : rej(new Error('Bild konnte nicht verkleinert werden.')), outMime, 0.85));
+      const blob = await new Promise((res, rej) => canvas.toBlob(b => b ? res(b) : rej(new Error('Bild konnte nicht verkleinert werden.')), outMime, 0.85)); // i18n-ignore
       const out = new Uint8Array(await blob.arrayBuffer());
       if (out.length >= bytes.length) return { name: file.name, mime, bytes };
       const name = outMime === 'image/jpeg' ? file.name.replace(/\.[a-z0-9]{2,5}$/i, '') + '.jpg' : file.name;
@@ -971,7 +989,7 @@
       const url = URL.createObjectURL(file);
       const img = new Image();
       img.onload = () => { URL.revokeObjectURL(url); resolve({ w: img.naturalWidth, h: img.naturalHeight }); };
-      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('kein Bild')); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('kein Bild')); }; // i18n-ignore
       img.src = url;
     });
   }
@@ -2249,6 +2267,7 @@
     el.headingSelect.addEventListener('change', setHeadingFromSelect);
     el.helpBtn.addEventListener('click', () => openHelp('editor'));
     el.menuHelpBtn.addEventListener('click', () => openHelp('editor'));
+    setupLanguage();
     el.storageHelpBtn.addEventListener('click', () => openHelp('storage'));
     el.helpTabs.addEventListener('click', async e => {
       const b = e.target.closest('button[data-tab]');
