@@ -16,6 +16,7 @@ packages/
 editions/
   local/        index.html, edition.js, Startskripte: setzt die lokale Version zusammen
 lang/           Sprachpakete (de.js ist die Quellsprache)
+plugins/        Liste der Erweiterungen (plugins.js), Anleitung und Beispiele; ausgeliefert neben der App
 tools/          build.cjs (Bau), i18n.cjs (Sprachwerkzeug)
 test/           smoke.cjs (Gesamtablauf), backend.cjs (Vertrag), i18n.cjs (Sprachen)
 docs/           diese Dokumente
@@ -48,6 +49,13 @@ drei Regeln:
    etwas ins Dokument schreiben (veraltete Antworten werden verworfen).
 3. Was ein synchroner Renderer braucht (Bilder, Verweisverzeichnis), wird vorher geholt und dann 체bergeben.
 
+## Erweiterungen
+
+Eine Erweiterung ist eine Skriptdatei im Ordner `plugins/` neben der App, die sich mit `NoNotesPlugins.register()` meldet
+(`packages/core/plugins.js`). Die App l채dt die Dateien aus `plugins/plugins.js` vor dem Start, ruft nach dem ersten Zeichnen
+`activate(ctx)` auf und meldet Ereignisse. Programmcode kommt nie aus der Datenbankdatei. Die Schnittstelle (`ctx`, Ereignisse,
+Theme-Variablen) ist f체r 1.x festgelegt, siehe [PLUGINS.md](PLUGINS.md).
+
 ## Sprachen
 
 Alle Texte laufen 체ber `t()`/`tn()` (Quelltext) und `translateDom()` (festes Markup). Siehe
@@ -60,7 +68,7 @@ durch alle Ansichten; `tools/i18n.cjs lint` findet deutschen Text, der am Sprach
 `dist/NoNotes`:
 
 ```
-index.html  css/  js/  lang/  vendor/  docs/  start.ps1  start.cmd  README.md  NOTICE
+index.html  css/  js/  lang/  vendor/  plugins/  docs/  start.ps1  start.cmd  README.md  NOTICE
 ```
 
 Es wird nichts 체bersetzt oder geb체ndelt. Der Build schreibt `js/version.js`, bindet alle Dateien aus `lang/` ein
@@ -70,5 +78,5 @@ Entwickeln geht auch ohne Build: `editions/local/index.html` direkt im Browser �
 ## Tests
 
 `npm test` baut und f체hrt der Reihe nach aus: `i18n lint`, `i18n check`, `test/backend.cjs`,
-`test/smoke.cjs`, `test/palette.cjs`, `test/i18n.cjs`. Getestet wird immer das Gebaute (`dist/NoNotes`) per `file://` in
+`test/smoke.cjs`, `test/palette.cjs`, `test/plugins.cjs`, `test/i18n.cjs`. Getestet wird immer das Gebaute (`dist/NoNotes`) per `file://` in
 Chromium, also genau das, was der Benutzer bekommt.

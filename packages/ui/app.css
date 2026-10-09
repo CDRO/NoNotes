@@ -145,6 +145,7 @@ body {
 .menu-panel .menu-lang { display: flex; align-items: center; gap: 8px; padding: 4px 10px; font-size: 13px; }
 .menu-panel .menu-lang[hidden] { display: none; }
 .menu-panel .menu-lang select { flex: 1; min-width: 0; }
+.menu-panel .plugin-menu[hidden] { display: none; }
 .menu-panel .hint { font-size: 12px; color: var(--muted); padding: 2px 10px 6px; line-height: 1.4; }
 
 /* ---------- Hinweisleiste ---------- */
@@ -778,3 +779,17 @@ body:not(.view-tasks) .tasks-view { display: none; }
   #printArea .print-q-text .due, #printArea .md-due { font-size: 8.5pt; border: 1px solid #999; border-radius: 999px; padding: 1pt 5pt; margin-left: 6pt; color: #333; background: none; font-weight: 500; }
   #printArea .due.overdue { color: #b00; border-color: #b00; font-weight: 600; }
 }
+
+/* ---------- Erweiterungen ---------- */
+
+.plugin-list { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 12px; max-height: 50vh; overflow: auto; }
+.plugin-empty { color: var(--muted); }
+.plugin-item { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--bg); }
+.plugin-item h3 { margin: 0; font-size: 14px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.plugin-item .plugin-version, .plugin-item .plugin-file { color: var(--muted); font-weight: 400; font-size: 12px; }
+.plugin-item p { margin: 4px 0 0; font-size: 13px; }
+.plugin-state { font-size: 12px; font-weight: 600; border-radius: 999px; padding: 1px 8px; background: var(--active); color: var(--text); }
+.plugin-state.error { background: color-mix(in srgb, var(--danger) 18%, var(--panel)); color: var(--danger); }
+.plugin-warning { border-left: 3px solid var(--warn); padding-left: 10px; }
+.tb-plugin { white-space: nowrap; }
+.plugin-error { color: var(--danger); }

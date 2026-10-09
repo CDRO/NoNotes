@@ -7,6 +7,7 @@
   const tn = I18n.tn;
   const Backend = window.NoNotesBackend;
   const Palette = window.NoNotesPalette;
+  const Plugins = window.NoNotesPlugins;
   const Store = window.NoNotesStorage;
   const Mindmap = window.NoNotesMindmap;
   const Q = window.NoNotesQuestions;
@@ -20,6 +21,7 @@
   const Cal = window.NoNotesCalendar;
   const joinParts = (...parts) => parts.filter(Boolean).join(', ');
   const errorText = e => Backend.errorText(e);
+  const THEME_KEY = 'nonotes.theme';   // Zwischenspeicher des Designs; massgebend ist meta 'theme' der Datenbank
   const ACCENT_KEY = 'nonotes.accent'; // Zwischenspeicher der Hauptfarbe; massgebend ist meta 'accent' der Datenbank
   const CAL_HANDLE_KEY = 'ics';
   const CAL_FILENAME = 'NoNotes.ics';
@@ -82,6 +84,8 @@
     mdToolbar: $('#mdToolbar'), headingSelect: $('#headingSelect'), helpBtn: $('#helpBtn'),
     helpDialog: $('#helpDialog'), helpTabs: $('#helpTabs'), helpStorageStatus: $('#helpStorageStatus'),
     storageHelpBtn: $('#storageHelpBtn'), menuHelpBtn: $('#menuHelpBtn'), langRow: $('#langRow'), langSelect: $('#langSelect'), accentSwatches: $('#accentSwatches'),
+    themeRow: $('#themeRow'), themeSelect: $('#themeSelect'), pluginMenu: $('#pluginMenu'), pluginsBtn: $('#pluginsBtn'),
+    pluginsDialog: $('#pluginsDialog'), pluginList: $('#pluginList'),
     viewTasksBtn: $('#viewTasksBtn'), tasksView: $('#tasksView'), tFilter: $('#tFilter'), tSort: $('#tSort'),
     tSearch: $('#tSearch'), tTagFilter: $('#tTagFilter'), tPrintBtn: $('#tPrintBtn'), tCount: $('#tCount'),
     tList: $('#tList'), tEmpty: $('#tEmpty'),
@@ -106,6 +110,7 @@
     map: null,
     mapDirty: true,
     accent: Palette.DEFAULT,
+    theme: '',            // Kennung der Erweiterung, deren Design gilt; leer = Standard
     accentStale: false,   // nach Datei öffnen oder Import: Hauptfarbe neu aus der Datenbank lesen
     mapSelection: null,   // 'root' | Zahl | null
     rename: null,         // { id, isNew }
@@ -246,8 +251,11 @@
     const edition = window.NoNotesEdition;
     if (!edition) throw new Error(t('Es ist keine Ausprägung geladen.'));
     shell = edition.createShell(shellHost());
+    await Plugins.loadAll(); // Skripte aus dem Ordner plugins/, bevor etwas gezeichnet wird (Designs)
+    try { applyTheme(localStorage.getItem(THEME_KEY) || ''); } catch (e) { /* ohne Zwischenspeicher: Standard */ }
     B = await shell.start();
     await loadAccent();
+    await loadTheme();
     if (Store.fileAccess.supported) state.calHandle = await Store.browserStore.loadHandleKey(CAL_HANDLE_KEY);
 
     state.map = Mindmap.create(el.mindmap, {
@@ -279,7 +287,10 @@
     await setView(['list', 'questions', 'tasks'].includes(view) ? view : 'map');
     await renderAll();
     shell.afterReady();
+    await Plugins.activateAll(pluginContext);
+    renderPlugins();
     document.body.dataset.ready = 'true';
+    emitPlugins('ready', {});
   }
 
   /** Sprachwahl im Menü, nur sichtbar, wenn mehr als eine Sprache vorhanden ist. Der Wechsel lädt die Seite neu. */
@@ -479,7 +490,8 @@
   // ---------- Darstellung ----------
 
   async function renderAll() {
-    if (state.accentStale) await loadAccent();
+    const replaced = state.accentStale;
+    if (state.accentStale) { await loadAccent(); await loadTheme(); }
     await renderTagFilters();
     await renderList();
     await renderEditor();
@@ -489,6 +501,7 @@
     await renderTaskCounts();
     if (state.view === 'questions') await renderQuestions();
     if (state.view === 'tasks') await renderTasks();
+    if (replaced) emitPlugins('database:replaced', {});
   }
 
   // ---------- Hauptfarbe ----------
@@ -528,6 +541,213 @@
       b.addEventListener('click', () => chooseAccent(c.id));
       return b;
     }));
+  }
+
+  // ---------- Design (aus einer Erweiterung) ----------
+
+  function paintTheme(theme) {
+    let style = document.getElementById('themeStyle');
+    const css = Plugins.themeCss(theme);
+    if (!css) { if (style) style.remove(); return; }
+    if (!style) {
+      style = document.createElement('style');
+      style.id = 'themeStyle';
+      document.head.appendChild(style);
+    }
+    style.textContent = css;
+    const accent = document.getElementById('accentStyle');
+    if (accent) document.head.appendChild(accent); // die Hauptfarbe steht zuletzt und gewinnt
+  }
+
+  /** Wendet das Design einer Erweiterung an (leer oder unbekannt: Standard). */
+  function applyTheme(id) {
+    const theme = id ? Plugins.theme(id) : null;
+    state.theme = theme ? theme.id : '';
+    paintTheme(theme);
+    try {
+      if (state.theme) localStorage.setItem(THEME_KEY, state.theme); else localStorage.removeItem(THEME_KEY);
+    } catch (e) { /* egal */ }
+    el.themeSelect.value = state.theme;
+  }
+
+  async function loadTheme() {
+    applyTheme(await B.getMeta('theme'));
+  }
+
+  async function chooseTheme(id) {
+    applyTheme(id);
+    await B.setMeta('theme', state.theme);
+    const theme = state.theme ? Plugins.theme(state.theme) : null;
+    setStatus(t('Design: {name}', { name: theme ? theme.name : t('Standard') }), saveState());
+  }
+
+  /** Auswahl im Menü, nur sichtbar, wenn Erweiterungen Designs mitbringen. */
+  function setupTheme() {
+    const themes = Plugins.themes();
+    el.themeRow.hidden = themes.length === 0;
+    const standard = document.createElement('option');
+    standard.value = '';
+    standard.textContent = t('Standard');
+    el.themeSelect.replaceChildren(standard, ...themes.map(th => {
+      const o = document.createElement('option');
+      o.value = th.id;
+      o.textContent = th.name;
+      return o;
+    }));
+    el.themeSelect.value = state.theme;
+    el.themeSelect.addEventListener('change', () => chooseTheme(el.themeSelect.value));
+  }
+
+  // ---------- Erweiterungen ----------
+
+  const emitPlugins = (event, data) => { Plugins.emit(event, data); };
+
+  /** «Gespeichert»-Ereignis nach einer Pause im Tippen, nicht bei jedem Zeichen. */
+  function scheduleSavedEvent(id) {
+    clearTimeout(state.pluginSavedTimer);
+    state.pluginSavedTimer = setTimeout(() => emitPlugins('note:saved', { id }), 700);
+  }
+
+  /** Führt Code einer Erweiterung aus; ein Fehler trifft nur die Erweiterung und erscheint in der Statuszeile. */
+  async function runPlugin(entry, fn) {
+    try {
+      await fn();
+    } catch (e) {
+      entry.error = (e && e.message) || String(e);
+      console.warn(`Erweiterung ${entry.id}`, e); // i18n-ignore: Protokoll
+      setStatus(t('Erweiterung «{name}»: {fehler}', { name: entry.name, fehler: entry.error }), 'error');
+    }
+  }
+
+  function pluginEditorApi() {
+    const writable = () => state.currentId != null && !el.body.readOnly && isEditorOpen();
+    return Object.freeze({
+      noteId: () => (isEditorOpen() ? state.currentId : null),
+      isWritable: writable,
+      selection: () => ({ start: el.body.selectionStart || 0, end: el.body.selectionEnd || 0, text: el.body.value.slice(el.body.selectionStart || 0, el.body.selectionEnd || 0) }),
+      /** Ersetzt die Markierung (oder fügt am Cursor ein). Liefert false, wenn gerade nichts zu bearbeiten ist. */
+      replaceSelection: async text => {
+        if (!writable()) return false;
+        const value = el.body.value;
+        const s = el.body.selectionStart || 0;
+        const e = el.body.selectionEnd || s;
+        const insert = String(text);
+        await applyEdit({ text: value.slice(0, s) + insert + value.slice(e), selStart: s + insert.length, selEnd: s + insert.length });
+        return true;
+      },
+    });
+  }
+
+  /** Die Schnittstelle, die activate(ctx) einer Erweiterung bekommt. Stabil innerhalb der Version 1.x. */
+  function pluginContext(entry) {
+    const id = entry.id;
+    return Object.freeze({
+      id,
+      api: Plugins.API,
+      appVersion: window.NONOTES_VERSION || 'dev',
+      backend: B,
+      language: () => I18n.language(),
+      on: (event, fn) => Plugins.on(id, event, fn),
+      openNote: noteId => openNote(noteId),
+      refresh: async () => { state.mapDirty = true; await renderAll(); },
+      ui: Object.freeze({
+        setStatus: (text, kind) => setStatus(String(text), ['saved', 'dirty', 'saving', 'error'].includes(kind) ? kind : ''),
+        addMenuItem: item => addPluginMenuItem(entry, item),
+        addToolbarButton: item => addPluginToolbarButton(entry, item),
+      }),
+      editor: pluginEditorApi(),
+    });
+  }
+
+  function checkItem(item, what) {
+    if (!item || typeof item.label !== 'string' || !item.label.trim() || typeof item.action !== 'function') {
+      throw new Error(t('{was} braucht label (Text) und action (Funktion)', { was: what }));
+    }
+  }
+
+  function addPluginMenuItem(entry, item) {
+    checkItem(item, 'addMenuItem');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.setAttribute('role', 'menuitem');
+    b.dataset.plugin = entry.id;
+    b.textContent = item.label;
+    if (item.title) b.title = String(item.title);
+    b.addEventListener('click', () => { closeMenu(); runPlugin(entry, () => item.action()); });
+    el.pluginMenu.appendChild(b);
+    el.pluginMenu.hidden = false;
+  }
+
+  function addPluginToolbarButton(entry, item) {
+    checkItem(item, 'addToolbarButton');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'tb-plugin';
+    b.dataset.plugin = entry.id;
+    b.textContent = item.label;
+    b.title = String(item.title || item.label);
+    b.setAttribute('aria-label', String(item.title || item.label));
+    b.disabled = el.body.readOnly;
+    b.addEventListener('click', () => runPlugin(entry, () => item.action(pluginEditorApi())));
+    el.mdToolbar.appendChild(b);
+  }
+
+  function renderPlugins() {
+    const items = Plugins.all();
+    el.pluginList.replaceChildren();
+    if (!items.length) {
+      const p = document.createElement('p');
+      p.className = 'plugin-empty';
+      p.textContent = t('Keine Erweiterungen geladen. Eine Datei in plugins/ ablegen und in plugins/plugins.js eintragen; Anleitung und Beispiele liegen im Ordner plugins/.');
+      el.pluginList.appendChild(p);
+      return;
+    }
+    for (const entry of items) {
+      const box = document.createElement('div');
+      box.className = 'plugin-item';
+      const h = document.createElement('h3');
+      h.append(entry.name || entry.file);
+      if (entry.version) {
+        const v = document.createElement('span');
+        v.className = 'plugin-version';
+        v.textContent = entry.version;
+        h.append(v);
+      }
+      const st = document.createElement('span');
+      st.className = 'plugin-state' + (entry.status === 'error' ? ' error' : '');
+      st.textContent = entry.status === 'active' ? t('aktiv') : entry.status === 'error' ? t('Fehler') : t('geladen');
+      h.append(st);
+      const f = document.createElement('span');
+      f.className = 'plugin-file';
+      f.textContent = entry.file;
+      h.append(f);
+      box.appendChild(h);
+      if (entry.description) {
+        const d = document.createElement('p');
+        d.textContent = entry.description;
+        box.appendChild(d);
+      }
+      if (entry.theme) {
+        const d = document.createElement('p');
+        d.className = 'plugin-note';
+        d.textContent = t('Bringt ein Design mit; Auswahl im Menü Datenbank.');
+        box.appendChild(d);
+      }
+      if (entry.error) {
+        const d = document.createElement('p');
+        d.className = 'plugin-error';
+        d.textContent = entry.error;
+        box.appendChild(d);
+      }
+      el.pluginList.appendChild(box);
+    }
+  }
+
+  function openPluginsDialog() {
+    closeMenu();
+    renderPlugins();
+    if (typeof el.pluginsDialog.showModal === 'function') el.pluginsDialog.showModal();
+    else el.pluginsDialog.setAttribute('open', '');
   }
 
   async function renderTaskCounts() {
@@ -1284,6 +1504,7 @@
       await selectNote(id, true);
     }
     if (opts && typeof opts.line === 'number') jumpToLine(opts.line);
+    emitPlugins('note:open', { id });
   }
 
   function jumpToLine(lineIndex) {
@@ -1301,6 +1522,7 @@
   async function closeEditor() {
     if (!isEditorOpen()) { showEditorView(false); return; }
     document.body.classList.remove('editor-open');
+    if (state.currentId != null) emitPlugins('note:close', { id: state.currentId });
     if (state.view === 'map') {
       if (state.currentId != null) state.mapSelection = state.currentId;
       await renderMap();
@@ -1371,6 +1593,7 @@
     await renderTaskCounts();
     schedulePreview();
     markEdited();
+    scheduleSavedEvent(state.currentId);
   }
 
   /** Markiert die Zeile(n) unter dem Cursor als Frage ("?") oder Antwort ("!") bzw. hebt es auf. */
@@ -1869,7 +2092,7 @@
   }
 
   function anyDialogOpen() {
-    return [el.exportDialog, el.printDialog, el.qaPrintDialog, el.taskPrintDialog, el.helpDialog, el.calDialog].some(d => d.open);
+    return [el.exportDialog, el.printDialog, el.qaPrintDialog, el.taskPrintDialog, el.helpDialog, el.calDialog, el.pluginsDialog].some(d => d.open);
   }
 
   function onQuestionSearchInput() {
@@ -2331,6 +2554,8 @@
     el.menuHelpBtn.addEventListener('click', () => openHelp('editor'));
     setupLanguage();
     setupAccent();
+    setupTheme();
+    el.pluginsBtn.addEventListener('click', openPluginsDialog);
     el.storageHelpBtn.addEventListener('click', () => openHelp('storage'));
     el.helpTabs.addEventListener('click', async e => {
       const b = e.target.closest('button[data-tab]');

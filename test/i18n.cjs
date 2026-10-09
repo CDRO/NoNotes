@@ -180,7 +180,7 @@ async function pseudoTest(browser) {
   await page.click('#menuBtn');
   await check('Menü');
   await page.keyboard.press('Escape');
-  for (const [btn, dlg, label] of [['#exportBtn', '#exportDialog', 'Export'], ['#calendarBtn', '#calDialog', 'Kalender'], ['#storageHelpBtn', '#helpDialog', 'Datenablage']]) {
+  for (const [btn, dlg, label] of [['#exportBtn', '#exportDialog', 'Export'], ['#calendarBtn', '#calDialog', 'Kalender'], ['#storageHelpBtn', '#helpDialog', 'Datenablage'], ['#pluginsBtn', '#pluginsDialog', 'Erweiterungen']]) {
     await page.click('#menuBtn');
     await page.click(btn);
     await page.waitForSelector(dlg + '[open]');

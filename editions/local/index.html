@@ -46,9 +46,17 @@
           <div class="sep" role="separator"></div>
           <button type="button" id="storageHelpBtn" role="menuitem">Datenablage erklärt…</button>
           <button type="button" id="menuHelpBtn" role="menuitem">Hilfe (F1)</button>
+          <div id="pluginMenu" class="plugin-menu" hidden>
+            <div class="sep" role="separator"></div>
+          </div>
+          <button type="button" id="pluginsBtn" role="menuitem">Erweiterungen…</button>
           <div class="menu-lang" id="langRow" hidden>
             <label for="langSelect">Sprache</label>
             <select id="langSelect" data-i18n-skip></select>
+          </div>
+          <div class="menu-lang" id="themeRow" hidden>
+            <label for="themeSelect">Design</label>
+            <select id="themeSelect" data-i18n-skip></select>
           </div>
           <div class="menu-accent" role="group" aria-label="Hauptfarbe">
             <span class="menu-accent-label">Hauptfarbe</span>
@@ -307,6 +315,18 @@
     </form>
   </dialog>
 
+  <dialog id="pluginsDialog" class="dialog dialog-wide" aria-labelledby="pluginsTitle">
+    <form method="dialog" id="pluginsForm">
+      <h2 id="pluginsTitle">Erweiterungen</h2>
+      <p class="dialog-lead">Erweiterungen sind Skriptdateien im Ordner <code>plugins/</code> neben der App. Welche geladen werden, steht in <code>plugins/plugins.js</code>. Die Datenbankdatei lädt nie Programmcode.</p>
+      <p class="dialog-lead plugin-warning"><strong>Achtung:</strong> Eine Erweiterung läuft mit allen Rechten dieser Seite. Sie kann alle Notizen lesen und ändern. Lade nur Erweiterungen, denen du vertraust.</p>
+      <div id="pluginList" class="plugin-list"></div>
+      <div class="row">
+        <button type="submit" value="close" class="primary">Schliessen</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="calDialog" class="dialog" aria-labelledby="calTitle">
     <form method="dialog" id="calForm">
       <h2 id="calTitle">Termine in Kalender exportieren</h2>
@@ -489,6 +509,7 @@
   <script src="../../packages/core/i18n.js"></script>
   <!-- LANG-PACKS -->
   <script src="../../packages/core/palette.js"></script>
+  <script src="../../packages/core/plugins.js"></script>
   <script src="../../packages/core/dates.js"></script>
   <script src="../../packages/core/questions.js"></script>
   <script src="../../packages/core/tasks.js"></script>
@@ -506,6 +527,7 @@
   <script src="../../packages/core/ical.js"></script>
   <script src="../../packages/ui/print.js"></script>
   <script src="../../packages/ui/scrollsync.js"></script>
+  <script src="../../plugins/plugins.js"></script>
   <script src="../../packages/ui/app.js"></script>
 </body>
 </html>

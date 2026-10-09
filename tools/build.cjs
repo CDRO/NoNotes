@@ -65,6 +65,7 @@ function main() {
     let dest;
     if (rel.startsWith('vendor/')) dest = rel;
     else if (rel.startsWith('lang/')) dest = rel;
+    else if (rel.startsWith('plugins/')) dest = rel; // Liste der Erweiterungen: der Ordner wird unten ganz kopiert
     else dest = 'js/' + path.basename(abs);
     if (path.basename(abs) === 'version.js') {
       fs.mkdirSync(path.join(out, 'js'), { recursive: true });
@@ -96,6 +97,19 @@ function main() {
   for (const f of fs.readdirSync(sqlDir)) {
     if (/\.zip$/i.test(f)) continue;
     place(path.join(sqlDir, f), `vendor/sql.js/${f}`);
+  }
+
+  // Erweiterungen: Liste, Anleitung und Beispiele; der Benutzer ergänzt hier seine eigenen Dateien
+  const pluginsDir = path.join(ROOT, 'plugins');
+  if (fs.existsSync(pluginsDir)) {
+    const walkDir = d => {
+      for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+        const abs = path.join(d, entry.name);
+        if (entry.isDirectory()) walkDir(abs);
+        else place(abs, path.relative(ROOT, abs).split(path.sep).join('/'));
+      }
+    };
+    walkDir(pluginsDir);
   }
 
   // Verweise prüfen: jede in der index.html genannte Datei muss im Ziel liegen.
