@@ -5,7 +5,6 @@
 (function (global) {
   'use strict';
 
-  const DB = () => global.NoNotesDB;
   const Q = () => global.NoNotesQuestions;
   const Mindmap = () => global.NoNotesMindmap;
 
@@ -32,8 +31,8 @@
 
   /** Lebende Notizen in Baumreihenfolge (Tiefensuche), mit depth und children.
    *  options.archived: auch archivierte Notizen (sonst fehlen sie). */
-  function treeOrder(db, options) {
-    const rows = DB().getTree(db, { archive: !!(options && options.archived) });
+  async function treeOrder(backend, options) {
+    const rows = await backend.getTree({ archive: !!(options && options.archived) });
     const byId = new Map(rows.map(r => [r.id, Object.assign({ children: [] }, r)]));
     const roots = [];
     for (const n of byId.values()) {
@@ -101,12 +100,12 @@
     return out;
   }
 
-  function metaLines(db, node, note) {
+  async function metaLines(backend, node, note) {
     const lines = [];
     const path = pathTitles(node);
     if (path.length) lines.push(`*Pfad: ${path.join(' › ')}*  `);
     lines.push(`*Erstellt ${fmtDate(note.created_at)} · Geändert ${fmtDate(note.updated_at)}${note.archived_at ? ' · Archiviert ' + fmtDate(note.archived_at) : ''}*  `);
-    const tags = DB().getTags(db, node.id);
+    const tags = await backend.getTags(node.id);
     if (tags.length) lines.push(`*Tags: ${tags.join(', ')}*  `);
     return lines;
   }
@@ -115,10 +114,10 @@
     return nodes.map(n => `${'  '.repeat(n.depth - 1)}- [${n.title.trim() || 'Ohne Titel'}](${hrefOf(n)})${n.archived_at ? ' *(archiviert)*' : ''}`);
   }
 
-  function openQuestionLines(db, nodes, hrefOf, archived) {
+  async function openQuestionLines(backend, nodes, hrefOf, archived) {
     const D = global.NoNotesDates;
     const byId = new Map(nodes.map(n => [n.id, n]));
-    const rows = DB().listQuestions(db, { status: 'open', sort: 'due', archived });
+    const rows = await backend.listQuestions({ status: 'open', sort: 'due', archived });
     if (!rows.length) return ['Keine offenen Fragen.'];
     return rows.map(r => {
       const n = byId.get(r.note_id);
@@ -127,10 +126,10 @@
     });
   }
 
-  function openTaskLines(db, nodes, hrefOf, archived) {
+  async function openTaskLines(backend, nodes, hrefOf, archived) {
     const T = global.NoNotesTasks;
     const byId = new Map(nodes.map(n => [n.id, n]));
-    const rows = DB().listTasks(db, { status: 'open', sort: 'due', archived });
+    const rows = await backend.listTasks({ status: 'open', sort: 'due', archived });
     if (!rows.length) return ['Keine offenen Aufgaben.'];
     return rows.map(r => {
       const n = byId.get(r.note_id);
@@ -139,8 +138,8 @@
     });
   }
 
-  function header(db, version) {
-    const title = DB().getMapTitle(db);
+  async function header(backend, version) {
+    const title = await backend.getMapTitle();
     return [
       `# ${title}`,
       '',
@@ -152,10 +151,10 @@
   }
 
   /** Erzeugt die Dateiliste. options: { mode: 'folder' | 'single', svg, png, version, archived } */
-  function buildFiles(db, options) {
+  async function buildFiles(backend, options) {
     const mode = options.mode === 'single' ? 'single' : 'folder';
     const archived = !!options.archived;
-    const nodes = treeOrder(db, { archived });
+    const nodes = await treeOrder(backend, { archived });
     uniqueSlugs(nodes);
     const byTitle = new Map();
     for (const n of nodes) {
@@ -165,7 +164,7 @@
     const files = [];
 
     // Anhänge: Dateiname aus Nummer und bereinigtem Namen, Pfad relativ zur jeweiligen Markdown-Datei.
-    const attachments = DB().allAttachments(db, { archived });
+    const attachments = await backend.allAttachments({ archived });
     const attName = a => {
       const ext = (a.name.match(/\.[a-z0-9]{2,5}$/i) || [''])[0].toLowerCase();
       const base = slugify(a.name.replace(/\.[a-z0-9]{2,5}$/i, '')) || 'anhang';
@@ -178,15 +177,15 @@
       const hrefFromIndex = n => `notes/${n.slug}.md`;
       const hrefFromNote = n => `${n.slug}.md`;
       const resolveFromNote = title => { const t = byTitle.get(title.toLowerCase()); return t ? hrefFromNote(t) : null; };
-      const index = header(db, options.version);
+      const index = await header(backend, options.version);
       index.push('## Inhalt', '');
       index.push(...(nodes.length ? tocLines(nodes, hrefFromIndex) : ['Noch keine Notizen.']));
-      index.push('', '## Offene Fragen', '', ...openQuestionLines(db, nodes, hrefFromIndex, archived), '');
-      index.push('## Offene Aufgaben', '', ...openTaskLines(db, nodes, hrefFromIndex, archived), '');
+      index.push('', '## Offene Fragen', '', ...await openQuestionLines(backend, nodes, hrefFromIndex, archived), '');
+      index.push('## Offene Aufgaben', '', ...await openTaskLines(backend, nodes, hrefFromIndex, archived), '');
       files.push({ path: 'index.md', data: index.join('\n') });
       for (const n of nodes) {
-        const note = DB().getNote(db, n.id);
-        const lines = [`# ${n.title.trim() || 'Ohne Titel'}`, '', ...metaLines(db, n, note), ''];
+        const note = await backend.getNote(n.id);
+        const lines = [`# ${n.title.trim() || 'Ohne Titel'}`, '', ...await metaLines(backend, n, note), ''];
         const body = bodyToMarkdown(note.body, resolveFromNote, attFrom('../'));
         if (body) lines.push(body, '');
         if (n.children.length) {
@@ -199,19 +198,19 @@
     } else {
       const anchorOf = n => `#${n.slug}`;
       const resolve = title => { const t = byTitle.get(title.toLowerCase()); return t ? anchorOf(t) : null; };
-      const doc = header(db, options.version);
+      const doc = await header(backend, options.version);
       doc.push('## Inhalt', '');
       doc.push(...(nodes.length ? tocLines(nodes, anchorOf) : ['Noch keine Notizen.']));
-      doc.push('', '## Offene Fragen', '', ...openQuestionLines(db, nodes, anchorOf, archived), '');
-      doc.push('## Offene Aufgaben', '', ...openTaskLines(db, nodes, anchorOf, archived), '');
+      doc.push('', '## Offene Fragen', '', ...await openQuestionLines(backend, nodes, anchorOf, archived), '');
+      doc.push('## Offene Aufgaben', '', ...await openTaskLines(backend, nodes, anchorOf, archived), '');
       for (const n of nodes) {
-        const note = DB().getNote(db, n.id);
+        const note = await backend.getNote(n.id);
         const level = Math.min(6, n.depth + 1);
-        doc.push('---', '', `<a id="${n.slug}"></a>`, '', `${'#'.repeat(level)} ${n.title.trim() || 'Ohne Titel'}`, '', ...metaLines(db, n, note), '');
+        doc.push('---', '', `<a id="${n.slug}"></a>`, '', `${'#'.repeat(level)} ${n.title.trim() || 'Ohne Titel'}`, '', ...await metaLines(backend, n, note), '');
         const body = bodyToMarkdown(note.body, resolve, attFrom(''));
         if (body) doc.push(body, '');
       }
-      files.push({ path: `${slugify(DB().getMapTitle(db))}.md`, data: doc.join('\n') });
+      files.push({ path: `${slugify(await backend.getMapTitle())}.md`, data: doc.join('\n') });
     }
 
     for (const a of attachments) files.push({ path: `attachments/${attById.get(a.id)}`, data: a.data });
@@ -220,8 +219,8 @@
     return files;
   }
 
-  function renderSvg(db, options) {
-    return Mindmap().toSvgString(DB().getTree(db, { archive: !!(options && options.archived) }), { mapTitle: DB().getMapTitle(db), expandAll: true });
+  async function renderSvg(backend, options) {
+    return Mindmap().toSvgString(await backend.getTree({ archive: !!(options && options.archived) }), { mapTitle: await backend.getMapTitle(), expandAll: true });
   }
 
   /** SVG-Zeichenkette → PNG-Bytes über ein Canvas. */
@@ -279,8 +278,8 @@
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   }
 
-  function suggestedZipName(db) {
-    return `NoNotes-${slugify(DB().getMapTitle(db))}-${stamp()}.zip`;
+  async function suggestedZipName(backend) {
+    return `NoNotes-${slugify(await backend.getMapTitle())}-${stamp()}.zip`;
   }
 
   global.NoNotesExport = { buildFiles, renderSvg, svgToPng, writeToDirectory, suggestedZipName, slugify, bodyToMarkdown, treeOrder };

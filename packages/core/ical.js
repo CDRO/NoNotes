@@ -7,7 +7,6 @@
 (function (global) {
   'use strict';
 
-  const DB = () => global.NoNotesDB;
   const D = () => global.NoNotesDates;
 
   const DURATION_MIN = 30;
@@ -63,26 +62,26 @@
   }
 
   /** Kennung der Datenbank für stabile UIDs; wird beim ersten Export angelegt. */
-  function calendarId(db) {
-    let id = DB().getMeta(db, 'calendar_uid');
-    if (!id) { id = randomId(); DB().setMeta(db, 'calendar_uid', id); }
+  async function calendarId(backend) {
+    let id = await backend.getMeta('calendar_uid');
+    if (!id) { id = randomId(); await backend.setMeta('calendar_uid', id); }
     return id;
   }
 
   function uidFor(calId, kind, id) { return `nonotes-${calId}-${kind}-${id}@nonotes.local`; }
 
-  function loadKnown(db) {
+  async function loadKnown(backend) {
     try {
-      const v = JSON.parse(DB().getMeta(db, KNOWN_KEY) || '{}');
+      const v = JSON.parse(await backend.getMeta(KNOWN_KEY) || '{}');
       return v && typeof v === 'object' ? v : {};
     } catch (e) { return {}; }
   }
 
   /** Früher exportierte Termine, die es nicht mehr gibt: umformuliert, gelöscht oder Notiz im Papierkorb.
       Sie werden als abgesagt mitgeschrieben, damit sie auch in importierten Kalendern verschwinden. */
-  function removedSince(db, calId, items) {
+  async function removedSince(backend, calId, items) {
     if (!calId) return [];
-    const known = loadKnown(db);
+    const known = await loadKnown(backend);
     const current = new Set(items.map(it => uidFor(calId, it.kind, it.id)));
     const cutoff = plusDays(D().todayIso(), -KEEP_DAYS);
     return Object.entries(known)
@@ -90,39 +89,39 @@
       .map(([uid, k]) => ({ uid, text: String(k.text || ''), due: k.due, kind: k.kind === 'question' ? 'question' : 'task' }));
   }
 
-  function nextSequence(db) {
-    const n = Number(DB().getMeta(db, 'calendar_sequence') || 0) + 1;
-    DB().setMeta(db, 'calendar_sequence', n);
+  async function nextSequence(backend) {
+    const n = Number(await backend.getMeta('calendar_sequence') || 0) + 1;
+    await backend.setMeta('calendar_sequence', n);
     return n;
   }
 
   /** Alle Aufgaben und Fragen mit Termin, vereinheitlicht. */
-  function collect(db, includeDone) {
+  async function collect(backend, includeDone) {
     const items = [];
-    const path = noteId => DB().getPath(db, noteId).map(p => p.title.trim() || 'Ohne Titel');
-    for (const t of DB().listTasks(db, { status: includeDone ? 'all' : 'open', sort: 'due' })) {
+    const path = async noteId => (await backend.getPath(noteId)).map(p => p.title.trim() || 'Ohne Titel');
+    for (const t of await backend.listTasks({ status: includeDone ? 'all' : 'open', sort: 'due' })) {
       if (!t.due) continue;
-      items.push({ kind: 'task', id: t.id, text: t.text, due: t.due, closed: !!t.done, noteId: t.note_id, noteTitle: t.note_title, path: path(t.note_id), tags: DB().getTags(db, t.note_id), answer: null });
+      items.push({ kind: 'task', id: t.id, text: t.text, due: t.due, closed: !!t.done, noteId: t.note_id, noteTitle: t.note_title, path: await path(t.note_id), tags: await backend.getTags(t.note_id), answer: null });
     }
-    for (const q of DB().listQuestions(db, { status: includeDone ? 'all' : 'open', sort: 'due' })) {
+    for (const q of await backend.listQuestions({ status: includeDone ? 'all' : 'open', sort: 'due' })) {
       if (!q.due) continue;
-      items.push({ kind: 'question', id: q.id, text: q.text, due: q.due, closed: !!q.answer, noteId: q.note_id, noteTitle: q.note_title, path: path(q.note_id), tags: DB().getTags(db, q.note_id), answer: q.answer });
+      items.push({ kind: 'question', id: q.id, text: q.text, due: q.due, closed: !!q.answer, noteId: q.note_id, noteTitle: q.note_title, path: await path(q.note_id), tags: await backend.getTags(q.note_id), answer: q.answer });
     }
     items.sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : 0));
     return items;
   }
 
   /** Baut die .ics. options: { includeDone, alarms, dryRun }. Ohne dryRun steigt die SEQUENCE. */
-  function build(db, options) {
+  async function build(backend, options) {
     options = options || {};
     const includeDone = options.includeDone !== false;
     const alarms = options.alarms !== false;
-    const items = collect(db, includeDone);
-    const calId = options.dryRun ? (DB().getMeta(db, 'calendar_uid') || 'vorschau') : calendarId(db);
-    const removed = removedSince(db, calId, items);
-    const seq = options.dryRun ? Number(DB().getMeta(db, 'calendar_sequence') || 0) + 1 : nextSequence(db);
+    const items = await collect(backend, includeDone);
+    const calId = options.dryRun ? (await backend.getMeta('calendar_uid') || 'vorschau') : await calendarId(backend);
+    const removed = await removedSince(backend, calId, items);
+    const seq = options.dryRun ? Number(await backend.getMeta('calendar_sequence') || 0) + 1 : await nextSequence(backend);
     const stamp = utcStamp(options.now ? new Date(options.now) : new Date());
-    const mapTitle = DB().getMapTitle(db);
+    const mapTitle = await backend.getMapTitle();
     const lines = [];
     const push = l => lines.push(fold(l));
     const pushDates = due => {
@@ -201,17 +200,17 @@
       const next = {};
       for (const it of items) next[uidFor(calId, it.kind, it.id)] = { text: it.text, due: it.due, kind: it.kind };
       for (const r of removed) next[r.uid] = { text: r.text, due: r.due, kind: r.kind };
-      DB().setMeta(db, KNOWN_KEY, JSON.stringify(next));
+      await backend.setMeta(KNOWN_KEY, JSON.stringify(next));
     }
     const removedCount = includeDone ? removed.length : 0;
     return { ics: lines.join('\r\n') + '\r\n', total: items.length + removedCount, open, cancelled, removed: removedCount, sequence: seq };
   }
 
   /** Nur zählen, ohne die SEQUENCE zu erhöhen oder etwas zu speichern. */
-  function count(db, includeDone) {
+  async function count(backend, includeDone) {
     includeDone = includeDone !== false;
-    const items = collect(db, includeDone);
-    const removed = includeDone ? removedSince(db, DB().getMeta(db, 'calendar_uid'), items).length : 0;
+    const items = await collect(backend, includeDone);
+    const removed = includeDone ? (await removedSince(backend, await backend.getMeta('calendar_uid'), items)).length : 0;
     return { total: items.length + removed, open: items.filter(i => !i.closed).length, cancelled: items.filter(i => i.closed).length, removed };
   }
 

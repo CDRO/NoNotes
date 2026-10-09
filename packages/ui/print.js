@@ -3,7 +3,6 @@
 (function (global) {
   'use strict';
 
-  const DB = () => global.NoNotesDB;
   const M = () => global.NoNotesMarkdown;
   const Mindmap = () => global.NoNotesMindmap;
   const Exporter = () => global.NoNotesExport;
@@ -14,8 +13,8 @@
   const URGENCY_ORDER = ['overdue', 'today', 'week', 'later', 'none', 'done', 'answered'];
   const byUrgency = (a, b) => URGENCY_ORDER.indexOf(a[0]) - URGENCY_ORDER.indexOf(b[0]);
   /** [[Titel]] im Druck auflösen, damit Verweise als vorhandene Notiz erscheinen. */
-  function titleResolver(db) {
-    const index = DB().titleIndex(db);
+  async function titleResolver(backend) {
+    const index = new Map(await backend.titleIndex());
     return title => { const id = index.get(title.trim().toLowerCase()); return id == null ? null : id; };
   }
 
@@ -30,10 +29,10 @@
   }
 
   /** Löst die gewünschte Auswahl in eine geordnete Liste von Knoten (Baumreihenfolge) auf. */
-  function resolveNotes(db, options) {
+  async function resolveNotes(backend, options) {
     // Archivierte Notizen sind nur dabei, wenn options.archived gesetzt ist. Ausdrücklich gewählte Notizen
     // (diese Notiz, Auswahl) werden auch dann gedruckt, wenn sie selbst archiviert sind.
-    const nodes = Exporter().treeOrder(db, { archived: true });
+    const nodes = await Exporter().treeOrder(backend, { archived: true });
     const byId = new Map(nodes.map(n => [n.id, n]));
     const allowed = n => !!options.archived || !n.archived_at;
     let wanted;
@@ -59,35 +58,35 @@
     return list;
   }
 
-  function mapSvgFor(db, list, scope, archived) {
-    if (scope === 'all') return Mindmap().toSvgString(DB().getTree(db, { archive: !!archived }), { mapTitle: DB().getMapTitle(db), expandAll: true });
-    const rows = DB().getTree(db, { archive: true });
+  async function mapSvgFor(backend, list, scope, archived) {
+    if (scope === 'all') return Mindmap().toSvgString(await backend.getTree({ archive: !!archived }), { mapTitle: await backend.getMapTitle(), expandAll: true });
+    const rows = await backend.getTree({ archive: true });
     const included = new Set(list.map(n => n.id));
     const subset = rows.filter(r => included.has(r.id)).map(r => Object.assign({}, r, {
       parent_id: r.parent_id != null && included.has(r.parent_id) ? r.parent_id : null,
     }));
-    return Mindmap().toSvgString(subset, { mapTitle: DB().getMapTitle(db), expandAll: true });
+    return Mindmap().toSvgString(subset, { mapTitle: await backend.getMapTitle(), expandAll: true });
   }
 
-  function metaHtml(db, n, note) {
+  async function metaHtml(backend, n, note) {
     const parts = [];
     const path = [];
     let p = n.parentNode;
     while (p) { path.unshift(p.title.trim() || 'Ohne Titel'); p = p.parentNode; }
     if (path.length) parts.push(`Pfad: ${esc(path.join(' › '))}`);
     parts.push(`Erstellt ${esc(fmtDate(note.created_at))} · Geändert ${esc(fmtDate(note.updated_at))}${note.archived_at ? ` · Archiviert ${esc(fmtDate(note.archived_at))}` : ''}`);
-    const tags = DB().getTags(db, n.id);
+    const tags = await backend.getTags(n.id);
     if (tags.length) parts.push(`Tags: ${esc(tags.join(', '))}`);
     return `<p class="print-meta">${parts.join(' · ')}</p>`;
   }
 
   /** HTML für den Druck von Notizen.
    *  options: { scope: 'current'|'subtree'|'selection'|'all', noteId, ids, withChildren, archived,
-   *             includeMap, includeToc, pageBreaks, resolveAttachment } */
-  function buildNotesDocument(db, options) {
-    const list = resolveNotes(db, options);
-    const mapTitle = DB().getMapTitle(db);
-    const index = DB().titleIndex(db);
+   *             includeMap, includeToc, pageBreaks, attachmentUrl } (attachmentUrl: id → Promise der Anzeige-Adresse) */
+  async function buildNotesDocument(backend, options) {
+    const list = await resolveNotes(backend, options);
+    const mapTitle = await backend.getMapTitle();
+    const index = new Map(await backend.titleIndex());
     const included = new Set(list.map(n => n.id));
     const title = options.scope === 'all' ? mapTitle
       : list.length === 1 ? (list[0].title.trim() || 'Ohne Titel')
@@ -97,23 +96,37 @@
     const parts = [];
     parts.push(`<header class="print-head"><h1>${esc(title)}</h1><p class="print-meta">${esc(mapTitle)} · Gedruckt ${esc(fmtDate(new Date().toISOString()))} · ${list.length === 1 ? '1 Notiz' : list.length + ' Notizen'}</p></header>`);
     if (options.includeMap && list.length) {
-      parts.push(`<figure class="print-map">${mapSvgFor(db, list, options.scope, options.archived)}</figure>`);
+      parts.push(`<figure class="print-map">${await mapSvgFor(backend, list, options.scope, options.archived)}</figure>`);
     }
     if (options.includeToc && list.length > 1) {
       parts.push('<nav class="print-toc"><h2>Inhalt</h2><ul>' + list.map(n =>
         `<li style="margin-left:${(n.printLevel - 1) * 14}px"><a href="#print-note-${n.id}">${esc(n.title.trim() || 'Ohne Titel')}</a></li>`).join('') + '</ul></nav>');
     }
+    // Bilder vorab auflösen, damit das Rendern danach ohne Warten auskommt.
+    const urls = new Map();
+    const notes = new Map();
+    for (const n of list) {
+      const note = await backend.getNote(n.id);
+      notes.set(n.id, note);
+      if (!options.attachmentUrl) continue;
+      for (const m of String(note.body || '').matchAll(/\(att:(\d+)\)/g)) {
+        const id = Number(m[1]);
+        if (!urls.has(id)) urls.set(id, await options.attachmentUrl(id));
+      }
+    }
+    const metas = new Map();
+    for (const n of list) metas.set(n.id, await metaHtml(backend, n, notes.get(n.id)));
     list.forEach((n, i) => {
-      const note = DB().getNote(db, n.id);
+      const note = notes.get(n.id);
       const level = Math.min(6, n.printLevel + 1);
       let body = M().render(note.body, {
         resolveTitle: t => { const id = index.get(t.trim().toLowerCase()); return id == null ? null : id; },
-        resolveAttachment: options.resolveAttachment,
+        resolveAttachment: id => urls.get(id) || null,
       });
       body = body.replace(/href="#" class="md-wiki" data-title="([^"]*)" data-note-id="(\d+)"/g, (m, t, id) =>
         included.has(Number(id)) ? `href="#print-note-${id}" class="md-wiki" data-title="${t}" data-note-id="${id}"` : `class="md-wiki plain" data-title="${t}" data-note-id="${id}"`);
       parts.push(`<section class="print-note${options.pageBreaks && i > 0 ? ' page-break' : ''}" id="print-note-${n.id}">` +
-        `<h${level}>${esc(note.title.trim() || 'Ohne Titel')}</h${level}>` + metaHtml(db, n, note) +
+        `<h${level}>${esc(note.title.trim() || 'Ohne Titel')}</h${level}>` + metas.get(n.id) +
         `<div class="md">${body}</div></section>`);
     });
     if (!list.length) parts.push('<p class="print-meta">Keine Notizen ausgewählt.</p>');
@@ -122,13 +135,13 @@
 
   /** HTML für den Druck von Fragen und Antworten.
    *  options: { status: 'open'|'answered'|'all', tag, query, lines, groupBy: 'note'|'due'|'none' } */
-  function buildQuestionsDocument(db, options) {
+  async function buildQuestionsDocument(backend, options) {
     const D = global.NoNotesDates;
     const today = D.nowIso();
     const groupBy = options.groupBy || (options.grouped === false ? 'none' : 'note');
-    const rows = DB().listQuestions(db, { status: options.status || 'all', tag: options.tag || '', query: options.query || '', sort: groupBy === 'due' ? 'due' : 'note' });
-    const mapTitle = DB().getMapTitle(db);
-    const nodes = Exporter().treeOrder(db);
+    const rows = await backend.listQuestions({ status: options.status || 'all', tag: options.tag || '', query: options.query || '', sort: groupBy === 'due' ? 'due' : 'note' });
+    const mapTitle = await backend.getMapTitle();
+    const nodes = await Exporter().treeOrder(backend);
     const byId = new Map(nodes.map(n => [n.id, n]));
     const pathOf = id => {
       const parts = [];
@@ -142,7 +155,7 @@
       options.query ? `Suche „${options.query}“` : null,
     ].filter(Boolean).join(', ');
     const open = rows.filter(r => !r.answer).length;
-    const resolveTitle = titleResolver(db);
+    const resolveTitle = await titleResolver(backend);
 
     const item = r => {
       const answered = !!r.answer;
@@ -193,10 +206,10 @@
 
   /** HTML für den Druck von Aufgaben als Checkliste.
    *  options: { status: 'open'|'done'|'all', tag, query, groupBy: 'due'|'note' } */
-  function buildTasksDocument(db, options) {
+  async function buildTasksDocument(backend, options) {
     const T = global.NoNotesTasks;
-    const rows = DB().listTasks(db, { status: options.status || 'all', tag: options.tag || '', query: options.query || '', sort: options.groupBy === 'note' ? 'note' : 'due' });
-    const mapTitle = DB().getMapTitle(db);
+    const rows = await backend.listTasks({ status: options.status || 'all', tag: options.tag || '', query: options.query || '', sort: options.groupBy === 'note' ? 'note' : 'due' });
+    const mapTitle = await backend.getMapTitle();
     const today = global.NoNotesDates.nowIso();
     const filterText = [
       options.status === 'open' ? 'offene Aufgaben' : options.status === 'done' ? 'erledigte Aufgaben' : 'alle Aufgaben',
@@ -204,7 +217,7 @@
       options.query ? `Suche „${options.query}“` : null,
     ].filter(Boolean).join(', ');
     const open = rows.filter(r => !r.done).length;
-    const resolveTitle = titleResolver(db);
+    const resolveTitle = await titleResolver(backend);
     const item = r => {
       const u = r.done ? 'none' : T.urgency(r.due, today);
       const meta = [

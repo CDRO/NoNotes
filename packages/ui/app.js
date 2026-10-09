@@ -2,7 +2,10 @@
 (function () {
   'use strict';
 
-  const DB = window.NoNotesDB;
+  const I18n = window.NoNotesI18n;
+  const t = I18n.t;
+  const tn = I18n.tn;
+  const Backend = window.NoNotesBackend;
   const Store = window.NoNotesStorage;
   const Mindmap = window.NoNotesMindmap;
   const Q = window.NoNotesQuestions;
@@ -17,13 +20,14 @@
   const CAL_HANDLE_KEY = 'ics';
   const CAL_FILENAME = 'NoNotes.ics';
 
-  const DEFAULT_FILENAME = 'NoNotes.sqlite';
-  const SAVE_DELAY_MS = 600;
   const SEARCH_DELAY_MS = 120;
   const VIEW_KEY = 'nonotes.view';
   const MODE_KEY = 'nonotes.editorMode';
   const ARCHIVE_KEY = 'nonotes.showArchive';
   const PREVIEW_DELAY_MS = 150;
+
+  I18n.init();
+  I18n.translateDom(document.body);
 
   const $ = sel => document.querySelector(sel);
   const el = {
@@ -76,8 +80,6 @@
   };
 
   const state = {
-    SQL: null,
-    db: null,
     currentId: null,
     query: '',
     view: 'map',
@@ -110,21 +112,18 @@
     calHandle: null,          // gemerkte Kalenderdatei (.ics)
     scrollSync: null,         // synchrones Scrollen in der geteilten Ansicht
     showArchive: false,       // archivierte Notizen in der Mindmap zeigen
-    // Speichern: jede Änderung erhöht editSeq; savedSeq ist der zuletzt vollständig gesicherte Stand.
-    editSeq: 0,
-    savedSeq: 0,
-    saving: false,
-    saveTimer: null,
+    renderTokens: {},         // je Ansicht der neueste Zeichenauftrag; ältere, spät fertige werden verworfen
     searchTimer: null,
-    // Datei
-    fileHandle: null,
-    filePermission: null,   // 'granted' | 'prompt' | 'denied' | null
-    handleRemembered: false,
-    mirrorAtStart: null,    // Browser-Kopie beim Start (für den Abgleich beim Verbinden)
-    editedSinceStart: false, // Inhalt könnte von der gemerkten Datei abweichen
   };
 
   // ---------- Hilfen ----------
+
+  /** Neuester Zeichenauftrag je Bereich: nach einem await prüft isLatest(), ob inzwischen ein neuerer begonnen hat. */
+  function fresh(key) {
+    const n = (state.renderTokens[key] || 0) + 1;
+    state.renderTokens[key] = n;
+    return () => state.renderTokens[key] === n;
+  }
 
   const fmtDateTime = new Intl.DateTimeFormat('de-CH', { dateStyle: 'medium', timeStyle: 'short' });
   const fmtTime = new Intl.DateTimeFormat('de-CH', { timeStyle: 'short' });
@@ -184,163 +183,12 @@
 
   // ---------- Start ----------
 
-  async function boot() {
-    el.version.textContent = window.NONOTES_VERSION || 'dev';
+  let B = null;       // Backend (asynchron), kommt aus der Ausprägung
+  let shell = null;   // Hülle der Ausprägung (lokal: Speichern, Datei, Import)
 
-    try {
-      state.SQL = await initSqlJs();
-    } catch (e) {
-      bootError('SQLite konnte nicht geladen werden.\n' + (e && e.message ? e.message : e));
-      return;
-    }
-
-    const backend = await Store.browserStore.detect();
-    if (navigator.storage && navigator.storage.persist) {
-      navigator.storage.persist().catch(() => {});
-    }
-
-    let mirror = null;
-    try { mirror = await Store.browserStore.loadDb(); }
-    catch (e) { console.warn('Browser-Speicher nicht lesbar', e); }
-    state.mirrorAtStart = mirror;
-
-    let openedFromFile = false;
-    if (Store.fileAccess.supported) {
-      state.calHandle = await Store.browserStore.loadHandleKey(CAL_HANDLE_KEY);
-      const handle = await Store.browserStore.loadHandle();
-      if (handle) {
-        state.fileHandle = handle;
-        state.handleRemembered = true;
-        try { state.filePermission = await Store.fileAccess.permission(handle, false); }
-        catch (e) { state.filePermission = 'prompt'; }
-        if (state.filePermission === 'granted') {
-          try {
-            const bytes = await Store.fileAccess.read(handle);
-            state.db = DB.open(state.SQL, bytes);
-            openedFromFile = true;
-          } catch (e) {
-            console.warn('Datei nicht lesbar, verwende Browser-Kopie', e);
-            state.filePermission = 'prompt';
-          }
-        }
-      }
-    }
-
-    if (!openedFromFile) {
-      try {
-        state.db = DB.open(state.SQL, mirror);
-      } catch (e) {
-        console.warn('Browser-Kopie unbrauchbar, starte mit leerer Datenbank', e);
-        state.db = DB.open(state.SQL, null);
-      }
-    }
-
-    state.map = Mindmap.create(el.mindmap, {
-      onSelect: (id, opts) => {
-        if (opts && opts.toggle && typeof id === 'number') { toggleMulti(id); return; }
-        state.mapSelection = id;
-      },
-      onOpen: id => openNote(id),
-      onOpenRoot: () => beginRename('root'),
-      onReparent: (id, parentId, where) => moveNoteTo(id, parentId, where),
-      onToggleCollapse: id => toggleCollapse(id),
-      onContextMenu: (id, x, y) => showNodeMenu(id, x, y),
-    });
-
-    wireEvents();
-
-    let view = 'map';
-    let mode = 'edit';
-    try {
-      view = localStorage.getItem(VIEW_KEY) || 'map';
-      mode = localStorage.getItem(MODE_KEY) || 'edit';
-      state.showArchive = localStorage.getItem(ARCHIVE_KEY) === '1';
-    } catch (e) { /* egal */ }
-    setEditorMode(['edit', 'split', 'preview'].includes(mode) ? mode : 'edit');
-
-    el.boot.hidden = true;
-    el.app.hidden = false;
-    setView(['list', 'questions', 'tasks'].includes(view) ? view : 'map');
-    renderAll();
-    updateStorageInfo();
-    if (state.fileHandle && state.filePermission !== 'granted') showConnectBanner();
-    document.body.dataset.ready = 'true';
-
-    setStatus(openedFromFile ? `Aus „${state.fileHandle.name}“ geladen`
-      : mirror ? `Aus Browser-Speicher geladen (${Store.browserStore.label()})`
-      : 'Neue Datenbank', 'saved');
-    if (backend === null) {
-      setStatus('Achtung: kein Browser-Speicher verfügbar. Bitte eine Datenbankdatei anlegen oder regelmässig eine Kopie herunterladen.', 'error');
-    }
-  }
-
-  function bootError(message) {
-    el.boot.textContent = message;
-    el.boot.classList.add('error');
-  }
-
-  // ---------- Speichern ----------
-
-  function markEdited() {
-    state.editedSinceStart = true;
-    state.mapDirty = true;
-    scheduleSave();
-  }
-
-  function scheduleSave() {
-    state.editSeq++;
-    setStatus('Ungespeicherte Änderungen', 'dirty');
-    clearTimeout(state.saveTimer);
-    state.saveTimer = setTimeout(persistNow, SAVE_DELAY_MS);
-  }
-
-  async function persistNow() {
-    clearTimeout(state.saveTimer);
-    if (state.saving) return; // läuft bereits; am Ende wird bei Bedarf nachgezogen
-    if (state.editSeq === state.savedSeq) return;
-
-    state.saving = true;
-    const seq = state.editSeq;
-    setStatus('Speichern…', 'saving');
-    let ok = true;
-    try {
-      const bytes = DB.exportBytes(state.db);
-      try {
-        await Store.browserStore.saveDb(bytes);
-      } catch (e) {
-        ok = false;
-        console.warn('Browser-Speicher', e);
-        setStatus('Browser-Speicher nicht beschreibbar: ' + e.message, 'error');
-      }
-      if (state.fileHandle && state.filePermission === 'granted') {
-        try {
-          await Store.fileAccess.write(state.fileHandle, bytes);
-        } catch (e) {
-          ok = false;
-          console.warn('Dateischreiben', e);
-          setStatus('Datei konnte nicht geschrieben werden: ' + e.message, 'error');
-        }
-      }
-      if (ok) {
-        state.savedSeq = seq;
-        setStatus('Gespeichert ' + fmtTime.format(new Date()), 'saved');
-      }
-    } catch (e) {
-      ok = false;
-      console.error(e);
-      setStatus('Speichern fehlgeschlagen: ' + e.message, 'error');
-    } finally {
-      state.saving = false;
-      if (ok && state.editSeq !== seq) persistNow(); // zwischenzeitlich kam Neues
-    }
-  }
-
-  // ---------- Datenbank austauschen ----------
-
-  function replaceDb(newDb) {
+  /** Wird von der Hülle aufgerufen, wenn sie die Datenbank austauscht (Datei öffnen, Import). */
+  function onDatabaseReplaced() {
     for (const id of [...state.attachmentUrls.keys()]) forgetAttachmentUrl(id);
-    if (state.db) { try { state.db.close(); } catch (e) { /* egal */ } }
-    state.db = newDb;
     state.currentId = null;
     state.query = '';
     state.mapSelection = null;
@@ -356,169 +204,79 @@
     if (state.map) state.map.requestFit();
   }
 
-  // ---------- Datei-Anbindung ----------
-
-  function updateStorageInfo() {
-    const info = el.storageInfo;
-    const label = info.querySelector('.label');
-    info.classList.remove('connected', 'pending');
-    const supported = Store.fileAccess.supported;
-
-    el.createFileBtn.hidden = !supported;
-    el.openFileBtn.hidden = !supported;
-    el.disconnectBtn.hidden = !state.fileHandle;
-
-    if (state.fileHandle && state.filePermission === 'granted') {
-      info.classList.add('connected');
-      label.textContent = state.fileHandle.name + (state.handleRemembered ? '' : ' (nur diese Sitzung)');
-      info.title = 'Änderungen werden in diese Datei und in den Browser-Speicher geschrieben.';
-    } else if (state.fileHandle) {
-      info.classList.add('pending');
-      label.textContent = state.fileHandle.name + ' (nicht verbunden)';
-      info.title = 'Die Datei ist gemerkt, aber noch nicht freigegeben.';
-    } else {
-      label.textContent = 'Nur Browser-Speicher';
-      info.title = 'Daten liegen im ' + Store.browserStore.label() + ' dieses Browsers.';
-    }
-
-    el.menuHint.textContent = supported
-      ? 'Empfohlen: eine Datenbankdatei anlegen. Dann liegt alles in einer echten .sqlite-Datei, die du sichern und mitnehmen kannst.'
-      : 'Dieser Browser kann nicht direkt in Dateien schreiben. Sichere regelmässig eine Kopie und importiere sie bei Bedarf.';
+  function shellHost() {
+    return {
+      el: {
+        createFileBtn: el.createFileBtn, openFileBtn: el.openFileBtn, disconnectBtn: el.disconnectBtn,
+        downloadBtn: el.downloadBtn, importBtn: el.importBtn, importInput: el.importInput,
+        storageInfo: el.storageInfo, menuHint: el.menuHint,
+      },
+      setStatus, showBanner, hideBanner, closeMenu,
+      renderAll: () => renderAll(),
+      onDatabaseReplaced,
+    };
   }
 
-  function showConnectBanner() {
-    const name = state.fileHandle.name || DEFAULT_FILENAME;
-    const denied = state.filePermission === 'denied';
-    showBanner(
-      denied
-        ? `Der Zugriff auf „${name}“ wurde verweigert. Änderungen landen vorerst nur im Browser-Speicher.`
-        : `Datenbankdatei „${name}“ gemerkt. Zum Weiterarbeiten in dieser Datei einmal verbinden.`,
-      [
-        { label: 'Mit Datei verbinden', primary: true, onClick: connectRememberedFile },
-        { label: 'Verbindung trennen', onClick: disconnectFile },
-      ]
-    );
-  }
+  async function boot() {
+    el.version.textContent = window.NONOTES_VERSION || 'dev';
 
-  async function connectRememberedFile() {
-    const handle = state.fileHandle;
+    const edition = window.NoNotesEdition;
+    if (!edition) throw new Error(t('Es ist keine Ausprägung geladen.'));
+    shell = edition.createShell(shellHost());
+    B = await shell.start();
+    if (Store.fileAccess.supported) state.calHandle = await Store.browserStore.loadHandleKey(CAL_HANDLE_KEY);
+
+    state.map = Mindmap.create(el.mindmap, {
+      onSelect: (id, opts) => {
+        if (opts && opts.toggle && typeof id === 'number') { toggleMulti(id); return; }
+        state.mapSelection = id;
+      },
+      onOpen: id => openNote(id),
+      onOpenRoot: () => beginRename('root'),
+      onReparent: (id, parentId, where) => moveNoteTo(id, parentId, where),
+      onToggleCollapse: id => toggleCollapse(id),
+      onContextMenu: (id, x, y) => showNodeMenu(id, x, y),
+    });
+
+    wireEvents();
+    shell.bind();
+
+    let view = 'map';
+    let mode = 'edit';
     try {
-      state.filePermission = await Store.fileAccess.permission(handle, true);
-      if (state.filePermission !== 'granted') { showConnectBanner(); updateStorageInfo(); return; }
+      view = localStorage.getItem(VIEW_KEY) || 'map';
+      mode = localStorage.getItem(MODE_KEY) || 'edit';
+      state.showArchive = localStorage.getItem(ARCHIVE_KEY) === '1';
+    } catch (e) { /* egal */ }
+    await setEditorMode(['edit', 'split', 'preview'].includes(mode) ? mode : 'edit');
 
-      const fileBytes = await Store.fileAccess.read(handle);
-      const fileUnchanged = state.mirrorAtStart && Store.bytesEqual(fileBytes, state.mirrorAtStart);
-
-      if (!fileBytes.length) {
-        // Leere Datei: aktueller Stand wird hineingeschrieben.
-        state.editSeq++;
-      } else if (!state.editedSinceStart || fileUnchanged) {
-        // Nichts Eigenes verloren: Datei ist massgebend bzw. identisch, aktueller Stand gewinnt bei Änderungen.
-        if (!state.editedSinceStart) replaceDb(DB.open(state.SQL, fileBytes));
-        state.editSeq++;
-      } else {
-        const loadFile = confirm(
-          `Die Datei „${handle.name}“ wurde ausserhalb dieser Sitzung geändert.\n\n` +
-          'OK: Datei laden und die Änderungen dieser Sitzung verwerfen.\n' +
-          'Abbrechen: Datei mit dem aktuellen Stand überschreiben.'
-        );
-        if (loadFile) replaceDb(DB.open(state.SQL, fileBytes));
-        state.editSeq++;
-      }
-      state.editedSinceStart = false;
-      hideBanner();
-      updateStorageInfo();
-      renderAll();
-      await persistNow();
-      setStatus(`Mit „${handle.name}“ verbunden`, 'saved');
-    } catch (e) {
-      console.error(e);
-      setStatus('Verbinden fehlgeschlagen: ' + e.message, 'error');
-    }
+    el.boot.hidden = true;
+    el.app.hidden = false;
+    await setView(['list', 'questions', 'tasks'].includes(view) ? view : 'map');
+    await renderAll();
+    shell.afterReady();
+    document.body.dataset.ready = 'true';
   }
 
-  async function adoptHandle(handle) {
-    state.fileHandle = handle;
-    state.filePermission = 'granted';
-    state.editedSinceStart = false;
-    state.handleRemembered = false;
-    // Erst die Oberfläche und das Schreiben, dann das Merken: der Benutzer sieht sofort, was gilt.
-    hideBanner();
-    updateStorageInfo();
-    renderAll();
-    state.editSeq++;
-    const written = persistNow();
-    try {
-      await Store.browserStore.saveHandle(handle);
-      state.handleRemembered = true;
-    } catch (e) {
-      console.warn('Datei-Handle kann nicht gemerkt werden', e);
-    }
-    updateStorageInfo();
-    await written;
+  function bootError(message) {
+    el.boot.textContent = message;
+    el.boot.classList.add('error');
   }
 
-  async function createFile() {
-    closeMenu();
-    try {
-      const handle = await Store.fileAccess.pickNew(DEFAULT_FILENAME);
-      const perm = await Store.fileAccess.permission(handle, true);
-      if (perm !== 'granted') { setStatus('Kein Schreibzugriff auf die Datei', 'error'); return; }
-      await adoptHandle(handle);
-      if (state.editSeq === state.savedSeq) setStatus(`Datenbankdatei „${handle.name}“ angelegt`, 'saved');
-    } catch (e) {
-      if (isAbort(e)) return;
-      console.error(e);
-      setStatus('Datei anlegen fehlgeschlagen: ' + e.message, 'error');
-    }
+  /** Die Oberfläche markiert nur, dass sich Daten geändert haben; das Sichern ist Sache der Hülle. */
+  function markEdited() {
+    state.mapDirty = true;
   }
 
-  async function openFile() {
-    closeMenu();
-    try {
-      const handle = await Store.fileAccess.pickExisting();
-      const perm = await Store.fileAccess.permission(handle, true);
-      if (perm !== 'granted') { setStatus('Kein Schreibzugriff auf die Datei', 'error'); return; }
-      const bytes = await Store.fileAccess.read(handle);
-      const newDb = DB.open(state.SQL, bytes); // prüft, ob es eine NoNotes-Datei ist
-      const n = DB.countNotes(state.db);
-      if (n > 0 && !confirm(
-        `„${handle.name}“ öffnen?\n\nDie ${n === 1 ? 'aktuell angezeigte Notiz wird' : 'aktuell angezeigten ' + n + ' Notizen werden'} ` +
-        'durch den Inhalt der Datei ersetzt. Bei Bedarf vorher „Kopie herunterladen“.'
-      )) { newDb.close(); return; }
-      replaceDb(newDb);
-      await adoptHandle(handle);
-      if (state.editSeq === state.savedSeq) setStatus(`„${handle.name}“ geöffnet`, 'saved');
-    } catch (e) {
-      if (isAbort(e)) return;
-      console.error(e);
-      setStatus('Datei öffnen fehlgeschlagen: ' + e.message, 'error');
-    }
-  }
-
-  async function disconnectFile() {
-    closeMenu();
-    await Store.browserStore.clearHandle();
-    state.fileHandle = null;
-    state.filePermission = null;
-    state.handleRemembered = false;
-    hideBanner();
-    updateStorageInfo();
-    setStatus('Dateiverbindung getrennt. Daten bleiben im Browser-Speicher.', 'saved');
-  }
-
-  function downloadCopy() {
-    closeMenu();
-    const bytes = DB.exportBytes(state.db);
-    Store.download(bytes, `NoNotes-${todayStamp()}.sqlite`);
-    const dirty = state.editSeq !== state.savedSeq;
-    setStatus('Kopie heruntergeladen', dirty ? 'dirty' : 'saved');
+  /** Zustand für die Statuszeile: noch nicht gesichert oder gesichert. */
+  function saveState() {
+    return shell && shell.isDirty() ? 'dirty' : 'saved';
   }
 
   // ---------- Kalenderexport ----------
 
-  function updateCalDialog() {
-    const c = Cal.count(state.db, el.calIncludeDone.checked);
+  async function updateCalDialog() {
+    const c = await Cal.count(B, el.calIncludeDone.checked);
     el.calSummary.textContent = c.total === 0
       ? 'Es gibt noch keine Aufgaben oder Fragen mit Termin.'
       : `${c.total} ${c.total === 1 ? 'Termin' : 'Termine'}: ${c.open} offen`
@@ -539,9 +297,9 @@
     el.calDownloadBtn.disabled = disabled;
   }
 
-  function openCalDialog() {
+  async function openCalDialog() {
     closeMenu();
-    updateCalDialog();
+    await updateCalDialog();
     if (typeof el.calDialog.showModal === 'function') el.calDialog.showModal();
     else el.calDialog.setAttribute('open', '');
   }
@@ -550,8 +308,8 @@
     if (el.calDialog.open) el.calDialog.close();
   }
 
-  function buildCalendar() {
-    const result = Cal.build(state.db, { includeDone: el.calIncludeDone.checked, alarms: el.calAlarms.checked });
+  async function buildCalendar() {
+    const result = await Cal.build(B, { includeDone: el.calIncludeDone.checked, alarms: el.calAlarms.checked });
     markEdited(); // Kennung und Versionsnummer liegen in der Datenbank
     return result;
   }
@@ -559,7 +317,7 @@
   async function runCalendarExport(target) {
     try {
       if (target === 'download') {
-        const r = buildCalendar();
+        const r = await buildCalendar();
         Store.download(new TextEncoder().encode(r.ics), CAL_FILENAME);
         closeCalDialog();
         setStatus(`Kalenderdatei heruntergeladen: ${r.total} Termine (Version ${r.sequence})`, 'dirty');
@@ -571,7 +329,7 @@
       }
       const perm = await Store.fileAccess.permission(handle, true);
       if (perm !== 'granted') { setStatus('Kein Schreibzugriff auf die Kalenderdatei', 'error'); return; }
-      const r = buildCalendar();
+      const r = await buildCalendar();
       await Store.fileAccess.write(handle, new TextEncoder().encode(r.ics));
       if (handle !== state.calHandle) {
         state.calHandle = handle;
@@ -610,22 +368,22 @@
     el.exportZipBtn.disabled = true;
     try {
       const archived = el.exportArchive.checked;
-      const svg = Exporter.renderSvg(state.db, { archived });
+      const svg = await Exporter.renderSvg(B, { archived });
       let png = null;
       try { png = await Exporter.svgToPng(svg, 2); }
       catch (e) { console.warn('PNG', e); }
-      const files = Exporter.buildFiles(state.db, { mode, svg, png, version: window.NONOTES_VERSION || 'dev', archived });
+      const files = await Exporter.buildFiles(B, { mode, svg, png, version: window.NONOTES_VERSION || 'dev', archived });
       const n = files.length;
       if (target === 'dir') {
         const dir = await window.showDirectoryPicker({ mode: 'readwrite' });
         await Exporter.writeToDirectory(dir, files);
         closeExportDialog();
-        setStatus(`Export gespeichert: ${n} Dateien in „${dir.name}“` + (png ? '' : ' (ohne PNG)'), state.editSeq === state.savedSeq ? 'saved' : 'dirty');
+        setStatus(`Export gespeichert: ${n} Dateien in „${dir.name}“` + (png ? '' : ' (ohne PNG)'), saveState());
       } else {
         const bytes = Zip.create(files);
-        Store.download(bytes, Exporter.suggestedZipName(state.db));
+        Store.download(bytes, await Exporter.suggestedZipName(B));
         closeExportDialog();
-        setStatus(`Export als ZIP heruntergeladen (${n} Dateien)` + (png ? '' : ', ohne PNG'), state.editSeq === state.savedSeq ? 'saved' : 'dirty');
+        setStatus(`Export als ZIP heruntergeladen (${n} Dateien)` + (png ? '' : ', ohne PNG'), saveState());
       }
     } catch (e) {
       if (isAbort(e)) { el.exportHint.textContent = ''; return; }
@@ -637,39 +395,9 @@
     }
   }
 
-  function startImport() {
-    closeMenu();
-    el.importInput.value = '';
-    el.importInput.click();
-  }
-
-  async function importFromInput() {
-    const file = el.importInput.files && el.importInput.files[0];
-    if (!file) return;
-    try {
-      const bytes = await Store.readFileInput(file);
-      const newDb = DB.open(state.SQL, bytes);
-      const n = DB.countNotes(state.db);
-      if (n > 0 && !confirm(
-        `„${file.name}“ importieren?\n\nDie ${n === 1 ? 'aktuell angezeigte Notiz wird' : 'aktuell angezeigten ' + n + ' Notizen werden'} ersetzt` +
-        (state.fileHandle && state.filePermission === 'granted' ? `, auch in der verbundenen Datei „${state.fileHandle.name}“.` : '.')
-      )) { newDb.close(); return; }
-      replaceDb(newDb);
-      renderAll();
-      markEdited();
-      await persistNow();
-      if (state.editSeq === state.savedSeq) setStatus(`„${file.name}“ importiert`, 'saved');
-    } catch (e) {
-      console.error(e);
-      setStatus('Import fehlgeschlagen: ' + e.message, 'error');
-    } finally {
-      el.importInput.value = '';
-    }
-  }
-
   // ---------- Ansichten ----------
 
-  function setView(view) {
+  async function setView(view) {
     state.view = view;
     document.body.classList.toggle('view-map', view === 'map');
     document.body.classList.toggle('view-list', view === 'list');
@@ -682,45 +410,45 @@
     try { localStorage.setItem(VIEW_KEY, view); } catch (e) { /* egal */ }
     document.body.classList.remove('editor-open');
     hideContextMenu();
-    cancelRename();
+    await cancelRename();
     if (view === 'map') {
-      renderMap();
+      await renderMap();
       el.mindmap.focus({ preventScroll: true });
     } else if (view === 'questions') {
-      renderQuestions();
+      await renderQuestions();
     } else if (view === 'tasks') {
-      renderTasks();
+      await renderTasks();
     } else {
-      renderList();
-      renderEditor();
+      await renderList();
+      await renderEditor();
     }
     renderMulti();
   }
 
   /** Zeichnet die aktive Ansicht neu (nach Schliessen des Editors oder Änderungen). */
-  function renderCurrentView() {
-    if (state.view === 'map') renderMap();
-    else if (state.view === 'questions') renderQuestions();
-    else if (state.view === 'tasks') renderTasks();
-    else { renderList(); renderEditor(); }
+  async function renderCurrentView() {
+    if (state.view === 'map') await renderMap();
+    else if (state.view === 'questions') await renderQuestions();
+    else if (state.view === 'tasks') await renderTasks();
+    else { await renderList(); await renderEditor(); }
   }
 
   // ---------- Darstellung ----------
 
-  function renderAll() {
-    renderTagFilters();
-    renderList();
-    renderEditor();
-    renderCount();
-    renderMap();
-    renderQuestionCounts();
-    renderTaskCounts();
-    if (state.view === 'questions') renderQuestions();
-    if (state.view === 'tasks') renderTasks();
+  async function renderAll() {
+    await renderTagFilters();
+    await renderList();
+    await renderEditor();
+    await renderCount();
+    await renderMap();
+    await renderQuestionCounts();
+    await renderTaskCounts();
+    if (state.view === 'questions') await renderQuestions();
+    if (state.view === 'tasks') await renderTasks();
   }
 
-  function renderTaskCounts() {
-    const c = DB.countTasks(state.db, Dates.nowIso());
+  async function renderTaskCounts() {
+    const c = await B.countTasks(Dates.nowIso());
     el.viewTasksBtn.replaceChildren();
     el.viewTasksBtn.append('Aufgaben');
     if (c.open > 0) {
@@ -732,28 +460,28 @@
     }
   }
 
-  function renderTagFilters() {
-    const tags = DB.listAllTags(state.db);
+  async function renderTagFilters() {
+    const tags = await B.listAllTags();
     const fill = (select, current) => {
       const frag = document.createDocumentFragment();
       const all = document.createElement('option');
       all.value = '';
       all.textContent = 'Alle Tags';
       frag.appendChild(all);
-      for (const t of tags) {
+      for (const tag of tags) {
         const o = document.createElement('option');
-        o.value = t.name;
-        o.textContent = `${t.name} (${t.count})`;
+        o.value = tag.name;
+        o.textContent = `${tag.name} (${tag.count})`;
         frag.appendChild(o);
       }
       select.replaceChildren(frag);
-      select.value = tags.some(t => t.name === current) ? current : '';
+      select.value = tags.some(tag => tag.name === current) ? current : '';
       return select.value;
     };
     state.tagFilter = fill(el.tagFilter, state.tagFilter);
     state.qTag = fill(el.qTagFilter, state.qTag);
     state.tTag = fill(el.tTagFilter, state.tTag);
-    const mine = new Set((state.currentId != null ? DB.getTags(state.db, state.currentId) : []).map(t => t.toLowerCase()));
+    const mine = new Set((state.currentId != null ? await B.getTags(state.currentId) : []).map(t => t.toLowerCase()));
     el.tagSuggestions.replaceChildren(...tags.filter(t => !mine.has(t.name.toLowerCase())).map(t => {
       const o = document.createElement('option');
       o.value = t.name;
@@ -761,8 +489,8 @@
     }));
   }
 
-  function renderQuestionCounts() {
-    const c = DB.countQuestions(state.db, Dates.nowIso());
+  async function renderQuestionCounts() {
+    const c = await B.countQuestions(Dates.nowIso());
     el.viewQuestionsBtn.replaceChildren();
     el.viewQuestionsBtn.append('Fragen');
     if (c.open > 0) {
@@ -774,13 +502,14 @@
     }
   }
 
-  function renderMap() {
+  async function renderMap() {
     if (!state.map || state.view !== 'map' || isEditorOpen()) { state.mapDirty = true; return; }
     if (!el.mindmap.getBoundingClientRect().width) { state.mapDirty = true; return; }
+    const isLatest = fresh('map');
     let matchIds = null;
     let reveal = state.showArchive;
     if (state.query.trim()) {
-      const hits = DB.listNotes(state.db, state.query); // die Suche findet auch das Archiv
+      const hits = await B.listNotes(state.query); // die Suche findet auch das Archiv
       state.mapMatches = hits.map(r => r.id);
       matchIds = new Set(state.mapMatches);
       // Treffer im Archiv werden samt ihren archivierten Vorfahren eingeblendet, auch bei ausgeblendetem Archiv.
@@ -792,9 +521,12 @@
       state.mapMatchIndex = -1;
       el.mapMatches.hidden = true;
     }
-    pruneMulti();
-    state.map.render(DB.getTree(state.db, { archive: reveal }), { mapTitle: DB.getMapTitle(state.db), matchIds });
-    renderArchiveButton();
+    await pruneMulti();
+    const rows = await B.getTree({ archive: reveal });
+    const mapTitle = await B.getMapTitle();
+    if (!isLatest()) return;
+    state.map.render(rows, { mapTitle, matchIds });
+    await renderArchiveButton();
     state.map.setSelected(state.mapSelection);
     state.map.setMulti(state.multi);
     state.mapDirty = false;
@@ -802,24 +534,24 @@
 
   // ---------- Mehrfachauswahl ----------
 
-  function pruneMulti() {
+  async function pruneMulti() {
     for (const id of [...state.multi]) {
-      const n = DB.getNote(state.db, id);
+      const n = await B.getNote(id);
       if (!n || n.deleted_at) state.multi.delete(id);
     }
   }
 
-  function renderArchiveButton() {
-    const n = DB.countArchived(state.db);
+  async function renderArchiveButton() {
+    const n = await B.countArchived();
     el.mapArchiveBtn.setAttribute('aria-pressed', String(state.showArchive));
     el.mapArchiveBtn.textContent = (state.showArchive ? 'Archiv ausblenden' : 'Archiv anzeigen') + (n ? ` (${n})` : '');
   }
 
-  function toggleArchiveView() {
+  async function toggleArchiveView() {
     state.showArchive = !state.showArchive;
     try { localStorage.setItem(ARCHIVE_KEY, state.showArchive ? '1' : '0'); } catch (e) { /* egal */ }
-    if (typeof state.mapSelection === 'number' && !state.showArchive && DB.isArchived(state.db, state.mapSelection)) state.mapSelection = 'root';
-    renderMap();
+    if (typeof state.mapSelection === 'number' && !state.showArchive && await B.isArchived(state.mapSelection)) state.mapSelection = 'root';
+    await renderMap();
   }
 
   function toggleMulti(id) {
@@ -843,8 +575,8 @@
   // ---------- Drucken ----------
 
   /** Anzahl der Notiz samt Unternotizen; archivierte nur, wenn sie einbezogen werden. */
-  function subtreeCount(id, archived) {
-    const nodes = Exporter.treeOrder(state.db, { archived: true });
+  async function subtreeCount(id, archived) {
+    const nodes = await Exporter.treeOrder(B, { archived: true });
     const byId = new Map(nodes.map(n => [n.id, n]));
     const count = n => 1 + n.children.filter(c => archived || !c.archived_at).reduce((s, c) => s + count(c), 0);
     const start = byId.get(id);
@@ -852,17 +584,17 @@
   }
 
   /** Öffnet den Druckdialog. opts: { noteId, scope } */
-  function openPrintDialog(opts) {
+  async function openPrintDialog(opts) {
     opts = opts || {};
     hideContextMenu();
     closeMenu();
-    const noteId = opts.noteId != null ? opts.noteId : (state.currentId != null && !isHiddenNote(state.currentId) ? state.currentId : (typeof state.mapSelection === 'number' ? state.mapSelection : null));
+    const noteId = opts.noteId != null ? opts.noteId : (state.currentId != null && !(await isHiddenNote(state.currentId)) ? state.currentId : (typeof state.mapSelection === 'number' ? state.mapSelection : null));
     state.printNoteId = noteId;
-    pruneMulti();
-    const note = noteId != null ? DB.getNote(state.db, noteId) : null;
+    await pruneMulti();
+    const note = noteId != null ? await B.getNote(noteId) : null;
     const radios = Object.fromEntries([...el.printForm.querySelectorAll('input[name="printScope"]')].map(r => [r.value, r]));
     el.printArchive.checked = false; // Archivierte Notizen sind nur auf Wunsch dabei
-    const sub = updatePrintLabels();
+    const sub = await updatePrintLabels();
 
     let scope = opts.scope;
     if (!scope || radios[scope].disabled) {
@@ -874,13 +606,13 @@
   }
 
   /** Beschriftung und Verfügbarkeit der Umfänge; hängt vom Kästchen «Archivierte einbeziehen» ab. Gibt die Grösse des Teilbaums zurück. */
-  function updatePrintLabels() {
+  async function updatePrintLabels() {
     const archived = el.printArchive.checked;
     const noteId = state.printNoteId;
-    const note = noteId != null ? DB.getNote(state.db, noteId) : null;
+    const note = noteId != null ? await B.getNote(noteId) : null;
     const title = note ? (note.title.trim() || 'Ohne Titel') : null;
-    const sub = noteId != null ? subtreeCount(noteId, archived) : 0;
-    const total = archived ? DB.countNotes(state.db) : DB.countNotes(state.db, { archived: false });
+    const sub = noteId != null ? await subtreeCount(noteId, archived) : 0;
+    const total = archived ? await B.countNotes() : await B.countNotes({ archived: false });
     const radios = Object.fromEntries([...el.printForm.querySelectorAll('input[name="printScope"]')].map(r => [r.value, r]));
     radios.current.disabled = !note;
     radios.subtree.disabled = !note || sub <= 1;
@@ -892,14 +624,14 @@
     return sub;
   }
 
-  function isHiddenNote(id) {
-    const n = DB.getNote(state.db, id);
+  async function isHiddenNote(id) {
+    const n = await B.getNote(id);
     return !n || !!n.deleted_at;
   }
 
-  function runPrint() {
+  async function runPrint() {
     const scope = (el.printForm.querySelector('input[name="printScope"]:checked') || {}).value || 'all';
-    const html = Printer.buildNotesDocument(state.db, {
+    const html = await Printer.buildNotesDocument(B, {
       scope: scope === 'current' || scope === 'subtree' ? scope : scope,
       noteId: state.printNoteId,
       ids: [...state.multi],
@@ -908,26 +640,26 @@
       includeMap: el.printIncludeMap.checked,
       includeToc: el.printIncludeToc.checked,
       pageBreaks: el.printPageBreaks.checked,
-      resolveAttachment: id => attachmentUrl(id),
+      attachmentUrl: id => attachmentUrl(id),
     });
     if (el.printDialog.open) el.printDialog.close();
     Printer.print(html);
   }
 
-  function openQaPrintDialog() {
+  async function openQaPrintDialog() {
     hideContextMenu();
     closeMenu();
-    const shown = DB.listQuestions(state.db, { status: state.qStatus, query: state.qQuery, tag: state.qTag }).length;
+    const shown = (await B.listQuestions({ status: state.qStatus, query: state.qQuery, tag: state.qTag })).length;
     const label = state.qStatus === 'open' ? 'offene' : state.qStatus === 'answered' ? 'beantwortete' : 'alle';
     el.qaScopeFiltered.textContent = `Wie angezeigt: ${label} Fragen${state.qTag ? `, Tag „${state.qTag}“` : ''}${state.qQuery.trim() ? `, Suche „${state.qQuery.trim()}“` : ''} (${shown})`;
     if (typeof el.qaPrintDialog.showModal === 'function') el.qaPrintDialog.showModal();
     else el.qaPrintDialog.setAttribute('open', '');
   }
 
-  function runQaPrint() {
+  async function runQaPrint() {
     const scope = (el.qaPrintForm.querySelector('input[name="qaScope"]:checked') || {}).value || 'filtered';
     const groupBy = (el.qaPrintForm.querySelector('input[name="qaGroup"]:checked') || {}).value || 'note';
-    const html = Printer.buildQuestionsDocument(state.db, {
+    const html = await Printer.buildQuestionsDocument(B, {
       status: scope === 'filtered' ? state.qStatus : scope,
       tag: scope === 'filtered' ? state.qTag : '',
       query: scope === 'filtered' ? state.qQuery.trim() : '',
@@ -939,20 +671,20 @@
   }
 
   /** Springt zum nächsten Treffer der Mindmap-Suche. */
-  function nextMapMatch(step) {
+  async function nextMapMatch(step) {
     if (!state.mapMatches.length) return;
     state.mapMatchIndex = (state.mapMatchIndex + step + state.mapMatches.length) % state.mapMatches.length;
     const id = state.mapMatches[state.mapMatchIndex];
     // Eingeklappte Vorfahren aufklappen, damit der Treffer sichtbar wird.
-    let p = DB.getNote(state.db, id);
+    let p = await B.getNote(id);
     let changed = false;
     while (p && p.parent_id != null) {
-      p = DB.getNote(state.db, p.parent_id);
-      if (p && p.collapsed) { DB.setCollapsed(state.db, p.id, false); changed = true; }
+      p = await B.getNote(p.parent_id);
+      if (p && p.collapsed) { await B.setCollapsed(p.id, false); changed = true; }
     }
     if (changed) markEdited();
     state.mapSelection = id;
-    renderMap();
+    await renderMap();
     state.map.ensureVisible(id);
     el.mapMatches.textContent = `Treffer ${state.mapMatchIndex + 1} von ${state.mapMatches.length}`;
   }
@@ -968,9 +700,12 @@
     return (start > 0 ? '…' : '') + flat.slice(start, start + 140);
   }
 
-  function renderList() {
+  async function renderList() {
+    const isLatest = fresh('list');
     const trash = state.listScope === 'trash';
-    const notes = DB.listNotes(state.db, state.query, { tag: state.tagFilter, scope: state.listScope });
+    const notes = await B.listNotes(state.query, { tag: state.tagFilter, scope: state.listScope });
+    const trashCount = trash ? await B.countTrash() : 0;
+    if (!isLatest()) return;
     const q = state.query.trim();
     const frag = document.createDocumentFragment();
     for (const n of notes) {
@@ -981,9 +716,9 @@
       li.setAttribute('role', 'option');
       li.setAttribute('aria-selected', String(n.id === state.currentId));
 
-      const t = document.createElement('div');
-      t.className = 'note-title';
-      t.innerHTML = M.highlightText(n.title.trim() || 'Ohne Titel', q);
+      const titleEl = document.createElement('div');
+      titleEl.className = 'note-title';
+      titleEl.innerHTML = M.highlightText(n.title.trim() || 'Ohne Titel', q);
 
       const s = document.createElement('div');
       s.className = 'note-snippet';
@@ -994,7 +729,7 @@
       d.textContent = trash && n.deleted_at ? `Gelöscht ${fmtDate(n.deleted_at)}`
         : n.archived_at ? `Archiviert ${fmtDate(n.archived_at)}` : fmtDate(n.updated_at);
 
-      li.append(t, s, d);
+      li.append(titleEl, s, d);
       if (n.tags) {
         const tags = document.createElement('div');
         tags.className = 'note-tags';
@@ -1016,11 +751,13 @@
       : trash ? 'Der Papierkorb ist leer.'
       : state.listScope === 'archive' ? 'Das Archiv ist leer. Archivierte Notizen sind ausgeblendet, bleiben aber durchsuchbar.'
       : 'Noch keine Notizen. Lege mit „Neue Notiz“ los.';
-    el.emptyTrashBtn.hidden = !(trash && DB.countTrash(state.db) > 0);
+    el.emptyTrashBtn.hidden = !(trash && trashCount > 0);
   }
 
-  function renderEditor() {
-    const note = state.currentId != null ? DB.getNote(state.db, state.currentId) : null;
+  async function renderEditor() {
+    const isLatest = fresh('editor');
+    const note = state.currentId != null ? await B.getNote(state.currentId) : null;
+    if (!isLatest()) return;
     if (!note) {
       state.currentId = null;
       el.editorPane.hidden = true;
@@ -1033,13 +770,17 @@
     if (document.activeElement !== el.title) el.title.value = note.title;
     if (document.activeElement !== el.body) el.body.value = note.body;
     renderMeta(note.created_at, note.updated_at);
-    renderCrumbs(note);
+    await renderCrumbs(note);
+    if (!isLatest()) return;
     renderNoteQuestions(note.body);
-    renderTags(DB.getTags(state.db, note.id));
+    const tags = await B.getTags(note.id);
+    if (!isLatest()) return;
+    renderTags(tags);
     const trashed = !!note.deleted_at;
     const archived = !trashed && !!note.archived_at;
     const locked = trashed || archived; // Papierkorb und Archiv sind schreibgeschützt
-    renderAttachments(note.id, locked);
+    await renderAttachments(note.id, locked);
+    if (!isLatest()) return;
     el.trashBar.hidden = !trashed;
     el.archiveBar.hidden = !archived;
     if (archived) el.archiveBarText.textContent = `Diese Notiz ist archiviert (seit ${fmtDate(note.archived_at)}) und schreibgeschützt.`;
@@ -1052,7 +793,7 @@
     el.archiveBtn.hidden = locked;
     for (const b of el.mdToolbar.querySelectorAll('button')) b.disabled = locked;
     el.headingSelect.disabled = locked;
-    if (state.editorMode !== 'edit') renderPreview();
+    if (state.editorMode !== 'edit') await renderPreview();
   }
 
   function renderTags(tags) {
@@ -1075,26 +816,26 @@
     return [...el.tagChips.querySelectorAll('.chip')].map(c => c.firstChild.textContent);
   }
 
-  function saveTags(tags) {
+  async function saveTags(tags) {
     if (state.currentId == null) return;
-    DB.setTags(state.db, state.currentId, tags);
-    renderTags(DB.getTags(state.db, state.currentId));
+    await B.setTags(state.currentId, tags);
+    renderTags(await B.getTags(state.currentId));
     markEdited();
-    renderTagFilters();
-    renderList();
-    if (state.view === 'questions') renderQuestions();
+    await renderTagFilters();
+    await renderList();
+    if (state.view === 'questions') await renderQuestions();
   }
 
-  function addTagFromInput() {
+  async function addTagFromInput() {
     const raw = el.tagInput.value;
     el.tagInput.value = '';
-    const parts = raw.split(',').map(DB.normalizeTag).filter(Boolean);
+    const parts = raw.split(',').map(Backend.normalizeTag).filter(Boolean);
     if (!parts.length) return;
-    saveTags(currentTags().concat(parts));
+    await saveTags(currentTags().concat(parts));
   }
 
-  function removeTag(name) {
-    saveTags(currentTags().filter(t => t.toLowerCase() !== name.toLowerCase()));
+  async function removeTag(name) {
+    await saveTags(currentTags().filter(t => t.toLowerCase() !== name.toLowerCase()));
   }
 
   // ---------- Anhänge ----------
@@ -1102,13 +843,20 @@
   const MAX_ATTACHMENT_BYTES = 400 * 1024;
   const MAX_ATTACHMENT_EDGE = 1600;
 
-  function attachmentUrl(id) {
+  /** Objekt-URL für ein Bild aus der Datenbank, gemerkt, damit sie nicht mehrfach angelegt wird. */
+  async function attachmentUrl(id) {
     if (state.attachmentUrls.has(id)) return state.attachmentUrls.get(id);
-    const row = DB.getAttachment(state.db, id);
+    const row = await B.getAttachment(id);
     if (!row) return null;
     const url = URL.createObjectURL(new Blob([row.data], { type: row.mime }));
     state.attachmentUrls.set(id, url);
     return url;
+  }
+
+  /** Holt vorab die Bilder, auf die ein Text verweist, damit das Rendern danach ohne Warten auskommt. */
+  async function prefetchAttachments(text) {
+    const ids = [...new Set([...String(text || '').matchAll(/\(att:(\d+)\)/g)].map(m => Number(m[1])))];
+    await Promise.all(ids.map(id => attachmentUrl(id)));
   }
 
   function forgetAttachmentUrl(id) {
@@ -1116,15 +864,16 @@
     if (url) { URL.revokeObjectURL(url); state.attachmentUrls.delete(id); }
   }
 
-  function renderAttachments(noteId, readonly) {
-    const rows = DB.listAttachments(state.db, noteId);
+  async function renderAttachments(noteId, readonly) {
+    const rows = await B.listAttachments(noteId);
+    const urls = await Promise.all(rows.map(a => attachmentUrl(a.id)));
     el.attachments.hidden = rows.length === 0;
-    el.attachments.replaceChildren(...rows.map(a => {
+    el.attachments.replaceChildren(...rows.map((a, i) => {
       const fig = document.createElement('figure');
       fig.className = 'attachment';
       fig.dataset.id = String(a.id);
       const img = document.createElement('img');
-      img.src = attachmentUrl(a.id) || '';
+      img.src = urls[i] || '';
       img.alt = a.name;
       img.title = 'In den Text einfügen';
       img.addEventListener('click', () => insertAttachmentRef(a));
@@ -1150,7 +899,7 @@
     }));
   }
 
-  function insertAtCursor(text) {
+  async function insertAtCursor(text) {
     const ta = el.body;
     const start = ta.selectionStart || 0;
     const end = ta.selectionEnd || start;
@@ -1162,21 +911,21 @@
     const pos = before.length + insert.length;
     ta.focus();
     ta.setSelectionRange(pos, pos);
-    onEdit();
+    await onEdit();
   }
 
-  function insertAttachmentRef(a) {
+  async function insertAttachmentRef(a) {
     const alt = a.name.replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[\[\]]/g, '');
-    insertAtCursor(`![${alt}](att:${a.id})`);
+    await insertAtCursor(`![${alt}](att:${a.id})`);
   }
 
-  function removeAttachment(a) {
+  async function removeAttachment(a) {
     if (!confirm(`Bild „${a.name}“ aus dieser Notiz entfernen? Verweise im Text zeigen danach ins Leere.`)) return;
-    DB.deleteAttachment(state.db, a.id);
+    await B.deleteAttachment(a.id);
     forgetAttachmentUrl(a.id);
-    renderAttachments(state.currentId, false);
+    await renderAttachments(state.currentId, false);
     markEdited();
-    if (state.editorMode !== 'edit') renderPreview();
+    if (state.editorMode !== 'edit') await renderPreview();
   }
 
   /** Verkleinert grosse Bilder, damit die Datenbank handlich bleibt. */
@@ -1223,7 +972,7 @@
 
   async function addAttachments(files) {
     if (state.currentId == null) return;
-    const note = DB.getNote(state.db, state.currentId);
+    const note = await B.getNote(state.currentId);
     if (!note || note.deleted_at || note.archived_at) return;
     const images = [...files].filter(f => f && f.type && f.type.startsWith('image/'));
     if (!images.length) { setStatus('Nur Bilder können angehängt werden.', 'error'); return; }
@@ -1231,12 +980,12 @@
     try {
       for (const file of images) {
         const prepared = await prepareImage(file);
-        const id = DB.addAttachment(state.db, state.currentId, {
+        const id = await B.addAttachment(state.currentId, {
           name: prepared.name || `bild-${Date.now()}.png`, mime: prepared.mime, bytes: prepared.bytes,
         });
-        insertAttachmentRef({ id, name: prepared.name || 'bild' });
+        await insertAttachmentRef({ id, name: prepared.name || 'bild' });
       }
-      renderAttachments(state.currentId, false);
+      await renderAttachments(state.currentId, false);
       markEdited();
     } catch (e) {
       console.error(e);
@@ -1246,7 +995,7 @@
 
   // ---------- Vorschau ----------
 
-  function setEditorMode(mode) {
+  async function setEditorMode(mode) {
     state.editorMode = mode;
     el.editorPane.classList.remove('mode-edit', 'mode-split', 'mode-preview');
     el.editorPane.classList.add('mode-' + mode);
@@ -1254,26 +1003,31 @@
       b.setAttribute('aria-selected', String(b.dataset.mode === mode));
     }
     try { localStorage.setItem(MODE_KEY, mode); } catch (e) { /* egal */ }
-    if (mode !== 'edit' && state.currentId != null) renderPreview();
+    if (mode !== 'edit' && state.currentId != null) await renderPreview();
   }
 
-  function cycleEditorMode() {
+  async function cycleEditorMode() {
     const order = ['edit', 'split', 'preview'];
-    setEditorMode(order[(order.indexOf(state.editorMode) + 1) % order.length]);
+    await setEditorMode(order[(order.indexOf(state.editorMode) + 1) % order.length]);
   }
 
   /** Löst [[Titel]] auf Notiz-IDs auf; einmal pro Darstellung bauen. */
-  function wikiResolver() {
-    const index = DB.titleIndex(state.db);
+  async function wikiResolver() {
+    const index = new Map(await B.titleIndex());
     return title => { const id = index.get(title.trim().toLowerCase()); return id == null ? null : id; };
   }
 
-  function renderPreview() {
+  async function renderPreview() {
     if (state.currentId == null) return;
-    el.preview.innerHTML = M.render(el.body.value, {
+    const isLatest = fresh('preview');
+    const text = el.body.value;
+    const resolveTitle = await wikiResolver();
+    await prefetchAttachments(text);
+    if (!isLatest()) return;
+    el.preview.innerHTML = M.render(text, {
       highlight: state.query.trim() || null,
-      resolveTitle: wikiResolver(),
-      resolveAttachment: id => attachmentUrl(id),
+      resolveTitle,
+      resolveAttachment: id => state.attachmentUrls.get(id) || null,
       interactiveTasks: !el.body.readOnly,
       lineMap: true,
     });
@@ -1282,12 +1036,12 @@
 
   /** Hinweis in der Statuszeile, ohne den Speicherstand falsch darzustellen. */
   function hint(text) {
-    setStatus(text, state.editSeq !== state.savedSeq ? 'dirty' : 'saved');
+    setStatus(text, saveState());
   }
 
   /** Kästchen in der Vorschau angeklickt: Zeile im Text umschalten. Abhaken geht erst, wenn alle
    *  Unteraufgaben erledigt sind; Öffnen einer Unteraufgabe öffnet erledigte Hauptaufgaben mit. */
-  function onPreviewChange(e) {
+  async function onPreviewChange(e) {
     const input = e.target.closest('li.task[data-line] input[type="checkbox"]');
     if (!input || state.currentId == null || el.body.readOnly) return;
     const line = Number(input.closest('li').dataset.line);
@@ -1298,12 +1052,12 @@
     } else {
       el.body.value = T.reopen(el.body.value, line);
     }
-    onEdit();
-    renderPreview();
+    await onEdit();
+    await renderPreview();
   }
 
   /** Doppelklick auf den Text einer Aufgabe in der Vorschau: Aufgabe samt Unteraufgaben abschliessen. */
-  function onPreviewDblClick(e) {
+  async function onPreviewDblClick(e) {
     if (state.currentId == null || el.body.readOnly) return;
     if (e.target.closest('a, input, button')) return;
     const li = e.target.closest('li');
@@ -1312,8 +1066,8 @@
     if (!r.action) return;
     window.getSelection().removeAllRanges();
     el.body.value = r.body;
-    onEdit();
-    renderPreview();
+    await onEdit();
+    await renderPreview();
     hint(r.action === 'completed' ? 'Aufgabe mit allen Unteraufgaben erledigt' : 'Aufgabe wieder geöffnet');
   }
 
@@ -1323,32 +1077,32 @@
     state.previewTimer = setTimeout(renderPreview, PREVIEW_DELAY_MS);
   }
 
-  function onPreviewClick(e) {
+  async function onPreviewClick(e) {
     const a = e.target.closest('a');
     if (!a) return;
     if (a.classList.contains('md-wiki')) {
       e.preventDefault();
-      if (a.dataset.noteId) { openNote(Number(a.dataset.noteId)); return; }
+      if (a.dataset.noteId) { await openNote(Number(a.dataset.noteId)); return; }
       const title = a.dataset.title;
       if (!confirm(`Es gibt keine Notiz „${title}“. Jetzt als Unternotiz anlegen?`)) return;
-      const id = DB.createNote(state.db, state.currentId);
-      DB.renameNote(state.db, id, title);
+      const id = await B.createNote(state.currentId);
+      await B.renameNote(id, title);
       markEdited();
-      renderAll();
-      openNote(id);
+      await renderAll();
+      await openNote(id);
     } else if (a.getAttribute('href') === '#') {
       e.preventDefault();
     }
   }
 
   /** Link in der Fragen- oder Aufgabenliste: Verweis öffnet die Notiz, externe Links öffnen sich im neuen Tab. */
-  function onListLinkClick(e) {
+  async function onListLinkClick(e) {
     const a = e.target.closest('a');
     if (!a) return;
     e.stopPropagation();
     if (a.classList.contains('md-wiki')) {
       e.preventDefault();
-      if (a.dataset.noteId) openNote(Number(a.dataset.noteId));
+      if (a.dataset.noteId) await openNote(Number(a.dataset.noteId));
       else setStatus(`Es gibt keine Notiz „${a.dataset.title}“`, 'error');
     } else if (a.getAttribute('href') === '#') {
       e.preventDefault();
@@ -1367,8 +1121,8 @@
     el.noteMeta.textContent = `Erstellt ${fmtDate(createdAt)} · Geändert ${fmtDate(updatedAt)}`;
   }
 
-  function renderCrumbs(note) {
-    const path = DB.getPath(state.db, note.id);
+  async function renderCrumbs(note) {
+    const path = await B.getPath(note.id);
     const frag = document.createDocumentFragment();
     const add = (label, onClick) => {
       const b = document.createElement('button');
@@ -1381,32 +1135,32 @@
       sep.textContent = '›';
       frag.appendChild(sep);
     };
-    add(DB.getMapTitle(state.db), () => {
-      if (state.view === 'map') { closeEditor(); state.mapSelection = 'root'; state.map.setSelected('root'); }
+    add(await B.getMapTitle(), async () => {
+      if (state.view === 'map') { await closeEditor(); state.mapSelection = 'root'; state.map.setSelected('root'); }
     });
     for (const p of path) add(p.title.trim() || 'Ohne Titel', () => openNote(p.id));
     el.crumbs.replaceChildren(frag);
   }
 
-  function renderCount() {
+  async function renderCount() {
     if (state.listScope === 'trash') {
-      const t = DB.countTrash(state.db);
-      el.count.textContent = t === 1 ? '1 Notiz im Papierkorb' : `${t} Notizen im Papierkorb`;
+      const trash = await B.countTrash();
+      el.count.textContent = trash === 1 ? '1 Notiz im Papierkorb' : `${trash} Notizen im Papierkorb`;
       return;
     }
     if (state.listScope === 'archive') {
-      const a = DB.countArchived(state.db);
+      const a = await B.countArchived();
       el.count.textContent = a === 1 ? '1 Notiz im Archiv' : `${a} Notizen im Archiv`;
       return;
     }
-    const n = DB.countNotes(state.db, { archived: false });
-    const a = DB.countArchived(state.db);
+    const n = await B.countNotes({ archived: false });
+    const a = await B.countArchived();
     el.count.textContent = (n === 1 ? '1 Notiz' : `${n} Notizen`) + (a ? ` · ${a} im Archiv` : '');
   }
 
-  function updateListItem(id, title, body, ts) {
+  async function updateListItem(id, title, body, ts) {
     const li = el.list.querySelector(`li[data-id="${id}"]`);
-    if (!li) { renderList(); return; }
+    if (!li) { await renderList(); return; }
     li.querySelector('.note-title').textContent = title.trim() || 'Ohne Titel';
     li.querySelector('.note-snippet').textContent = snippetOf(body) || '…';
     li.querySelector('.note-date').textContent = fmtDate(ts);
@@ -1423,25 +1177,25 @@
 
   // ---------- Notiz-Aktionen ----------
 
-  function selectNote(id, focusEditor) {
+  async function selectNote(id, focusEditor) {
     state.currentId = id;
     setActiveItem(id);
-    renderEditor();
+    await renderEditor();
     if (isNarrow()) showEditorView(true);
     if (focusEditor) (el.title.value ? el.body : el.title).focus();
   }
 
   /** Öffnet eine Notiz im Editor: in der Liste rechts, aus der Mindmap als Vollbild. */
-  function openNote(id, opts) {
+  async function openNote(id, opts) {
     hideContextMenu();
     state.currentId = id;
     if (state.view !== 'list') {
       if (state.view === 'map') state.mapSelection = id;
       document.body.classList.add('editor-open');
-      renderEditor();
+      await renderEditor();
       (el.title.value ? el.body : el.title).focus();
     } else {
-      selectNote(id, true);
+      await selectNote(id, true);
     }
     if (opts && typeof opts.line === 'number') jumpToLine(opts.line);
   }
@@ -1458,28 +1212,28 @@
     el.body.scrollTop = Math.max(0, top - el.body.clientHeight / 3);
   }
 
-  function closeEditor() {
+  async function closeEditor() {
     if (!isEditorOpen()) { showEditorView(false); return; }
     document.body.classList.remove('editor-open');
     if (state.view === 'map') {
       if (state.currentId != null) state.mapSelection = state.currentId;
-      renderMap();
+      await renderMap();
       el.mindmap.focus({ preventScroll: true });
     } else if (state.view === 'questions') {
-      renderQuestions();
+      await renderQuestions();
     } else if (state.view === 'tasks') {
-      renderTasks();
+      await renderTasks();
     }
   }
 
-  function newNote() {
+  async function newNote() {
     const parentId = state.view === 'map' ? selectionAsParent() : null;
-    if (state.view === 'map') { newNoteInMap(parentId); return; }
-    const id = DB.createNote(state.db, null);
+    if (state.view === 'map') { await newNoteInMap(parentId); return; }
+    const id = await B.createNote(null);
     state.currentId = id;
     if (state.query) { state.query = ''; el.search.value = ''; el.mapSearch.value = ''; }
     if (state.listScope !== 'live') { state.listScope = 'live'; el.listScope.value = 'live'; }
-    renderAll();
+    await renderAll();
     markEdited();
     if (isNarrow()) showEditorView(true);
     el.title.focus();
@@ -1489,147 +1243,150 @@
     return typeof state.mapSelection === 'number' ? state.mapSelection : null;
   }
 
-  function newNoteInMap(parentId) {
+  async function newNoteInMap(parentId) {
     hideContextMenu();
-    if (parentId != null && DB.isArchived(state.db, parentId)) { hint('Unter einer archivierten Notiz lässt sich nichts anlegen. Erst zurückholen.'); return; }
+    if (parentId != null && await B.isArchived(parentId)) { hint('Unter einer archivierten Notiz lässt sich nichts anlegen. Erst zurückholen.'); return; }
     if (parentId != null) {
       const info = state.map.nodeInfo(parentId);
-      if (info && info.collapsed) DB.setCollapsed(state.db, parentId, false);
+      if (info && info.collapsed) await B.setCollapsed(parentId, false);
     }
-    const id = DB.createNote(state.db, parentId);
+    const id = await B.createNote(parentId);
     state.mapSelection = id;
     markEdited();
-    renderMap();
-    renderCount();
+    await renderMap();
+    await renderCount();
     state.map.ensureVisible(id);
-    beginRename(id, { isNew: true });
+    await beginRename(id, { isNew: true });
   }
 
-  function newChildOfCurrent() {
+  async function newChildOfCurrent() {
     if (state.currentId == null) return;
     const parentId = state.currentId;
-    if (DB.isArchived(state.db, parentId)) { hint('Unter einer archivierten Notiz lässt sich nichts anlegen. Erst zurückholen.'); return; }
-    const id = DB.createNote(state.db, parentId);
+    if (await B.isArchived(parentId)) { hint('Unter einer archivierten Notiz lässt sich nichts anlegen. Erst zurückholen.'); return; }
+    const id = await B.createNote(parentId);
     const info = state.map.nodeInfo(parentId);
-    if (info && info.collapsed) DB.setCollapsed(state.db, parentId, false);
+    if (info && info.collapsed) await B.setCollapsed(parentId, false);
     state.currentId = id;
     state.mapSelection = id;
     markEdited();
-    renderList();
-    renderCount();
-    renderEditor();
+    await renderList();
+    await renderCount();
+    await renderEditor();
     el.title.focus();
   }
 
-  function onEdit() {
+  async function onEdit() {
     if (state.currentId == null) return;
-    const ts = DB.updateNote(state.db, state.currentId, el.title.value, el.body.value);
-    renderMeta(DB.getNote(state.db, state.currentId).created_at, ts);
-    updateListItem(state.currentId, el.title.value, el.body.value, ts);
+    const ts = await B.updateNote(state.currentId, el.title.value, el.body.value);
+    renderMeta((await B.getNote(state.currentId)).created_at, ts);
+    await updateListItem(state.currentId, el.title.value, el.body.value, ts);
     renderNoteQuestions(el.body.value);
-    renderQuestionCounts();
-    renderTaskCounts();
+    await renderQuestionCounts();
+    await renderTaskCounts();
     schedulePreview();
     markEdited();
   }
 
   /** Markiert die Zeile(n) unter dem Cursor als Frage ("?") oder Antwort ("!") bzw. hebt es auf. */
-  function toggleLine(prefix) {
-    runCommand(prefix === '?' ? 'question' : 'answer');
+  async function toggleLine(prefix) {
+    await runCommand(prefix === '?' ? 'question' : 'answer');
   }
 
   // ---------- Toolleiste ----------
 
-  function applyEdit(result) {
+  async function applyEdit(result) {
     el.body.value = result.text;
     el.body.focus();
     el.body.setSelectionRange(result.selStart, result.selEnd);
-    onEdit();
+    await onEdit();
   }
 
-  function runCommand(cmd) {
+  async function runCommand(cmd) {
     if (state.currentId == null || el.body.readOnly) return;
-    const t = el.body.value;
+    const text = el.body.value;
     const s = el.body.selectionStart || 0;
     const e = el.body.selectionEnd || s;
     let r = null;
     switch (cmd) {
-      case 'bold': r = E.wrap(t, s, e, '**', '**', 'fett'); break;
-      case 'italic': r = E.wrap(t, s, e, '*', '*', 'kursiv'); break;
-      case 'strike': r = E.wrap(t, s, e, '~~', '~~', 'durchgestrichen'); break;
-      case 'code': r = E.wrap(t, s, e, '`', '`', 'code'); break;
-      case 'bullet': r = E.toggleList(t, s, e, 'bullet'); break;
-      case 'ordered': r = E.toggleList(t, s, e, 'ordered'); break;
-      case 'task': r = E.toggleList(t, s, e, 'task'); break;
-      case 'quote': r = E.togglePrefix(t, s, e, 'quote'); break;
-      case 'question': r = E.togglePrefix(t, s, e, 'question'); break;
-      case 'answer': r = E.togglePrefix(t, s, e, 'answer'); break;
-      case 'codeblock': r = E.codeBlock(t, s, e); break;
-      case 'hr': r = E.horizontalRule(t, s, e); break;
-      case 'link': r = E.link(t, s, e); break;
-      case 'wiki': r = E.wikiLink(t, s, e); break;
+      case 'bold': r = E.wrap(text, s, e, '**', '**', 'fett'); break;
+      case 'italic': r = E.wrap(text, s, e, '*', '*', 'kursiv'); break;
+      case 'strike': r = E.wrap(text, s, e, '~~', '~~', 'durchgestrichen'); break;
+      case 'code': r = E.wrap(text, s, e, '`', '`', 'code'); break;
+      case 'bullet': r = E.toggleList(text, s, e, 'bullet'); break;
+      case 'ordered': r = E.toggleList(text, s, e, 'ordered'); break;
+      case 'task': r = E.toggleList(text, s, e, 'task'); break;
+      case 'quote': r = E.togglePrefix(text, s, e, 'quote'); break;
+      case 'question': r = E.togglePrefix(text, s, e, 'question'); break;
+      case 'answer': r = E.togglePrefix(text, s, e, 'answer'); break;
+      case 'codeblock': r = E.codeBlock(text, s, e); break;
+      case 'hr': r = E.horizontalRule(text, s, e); break;
+      case 'link': r = E.link(text, s, e); break;
+      case 'wiki': r = E.wikiLink(text, s, e); break;
       default: return;
     }
-    applyEdit(r);
+    await applyEdit(r);
   }
 
-  function setHeadingFromSelect() {
+  async function setHeadingFromSelect() {
     const v = el.headingSelect.value;
     el.headingSelect.value = '';
     if (v === '' || state.currentId == null || el.body.readOnly) return;
-    applyEdit(E.setHeading(el.body.value, el.body.selectionStart || 0, el.body.selectionEnd || 0, Number(v)));
+    await applyEdit(E.setHeading(el.body.value, el.body.selectionStart || 0, el.body.selectionEnd || 0, Number(v)));
   }
 
   // ---------- Hilfe ----------
 
-  function openHelp(tab) {
+  async function openHelp(tab) {
     closeMenu();
     hideContextMenu();
-    showHelpTab(tab || 'editor');
+    await showHelpTab(tab || 'editor');
     if (typeof el.helpDialog.showModal === 'function') { if (!el.helpDialog.open) el.helpDialog.showModal(); }
     else el.helpDialog.setAttribute('open', '');
   }
 
-  function showHelpTab(tab) {
+  async function showHelpTab(tab) {
     for (const b of el.helpTabs.querySelectorAll('button[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
     for (const panel of el.helpDialog.querySelectorAll('.help-panel')) panel.hidden = panel.dataset.panel !== tab;
-    if (tab === 'storage') renderStorageStatus();
+    if (tab === 'storage') await renderStorageStatus();
   }
 
-  function renderStorageStatus() {
-    const lines = [];
-    lines.push(`Browser-Speicher: ${Store.browserStore.label()}` + (state.mirrorAtStart ? ' (Kopie vorhanden)' : ''));
-    if (state.fileHandle && state.filePermission === 'granted') lines.push(`Datenbankdatei: „${state.fileHandle.name}“, verbunden${state.handleRemembered ? ', wird gemerkt' : ' (nur diese Sitzung)'}`);
-    else if (state.fileHandle) lines.push(`Datenbankdatei: „${state.fileHandle.name}“ gemerkt, noch nicht verbunden`);
-    else lines.push(Store.fileAccess.supported ? 'Datenbankdatei: keine. Empfehlung: unter Datenbank → Datenbankdatei anlegen…' : 'Datenbankdatei: dieser Browser kann nicht direkt in Dateien schreiben; nutze Kopie herunterladen / importieren.');
-    const n = DB.countNotes(state.db);
-    const bytes = DB.attachmentsSize(state.db);
-    lines.push(`Inhalt: ${n === 1 ? '1 Notiz' : n + ' Notizen'}, ${DB.countTrash(state.db)} im Papierkorb, Bilder ${Math.round(bytes / 1024)} KB`);
-    lines.push(state.editSeq === state.savedSeq ? 'Alle Änderungen sind gespeichert.' : 'Es gibt ungespeicherte Änderungen (werden gleich geschrieben).');
+  async function renderStorageStatus() {
+    const lines = shell.storageLines();
+    const n = await B.countNotes();
+    const bytes = await B.attachmentsSize();
+    const trash = await B.countTrash();
+    lines.push(t('Inhalt: {notizen}, {papierkorb} im Papierkorb, Bilder {kb} KB', {
+      notizen: tn('{n} Notiz', '{n} Notizen', n),
+      papierkorb: trash,
+      kb: Math.round(bytes / 1024),
+    }));
+    lines.push(shell.saveLine());
     el.helpStorageStatus.textContent = lines.join('\n');
   }
 
   // ---------- Fragen-Ansicht ----------
 
-  function setQuestionFilter(status) {
+  async function setQuestionFilter(status) {
     clearTimeout(state.qSearchTimer);
     state.qQuery = el.qSearch.value;
     state.qStatus = status;
     for (const b of el.qFilter.querySelectorAll('button[data-status]')) {
       b.setAttribute('aria-selected', String(b.dataset.status === status));
     }
-    renderQuestions();
+    await renderQuestions();
   }
 
-  function renderQuestions() {
+  async function renderQuestions() {
     if (state.view !== 'questions') return;
-    const resolve = wikiResolver();
+    const isLatest = fresh('questions');
+    const resolve = await wikiResolver();
     // Entwurf eines offenen Antwortfelds sichern, damit ein Neuzeichnen nichts verschluckt.
     const openTa = state.qAnswering != null ? el.qList.querySelector(`.q-item[data-id="${state.qAnswering}"] .q-form textarea`) : null;
     if (openTa) state.qDraft = openTa.value;
     const today = Dates.nowIso();
-    const rows = DB.listQuestions(state.db, { status: state.qStatus, query: state.qQuery, tag: state.qTag, sort: state.qSort });
-    const counts = DB.countQuestions(state.db, today);
+    const rows = await B.listQuestions({ status: state.qStatus, query: state.qQuery, tag: state.qTag, sort: state.qSort });
+    const counts = await B.countQuestions(today);
+    if (!isLatest()) return;
     el.qCount.textContent = `${rows.length} von ${counts.total} · ${counts.open} offen` + (counts.overdue ? ` · ${counts.overdue} überfällig` : '');
 
     const groups = new Map();
@@ -1679,7 +1436,6 @@
   }
 
   function renderQuestionItem(r, today, resolve) {
-    resolve = resolve || wikiResolver();
     const item = document.createElement('article');
     item.className = 'q-item ' + (r.answer ? 'answered' : 'open');
     item.dataset.id = String(r.id);
@@ -1757,12 +1513,12 @@
     cancel.addEventListener('click', () => { form.hidden = true; actions.hidden = false; state.qAnswering = null; state.qDraft = null; });
     row.append(save, cancel);
     form.append(ta, row);
-    form.addEventListener('submit', e => {
+    form.addEventListener('submit', async e => {
       e.preventDefault();
-      saveAnswer(r.id, ta.value);
+      await saveAnswer(r.id, ta.value);
     });
-    ta.addEventListener('keydown', e => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveAnswer(r.id, ta.value); }
+    ta.addEventListener('keydown', async e => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); await saveAnswer(r.id, ta.value); }
       else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel.click(); }
     });
     item.appendChild(form);
@@ -1783,15 +1539,15 @@
     if (!reopened || document.activeElement === document.body) ta.focus();
   }
 
-  function saveAnswer(questionId, text) {
+  async function saveAnswer(questionId, text) {
     try {
-      const noteId = DB.answerQuestion(state.db, questionId, text);
+      const noteId = await B.answerQuestion(questionId, text);
       state.qAnswering = null;
       state.qDraft = null;
       markEdited();
-      renderQuestionCounts();
-      renderQuestions();
-      if (state.currentId === noteId) renderEditor();
+      await renderQuestionCounts();
+      await renderQuestions();
+      if (state.currentId === noteId) await renderEditor();
       setStatus(text.trim() ? 'Antwort gespeichert' : 'Antwort entfernt', 'dirty');
     } catch (e) {
       setStatus('Antwort konnte nicht gespeichert werden: ' + e.message, 'error');
@@ -1800,14 +1556,14 @@
 
   // ---------- Aufgaben-Ansicht ----------
 
-  function setTaskFilter(status) {
+  async function setTaskFilter(status) {
     clearTimeout(state.tSearchTimer);
     state.tQuery = el.tSearch.value;
     state.tStatus = status;
     for (const b of el.tFilter.querySelectorAll('button[data-status]')) {
       b.setAttribute('aria-selected', String(b.dataset.status === status));
     }
-    renderTasks();
+    await renderTasks();
   }
 
   const URGENCY_LABELS = { overdue: 'Überfällig', today: 'Heute', week: 'Diese Woche', later: 'Später', none: 'Ohne Termin', done: 'Erledigt' };
@@ -1820,12 +1576,14 @@
     return entries.map(e => e[1]);
   }
 
-  function renderTasks() {
+  async function renderTasks() {
     if (state.view !== 'tasks') return;
-    const resolve = wikiResolver();
+    const isLatest = fresh('tasks');
+    const resolve = await wikiResolver();
     const today = Dates.nowIso();
-    const rows = DB.listTasks(state.db, { status: state.tStatus, query: state.tQuery, tag: state.tTag, sort: state.tSort });
-    const counts = DB.countTasks(state.db, today);
+    const rows = await B.listTasks({ status: state.tStatus, query: state.tQuery, tag: state.tTag, sort: state.tSort });
+    const counts = await B.countTasks(today);
+    if (!isLatest()) return;
     el.tCount.textContent = `${rows.length} von ${counts.total} · ${counts.open} offen` + (counts.overdue ? ` · ${counts.overdue} überfällig` : '');
 
     const groups = new Map();
@@ -1874,7 +1632,6 @@
   }
 
   function renderTaskItem(r, today, resolve) {
-    resolve = resolve || wikiResolver();
     const item = document.createElement('article');
     item.className = 'q-item t-item ' + (r.done ? 'done' : 'open') + (r.depth ? ' sub' : '');
     item.dataset.id = String(r.id);
@@ -1892,10 +1649,10 @@
     text.className = 'q-text';
     text.innerHTML = M.inline(r.text, { highlight: state.tQuery.trim() || null, resolveTitle: resolve });
     text.title = 'Doppelklick: Aufgabe samt Unteraufgaben abschliessen';
-    text.addEventListener('dblclick', e => {
+    text.addEventListener('dblclick', async e => {
       if (e.target.closest('a')) return;
       window.getSelection().removeAllRanges();
-      toggleTaskTreeInList(r.id);
+      await toggleTaskTreeInList(r.id);
     });
     head.append(box, text);
     if (r.sub_total) {
@@ -1948,59 +1705,59 @@
     return item;
   }
 
-  function toggleTaskDone(taskId, done) {
+  async function toggleTaskDone(taskId, done) {
     try {
-      const noteId = DB.setTaskDone(state.db, taskId, done);
+      const noteId = await B.setTaskDone(taskId, done);
       markEdited();
-      renderTaskCounts();
-      renderTasks();
-      if (state.currentId === noteId) { renderEditor(); if (state.editorMode !== 'edit') renderPreview(); }
+      await renderTaskCounts();
+      await renderTasks();
+      if (state.currentId === noteId) { await renderEditor(); if (state.editorMode !== 'edit') await renderPreview(); }
       setStatus(done ? 'Aufgabe erledigt' : 'Aufgabe wieder geöffnet', 'dirty');
     } catch (e) {
       if (e.code === 'SUBTASKS_OPEN') hint(e.message);
       else setStatus('Aufgabe konnte nicht geändert werden: ' + e.message, 'error');
-      renderTasks();
+      await renderTasks();
     }
   }
 
   /** Doppelklick in der Aufgabenliste: Aufgabe samt Unteraufgaben abschliessen bzw. wieder öffnen. */
-  function toggleTaskTreeInList(taskId) {
+  async function toggleTaskTreeInList(taskId) {
     try {
-      const r = DB.toggleTaskTree(state.db, taskId);
+      const r = await B.toggleTaskTree(taskId);
       markEdited();
-      renderTaskCounts();
-      renderTasks();
-      if (state.currentId === r.noteId) { renderEditor(); if (state.editorMode !== 'edit') renderPreview(); }
+      await renderTaskCounts();
+      await renderTasks();
+      if (state.currentId === r.noteId) { await renderEditor(); if (state.editorMode !== 'edit') await renderPreview(); }
       setStatus(r.action === 'completed' ? 'Aufgabe mit allen Unteraufgaben erledigt' : 'Aufgabe wieder geöffnet', 'dirty');
     } catch (e) {
       setStatus('Aufgabe konnte nicht geändert werden: ' + e.message, 'error');
-      renderTasks();
+      await renderTasks();
     }
   }
 
   function onTaskSearchInput() {
     clearTimeout(state.tSearchTimer);
-    state.tSearchTimer = setTimeout(() => {
+    state.tSearchTimer = setTimeout(async () => {
       if (el.tSearch.value === state.tQuery) return;
       state.tQuery = el.tSearch.value;
-      renderTasks();
+      await renderTasks();
     }, SEARCH_DELAY_MS);
   }
 
-  function openTaskPrintDialog() {
+  async function openTaskPrintDialog() {
     hideContextMenu();
     closeMenu();
-    const shown = DB.listTasks(state.db, { status: state.tStatus, query: state.tQuery, tag: state.tTag }).length;
+    const shown = (await B.listTasks({ status: state.tStatus, query: state.tQuery, tag: state.tTag })).length;
     const label = state.tStatus === 'open' ? 'offene' : state.tStatus === 'done' ? 'erledigte' : 'alle';
     el.taskScopeFiltered.textContent = `Wie angezeigt: ${label} Aufgaben${state.tTag ? `, Tag „${state.tTag}“` : ''}${state.tQuery.trim() ? `, Suche „${state.tQuery.trim()}“` : ''} (${shown})`;
     if (typeof el.taskPrintDialog.showModal === 'function') el.taskPrintDialog.showModal();
     else el.taskPrintDialog.setAttribute('open', '');
   }
 
-  function runTaskPrint() {
+  async function runTaskPrint() {
     const scope = (el.taskPrintForm.querySelector('input[name="taskScope"]:checked') || {}).value || 'filtered';
     const groupBy = (el.taskPrintForm.querySelector('input[name="taskGroup"]:checked') || {}).value || 'due';
-    const html = Printer.buildTasksDocument(state.db, {
+    const html = await Printer.buildTasksDocument(B, {
       status: scope === 'filtered' ? state.tStatus : scope,
       tag: scope === 'filtered' ? state.tTag : '',
       query: scope === 'filtered' ? state.tQuery.trim() : '',
@@ -2029,16 +1786,16 @@
 
   function onQuestionSearchInput() {
     clearTimeout(state.qSearchTimer);
-    state.qSearchTimer = setTimeout(() => {
+    state.qSearchTimer = setTimeout(async () => {
       if (el.qSearch.value === state.qQuery) return;
       state.qQuery = el.qSearch.value;
-      renderQuestions();
+      await renderQuestions();
     }, SEARCH_DELAY_MS);
   }
 
-  function deleteNoteById(id) {
+  async function deleteNoteById(id) {
     hideContextMenu();
-    const note = DB.getNote(state.db, id);
+    const note = await B.getNote(id);
     if (!note) return;
     const name = note.title.trim() ? `„${note.title.trim()}“` : 'diese Notiz';
     const info = state.map ? state.map.nodeInfo(id) : null;
@@ -2052,7 +1809,7 @@
     const neighbour = li && (li.nextElementSibling || li.previousElementSibling);
     if (neighbour) nextInList = Number(neighbour.dataset.id);
 
-    DB.deleteNote(state.db, id);
+    await B.deleteNote(id);
     state.multi.delete(id);
 
     if (state.currentId === id) {
@@ -2060,22 +1817,22 @@
       if (state.view === 'map') document.body.classList.remove('editor-open');
     }
     state.mapSelection = parentId == null ? 'root' : parentId;
-    renderAll();
+    await renderAll();
     markEdited();
     if (state.currentId == null) showEditorView(false);
     if (state.view === 'map') el.mindmap.focus({ preventScroll: true });
   }
 
   /** Archiviert Notizen samt allen Unternotizen, nach Rückfrage mit der Anzahl. */
-  function archiveNotes(ids) {
+  async function archiveNotes(ids) {
     hideContextMenu();
-    pruneMulti();
-    const targets = [...new Set(ids)].filter(id => { const n = DB.getNote(state.db, id); return n && !n.deleted_at && !n.archived_at; });
+    await pruneMulti();
+    const targets = (await Promise.all([...new Set(ids)].map(id => B.getNote(id)))).filter(n => n && !n.deleted_at && !n.archived_at).map(n => n.id);
     if (!targets.length) { hint('Nichts zu archivieren'); return; }
-    const count = DB.archiveCount(state.db, targets);
+    const count = await B.archiveCount(targets);
     let message;
     if (targets.length === 1) {
-      const n = DB.getNote(state.db, targets[0]);
+      const n = await B.getNote(targets[0]);
       const name = n.title.trim() ? `„${n.title.trim()}“` : 'diese Notiz';
       message = count > 1 ? `${name} und ${count - 1} ${count - 1 === 1 ? 'Unternotiz' : 'Unternotizen'} archivieren?` : `${name} archivieren?`;
     } else {
@@ -2083,9 +1840,9 @@
     }
     if (!confirm(message + '\n\nArchivierte Notizen sind ausgeblendet, bleiben aber durchsuchbar und lassen sich einzeln zurückholen.')) return;
 
-    const first = DB.getNote(state.db, targets[0]);
+    const first = await B.getNote(targets[0]);
     const archivedIds = new Set();
-    for (const id of targets) for (const a of DB.archiveNote(state.db, id)) archivedIds.add(a);
+    for (const id of targets) for (const a of await B.archiveNote(id)) archivedIds.add(a);
     for (const id of archivedIds) state.multi.delete(id);
 
     let nextInList = null;
@@ -2102,99 +1859,99 @@
       state.mapSelection = first.parent_id == null ? 'root' : first.parent_id;
     }
     markEdited();
-    renderAll();
+    await renderAll();
     if (state.currentId == null) showEditorView(false);
     setStatus(`${archivedIds.size === 1 ? '1 Notiz' : archivedIds.size + ' Notizen'} archiviert`, 'dirty');
     if (state.view === 'map') el.mindmap.focus({ preventScroll: true });
   }
 
   /** Holt genau diese Notiz aus dem Archiv, dazu die archivierten Notizen darüber. Unternotizen bleiben archiviert. */
-  function unarchiveById(id) {
+  async function unarchiveById(id) {
     hideContextMenu();
-    const note = DB.getNote(state.db, id);
+    const note = await B.getNote(id);
     if (!note || !note.archived_at) return;
-    const done = DB.unarchiveNote(state.db, id);
+    const done = await B.unarchiveNote(id);
     if (state.listScope === 'archive') { state.listScope = 'live'; el.listScope.value = 'live'; }
     if (state.view === 'map') state.mapSelection = id;
     markEdited();
-    renderAll();
+    await renderAll();
     const extra = done.length - 1;
     const name = note.title.trim() ? `„${note.title.trim()}“` : 'Notiz';
     setStatus(`${name} zurückgeholt` + (extra ? `, dazu ${extra} übergeordnete ${extra === 1 ? 'Notiz' : 'Notizen'}` : ''), 'dirty');
   }
 
-  function restoreCurrent() {
+  async function restoreCurrent() {
     if (state.currentId == null) return;
     const id = state.currentId;
-    DB.restoreNote(state.db, id);
-    const restored = DB.getNote(state.db, id);
+    await B.restoreNote(id);
+    const restored = await B.getNote(id);
     state.listScope = restored && restored.archived_at ? 'archive' : 'live'; // Archiv und Papierkorb sind unabhängig
     el.listScope.value = state.listScope;
     markEdited();
-    renderAll();
+    await renderAll();
     setStatus(restored && restored.archived_at ? 'Notiz wiederhergestellt (liegt weiterhin im Archiv)' : 'Notiz wiederhergestellt', 'dirty');
   }
 
-  function purgeCurrent() {
+  async function purgeCurrent() {
     if (state.currentId == null) return;
-    const note = DB.getNote(state.db, state.currentId);
+    const note = await B.getNote(state.currentId);
     const name = note && note.title.trim() ? `„${note.title.trim()}“` : 'diese Notiz';
     if (!confirm(`Soll ${name} endgültig gelöscht werden? Das lässt sich nicht rückgängig machen.`)) return;
-    DB.purgeNote(state.db, state.currentId);
+    await B.purgeNote(state.currentId);
     state.currentId = null;
     markEdited();
-    renderAll();
+    await renderAll();
     showEditorView(false);
   }
 
-  function emptyTrash() {
-    const n = DB.countTrash(state.db);
+  async function emptyTrash() {
+    const n = await B.countTrash();
     if (!n) return;
     if (!confirm(`${n === 1 ? 'Die Notiz' : 'Alle ' + n + ' Notizen'} im Papierkorb endgültig löschen?`)) return;
-    DB.emptyTrash(state.db);
-    if (state.currentId != null && !DB.getNote(state.db, state.currentId)) state.currentId = null;
+    await B.emptyTrash();
+    if (state.currentId != null && !await B.getNote(state.currentId)) state.currentId = null;
     markEdited();
-    renderAll();
+    await renderAll();
   }
 
   /** Ablage aus der Mindmap: als Unternotiz des Ziels oder direkt vor/nach dem Ziel. */
-  function moveNoteTo(id, targetId, where) {
+  async function moveNoteTo(id, targetId, where) {
     try {
       if (where === 'before' || where === 'after') {
         if (targetId == null) return;
-        DB.moveNote(state.db, id, targetId, where);
-        const target = DB.getNote(state.db, targetId);
+        await B.moveNote(id, targetId, where);
+        const target = await B.getNote(targetId);
         if (target && target.parent_id != null) {
           const info = state.map.nodeInfo(target.parent_id);
-          if (info && info.collapsed) DB.setCollapsed(state.db, target.parent_id, false);
+          if (info && info.collapsed) await B.setCollapsed(target.parent_id, false);
         }
       } else {
-        DB.setParent(state.db, id, targetId);
+        await B.setParent(id, targetId);
         if (targetId != null) {
           const info = state.map.nodeInfo(targetId);
-          if (info && info.collapsed) DB.setCollapsed(state.db, targetId, false);
+          if (info && info.collapsed) await B.setCollapsed(targetId, false);
         }
       }
       state.mapSelection = id;
       markEdited();
-      renderMap();
-      if (state.currentId === id) renderEditor();
+      await renderMap();
+      if (state.currentId === id) await renderEditor();
     } catch (e) {
       setStatus(e.message, 'error');
-      renderMap();
+      await renderMap();
     }
   }
 
-  function toggleCollapse(id) {
+  async function toggleCollapse(id) {
     const info = state.map.nodeInfo(id);
     if (!info || info.isRoot) return;
-    DB.setCollapsed(state.db, id, !info.collapsed);
+    await B.setCollapsed(id, !info.collapsed);
     if (info.collapsed === false && typeof state.mapSelection === 'number'
         && state.mapSelection !== id && isInSubtree(state.mapSelection, id)) {
       state.mapSelection = id;
     }
     markEdited();
-    renderMap();
+    await renderMap();
   }
 
   function isInSubtree(nodeId, ancestorId) {
@@ -2208,29 +1965,29 @@
     return false;
   }
 
-  function moveSelected(direction) {
+  async function moveSelected(direction) {
     if (typeof state.mapSelection !== 'number') return;
-    if (DB.moveAmongSiblings(state.db, state.mapSelection, direction)) {
+    if (await B.moveAmongSiblings(state.mapSelection, direction)) {
       markEdited();
-      renderMap();
+      await renderMap();
     }
   }
 
-  function setAllCollapsed(collapsed) {
+  async function setAllCollapsed(collapsed) {
     hideContextMenu();
-    DB.setAllCollapsed(state.db, collapsed);
+    await B.setAllCollapsed(collapsed);
     if (collapsed) state.mapSelection = typeof state.mapSelection === 'number' ? state.mapSelection : state.mapSelection;
     markEdited();
-    renderMap();
+    await renderMap();
     state.map.fit();
   }
 
   // ---------- Umbenennen direkt im Knoten ----------
 
-  function beginRename(id, opts) {
+  async function beginRename(id, opts) {
     hideContextMenu();
-    cancelRename();
-    if (id !== 'root' && DB.isArchived(state.db, id)) { hint('Archivierte Notizen sind schreibgeschützt. Erst zurückholen.'); return; }
+    await cancelRename();
+    if (id !== 'root' && await B.isArchived(id)) { hint('Archivierte Notizen sind schreibgeschützt. Erst zurückholen.'); return; }
     const rect = state.map.screenRectOf(id);
     if (!rect) return;
     state.rename = { id, isNew: !!(opts && opts.isNew) };
@@ -2241,43 +1998,43 @@
     input.style.width = `${width}px`;
     input.style.height = `${rect.height}px`;
     input.style.fontSize = `${Math.max(11, Math.round(rect.height * 0.41))}px`;
-    input.value = id === 'root' ? DB.getMapTitle(state.db) : (DB.getNote(state.db, id) || {}).title || '';
+    input.value = id === 'root' ? await B.getMapTitle() : (await B.getNote(id) || {}).title || '';
     input.hidden = false;
     input.focus();
     input.select();
   }
 
-  function commitRename() {
+  async function commitRename() {
     const r = state.rename;
     if (!r) return;
     state.rename = null;
     const value = el.renameInput.value.trim();
     el.renameInput.hidden = true;
     if (r.id === 'root') {
-      DB.setMapTitle(state.db, value);
+      await B.setMapTitle(value);
     } else if (r.isNew && !value) {
-      DB.purgeNote(state.db, r.id);
+      await B.purgeNote(r.id);
       state.mapSelection = null;
     } else {
-      DB.renameNote(state.db, r.id, value);
+      await B.renameNote(r.id, value);
       state.mapSelection = r.id;
     }
     markEdited();
-    renderAll();
-    if (state.currentId === r.id) renderEditor();
+    await renderAll();
+    if (state.currentId === r.id) await renderEditor();
     el.mindmap.focus({ preventScroll: true });
   }
 
-  function cancelRename() {
+  async function cancelRename() {
     const r = state.rename;
     if (!r) return;
     state.rename = null;
     el.renameInput.hidden = true;
     if (r.isNew && r.id !== 'root') {
-      DB.purgeNote(state.db, r.id);
+      await B.purgeNote(r.id);
       state.mapSelection = null;
       markEdited();
-      renderAll();
+      await renderAll();
     }
     el.mindmap.focus({ preventScroll: true });
   }
@@ -2366,8 +2123,8 @@
     items.push(
       { label: 'Drucken…', action: () => openPrintDialog({ noteId: id, scope: 'subtree' }) },
       { label: 'Archivieren…', action: () => archiveNotes([id]) },
-      { label: 'Nach oben', key: 'Alt+↑', action: () => { state.mapSelection = id; moveSelected(-1); } },
-      { label: 'Nach unten', key: 'Alt+↓', action: () => { state.mapSelection = id; moveSelected(1); } },
+      { label: 'Nach oben', key: 'Alt+↑', action: async () => { state.mapSelection = id; await moveSelected(-1); } },
+      { label: 'Nach unten', key: 'Alt+↓', action: async () => { state.mapSelection = id; await moveSelected(1); } },
       'sep',
       { label: 'Löschen', key: 'Entf', danger: true, action: () => deleteNoteById(id) },
     );
@@ -2378,15 +2135,15 @@
 
   function onSearchInput(source) {
     clearTimeout(state.searchTimer);
-    state.searchTimer = setTimeout(() => {
+    state.searchTimer = setTimeout(async () => {
       const value = source === 'map' ? el.mapSearch.value : el.search.value;
       if (source === 'map') el.search.value = value; else el.mapSearch.value = value;
       if (value === state.query) return;
       state.query = value;
       state.mapMatchIndex = -1;
-      renderList();
-      if (state.view === 'map') renderMap(); else state.mapDirty = true;
-      if (state.editorMode !== 'edit') renderPreview();
+      await renderList();
+      if (state.view === 'map') await renderMap(); else state.mapDirty = true;
+      if (state.editorMode !== 'edit') await renderPreview();
     }, SEARCH_DELAY_MS);
   }
 
@@ -2399,25 +2156,25 @@
 
   // ---------- Tastatur in der Mindmap ----------
 
-  function onMapKeydown(e) {
+  async function onMapKeydown(e) {
     if (state.rename) return;
     const sel = state.mapSelection;
     const key = e.key;
     if (key === 'Tab') {
       e.preventDefault();
-      newNoteInMap(selectionAsParent());
+      await newNoteInMap(selectionAsParent());
     } else if (key === 'Enter') {
       e.preventDefault();
-      if (typeof sel === 'number') openNote(sel);
-      else if (sel === 'root') beginRename('root');
+      if (typeof sel === 'number') await openNote(sel);
+      else if (sel === 'root') await beginRename('root');
     } else if (key === 'F2') {
       e.preventDefault();
-      if (sel != null) beginRename(sel);
+      if (sel != null) await beginRename(sel);
     } else if (key === 'Delete' || key === 'Backspace') {
-      if (typeof sel === 'number') { e.preventDefault(); deleteNoteById(sel); }
+      if (typeof sel === 'number') { e.preventDefault(); await deleteNoteById(sel); }
     } else if (key === 'ArrowUp' || key === 'ArrowDown') {
       e.preventDefault();
-      if (e.altKey) { moveSelected(key === 'ArrowUp' ? -1 : 1); return; }
+      if (e.altKey) { await moveSelected(key === 'ArrowUp' ? -1 : 1); return; }
       moveSelection(key === 'ArrowUp' ? 'up' : 'down');
     } else if (key === 'ArrowLeft' || key === 'ArrowRight') {
       e.preventDefault();
@@ -2451,25 +2208,25 @@
     el.viewListBtn.addEventListener('click', () => setView('list'));
     el.viewQuestionsBtn.addEventListener('click', () => setView('questions'));
     el.viewTasksBtn.addEventListener('click', () => setView('tasks'));
-    el.tFilter.addEventListener('click', e => {
+    el.tFilter.addEventListener('click', async e => {
       const b = e.target.closest('button[data-status]');
-      if (b) setTaskFilter(b.dataset.status);
+      if (b) await setTaskFilter(b.dataset.status);
     });
-    el.tSort.addEventListener('change', () => { state.tSort = el.tSort.value; renderTasks(); });
+    el.tSort.addEventListener('change', async () => { state.tSort = el.tSort.value; await renderTasks(); });
     el.tSearch.addEventListener('input', onTaskSearchInput);
-    el.tTagFilter.addEventListener('change', () => { state.tTag = el.tTagFilter.value; renderTasks(); });
+    el.tTagFilter.addEventListener('change', async () => { state.tTag = el.tTagFilter.value; await renderTasks(); });
     el.tPrintBtn.addEventListener('click', openTaskPrintDialog);
     el.taskPrintGoBtn.addEventListener('click', runTaskPrint);
     el.preview.addEventListener('change', onPreviewChange);
-    el.qFilter.addEventListener('click', e => {
+    el.qFilter.addEventListener('click', async e => {
       const b = e.target.closest('button[data-status]');
-      if (b) setQuestionFilter(b.dataset.status);
+      if (b) await setQuestionFilter(b.dataset.status);
     });
     el.qSearch.addEventListener('input', onQuestionSearchInput);
-    el.qSort.addEventListener('change', () => { state.qSort = el.qSort.value; renderQuestions(); });
-    el.mdToolbar.addEventListener('click', e => {
+    el.qSort.addEventListener('change', async () => { state.qSort = el.qSort.value; await renderQuestions(); });
+    el.mdToolbar.addEventListener('click', async e => {
       const b = e.target.closest('button[data-cmd]');
-      if (b) { e.preventDefault(); runCommand(b.dataset.cmd); }
+      if (b) { e.preventDefault(); await runCommand(b.dataset.cmd); }
     });
     el.mdToolbar.addEventListener('mousedown', e => {
       // Fokus und Markierung im Textfeld behalten
@@ -2479,34 +2236,34 @@
     el.helpBtn.addEventListener('click', () => openHelp('editor'));
     el.menuHelpBtn.addEventListener('click', () => openHelp('editor'));
     el.storageHelpBtn.addEventListener('click', () => openHelp('storage'));
-    el.helpTabs.addEventListener('click', e => {
+    el.helpTabs.addEventListener('click', async e => {
       const b = e.target.closest('button[data-tab]');
-      if (b) showHelpTab(b.dataset.tab);
+      if (b) await showHelpTab(b.dataset.tab);
     });
-    el.body.addEventListener('keydown', e => {
+    el.body.addEventListener('keydown', async e => {
       const mod = e.ctrlKey || e.metaKey;
       if (e.isComposing || el.body.readOnly) return;
       // Listen, Aufgaben, Zitate und Antworten weiterführen; Shift+Enter bleibt die normale neue Zeile.
       if (e.key === 'Enter' && !mod && !e.shiftKey && !e.altKey) {
         const r = E.continueLine(el.body.value, el.body.selectionStart || 0, el.body.selectionEnd || 0);
-        if (r) { e.preventDefault(); applyEdit(r); }
+        if (r) { e.preventDefault(); await applyEdit(r); }
         return;
       }
       if (e.key === 'Tab' && !mod && !e.altKey) {
         const r = E.indentLines(el.body.value, el.body.selectionStart || 0, el.body.selectionEnd || 0, e.shiftKey ? -1 : 1);
-        if (r) { e.preventDefault(); applyEdit(r); }
+        if (r) { e.preventDefault(); await applyEdit(r); }
         return;
       }
       if (!mod) return;
       const k = e.key.toLowerCase();
       if (e.shiftKey) {
-        if (k === 'f') { e.preventDefault(); runCommand('question'); }
-        else if (k === 'a') { e.preventDefault(); runCommand('answer'); }
+        if (k === 'f') { e.preventDefault(); await runCommand('question'); }
+        else if (k === 'a') { e.preventDefault(); await runCommand('answer'); }
         return;
       }
-      if (k === 'b') { e.preventDefault(); runCommand('bold'); }
-      else if (k === 'i') { e.preventDefault(); runCommand('italic'); }
-      else if (k === 'k') { e.preventDefault(); runCommand('link'); }
+      if (k === 'b') { e.preventDefault(); await runCommand('bold'); }
+      else if (k === 'i') { e.preventDefault(); await runCommand('italic'); }
+      else if (k === 'k') { e.preventDefault(); await runCommand('link'); }
     });
 
     el.newBtn.addEventListener('click', newNote);
@@ -2517,14 +2274,14 @@
     el.mindmap.addEventListener('keydown', onMapKeydown);
 
     el.renameInput.addEventListener('keydown', e => {
+      e.stopPropagation(); // sofort, nicht erst nach dem Speichern
       if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
       else if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
-      e.stopPropagation();
     });
-    el.renameInput.addEventListener('blur', () => { if (state.rename) commitRename(); });
+    el.renameInput.addEventListener('blur', async () => { if (state.rename) await commitRename(); });
 
     el.childBtn.addEventListener('click', newChildOfCurrent);
-    el.deleteBtn.addEventListener('click', () => { if (state.currentId != null) deleteNoteById(state.currentId); });
+    el.deleteBtn.addEventListener('click', async () => { if (state.currentId != null) await deleteNoteById(state.currentId); });
     el.backBtn.addEventListener('click', closeEditor);
     el.title.addEventListener('input', onEdit);
     el.body.addEventListener('input', onEdit);
@@ -2533,28 +2290,28 @@
       if (e.key === 'Escape' && el.search.value) { el.search.value = ''; onSearchInput('list'); }
     });
     el.mapSearch.addEventListener('input', () => onSearchInput('map'));
-    el.mapSearch.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { e.preventDefault(); nextMapMatch(e.shiftKey ? -1 : 1); }
+    el.mapSearch.addEventListener('keydown', async e => {
+      if (e.key === 'Enter') { e.preventDefault(); await nextMapMatch(e.shiftKey ? -1 : 1); }
       else if (e.key === 'Escape') {
         e.stopPropagation();
         if (el.mapSearch.value) { el.mapSearch.value = ''; onSearchInput('map'); }
         else el.mindmap.focus({ preventScroll: true });
       }
     });
-    el.listScope.addEventListener('change', () => { state.listScope = el.listScope.value; renderList(); renderCount(); });
-    el.tagFilter.addEventListener('change', () => { state.tagFilter = el.tagFilter.value; renderList(); });
-    el.qTagFilter.addEventListener('change', () => { state.qTag = el.qTagFilter.value; renderQuestions(); });
+    el.listScope.addEventListener('change', async () => { state.listScope = el.listScope.value; await renderList(); await renderCount(); });
+    el.tagFilter.addEventListener('change', async () => { state.tagFilter = el.tagFilter.value; await renderList(); });
+    el.qTagFilter.addEventListener('change', async () => { state.qTag = el.qTagFilter.value; await renderQuestions(); });
     el.emptyTrashBtn.addEventListener('click', emptyTrash);
     el.restoreBtn.addEventListener('click', restoreCurrent);
     el.mapArchiveBtn.addEventListener('click', toggleArchiveView);
-    el.archiveBtn.addEventListener('click', () => { if (state.currentId != null) archiveNotes([state.currentId]); });
-    el.unarchiveBtn.addEventListener('click', () => { if (state.currentId != null) unarchiveById(state.currentId); });
+    el.archiveBtn.addEventListener('click', async () => { if (state.currentId != null) await archiveNotes([state.currentId]); });
+    el.unarchiveBtn.addEventListener('click', async () => { if (state.currentId != null) await unarchiveById(state.currentId); });
     el.multiArchiveBtn.addEventListener('click', () => archiveNotes([...state.multi]));
     el.printArchive.addEventListener('change', updatePrintLabels);
     el.purgeBtn.addEventListener('click', purgeCurrent);
-    el.modeSwitch.addEventListener('click', e => {
+    el.modeSwitch.addEventListener('click', async e => {
       const b = e.target.closest('button[data-mode]');
-      if (b) setEditorMode(b.dataset.mode);
+      if (b) await setEditorMode(b.dataset.mode);
     });
     el.preview.addEventListener('click', onPreviewClick);
     el.preview.addEventListener('dblclick', onPreviewDblClick);
@@ -2572,43 +2329,43 @@
     el.printGoBtn.addEventListener('click', runPrint);
     el.qPrintBtn.addEventListener('click', openQaPrintDialog);
     el.qaPrintGoBtn.addEventListener('click', runQaPrint);
-    el.attachInput.addEventListener('change', () => { addAttachments(el.attachInput.files); el.attachInput.value = ''; });
-    el.body.addEventListener('paste', e => {
+    el.attachInput.addEventListener('change', async () => { await addAttachments(el.attachInput.files); el.attachInput.value = ''; });
+    el.body.addEventListener('paste', async e => {
       const items = e.clipboardData && e.clipboardData.items ? [...e.clipboardData.items] : [];
       const files = items.filter(i => i.kind === 'file' && i.type.startsWith('image/')).map(i => i.getAsFile()).filter(Boolean);
-      if (files.length) { e.preventDefault(); addAttachments(files); }
+      if (files.length) { e.preventDefault(); await addAttachments(files); }
     });
     el.body.addEventListener('dragover', e => {
       if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); el.body.classList.add('drop-target'); }
     });
     el.body.addEventListener('dragleave', () => el.body.classList.remove('drop-target'));
-    el.body.addEventListener('drop', e => {
+    el.body.addEventListener('drop', async e => {
       el.body.classList.remove('drop-target');
-      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) { e.preventDefault(); addAttachments(e.dataTransfer.files); }
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) { e.preventDefault(); await addAttachments(e.dataTransfer.files); }
     });
-    el.tagInput.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTagFromInput(); }
+    el.tagInput.addEventListener('keydown', async e => {
+      if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); await addTagFromInput(); }
       else if (e.key === 'Backspace' && !el.tagInput.value) {
         const tags = currentTags();
-        if (tags.length) removeTag(tags[tags.length - 1]);
+        if (tags.length) await removeTag(tags[tags.length - 1]);
       }
     });
-    el.tagInput.addEventListener('change', () => { if (el.tagInput.value.trim()) addTagFromInput(); });
-    el.tagInput.addEventListener('blur', () => { if (el.tagInput.value.trim()) addTagFromInput(); });
+    el.tagInput.addEventListener('change', async () => { if (el.tagInput.value.trim()) await addTagFromInput(); });
+    el.tagInput.addEventListener('blur', async () => { if (el.tagInput.value.trim()) await addTagFromInput(); });
     el.title.addEventListener('keydown', e => {
       if (e.key === 'Enter') { e.preventDefault(); el.body.focus(); }
     });
 
-    el.list.addEventListener('click', e => {
+    el.list.addEventListener('click', async e => {
       const li = e.target.closest('li[data-id]');
       if (!li) return;
       if (e.ctrlKey || e.metaKey) { toggleMulti(Number(li.dataset.id)); return; }
-      selectNote(Number(li.dataset.id), false);
+      await selectNote(Number(li.dataset.id), false);
     });
-    el.list.addEventListener('keydown', e => {
+    el.list.addEventListener('keydown', async e => {
       const li = e.target.closest('li[data-id]');
       if (!li) return;
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectNote(Number(li.dataset.id), true); }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); await selectNote(Number(li.dataset.id), true); }
       else if (e.key === 'ArrowDown' && li.nextElementSibling) { e.preventDefault(); li.nextElementSibling.focus(); }
       else if (e.key === 'ArrowUp' && li.previousElementSibling) { e.preventDefault(); li.previousElementSibling.focus(); }
     });
@@ -2621,14 +2378,9 @@
     document.addEventListener('contextmenu', e => {
       if (!e.target.closest('#mindmap')) hideContextMenu();
     });
-    window.addEventListener('resize', () => { hideContextMenu(); if (state.rename) cancelRename(); });
+    window.addEventListener('resize', async () => { hideContextMenu(); if (state.rename) await cancelRename(); });
     window.addEventListener('blur', hideContextMenu);
 
-    el.createFileBtn.addEventListener('click', createFile);
-    el.openFileBtn.addEventListener('click', openFile);
-    el.disconnectBtn.addEventListener('click', disconnectFile);
-    el.downloadBtn.addEventListener('click', downloadCopy);
-    el.importBtn.addEventListener('click', startImport);
     el.exportBtn.addEventListener('click', openExportDialog);
     el.calendarBtn.addEventListener('click', openCalDialog);
     el.calIncludeDone.addEventListener('change', updateCalDialog);
@@ -2637,39 +2389,33 @@
     el.calDownloadBtn.addEventListener('click', () => runCalendarExport('download'));
     el.exportDirBtn.addEventListener('click', () => runExport('dir'));
     el.exportZipBtn.addEventListener('click', () => runExport('zip'));
-    el.importInput.addEventListener('change', importFromInput);
 
-    document.addEventListener('keydown', e => {
+    document.addEventListener('keydown', async e => {
       const mod = e.ctrlKey || e.metaKey;
-      if (mod && !e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); persistNow(); }
-      else if (mod && !e.shiftKey && e.key.toLowerCase() === 'e' && state.currentId != null && !el.editorPane.hidden) { e.preventDefault(); cycleEditorMode(); }
-      else if (e.key === 'F1') { e.preventDefault(); openHelp('editor'); }
+      if (mod && !e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); shell.flush(); }
+      else if (mod && !e.shiftKey && e.key.toLowerCase() === 'e' && state.currentId != null && !el.editorPane.hidden) { e.preventDefault(); await cycleEditorMode(); }
+      else if (e.key === 'F1') { e.preventDefault(); await openHelp('editor'); }
       else if (mod && !e.shiftKey && e.key.toLowerCase() === 'p') {
         e.preventDefault();
-        if (state.view === 'questions' && !isEditorOpen()) openQaPrintDialog();
-        else if (state.view === 'tasks' && !isEditorOpen()) openTaskPrintDialog();
-        else openPrintDialog({ noteId: isEditorOpen() || state.view === 'list' ? state.currentId : undefined });
+        if (state.view === 'questions' && !isEditorOpen()) await openQaPrintDialog();
+        else if (state.view === 'tasks' && !isEditorOpen()) await openTaskPrintDialog();
+        else await openPrintDialog({ noteId: isEditorOpen() || state.view === 'list' ? state.currentId : undefined });
       }
       else if (e.key === '/' && !mod && !e.altKey && !isTypingTarget(e.target) && !anyDialogOpen() && !isEditorOpen() && !state.rename) {
         e.preventDefault();
         focusSearch();
       }
-      else if (e.altKey && e.key.toLowerCase() === 'n') { e.preventDefault(); newNote(); }
+      else if (e.altKey && e.key.toLowerCase() === 'n') { e.preventDefault(); await newNote(); }
       else if (e.key === 'Escape') {
         if (state.rename || anyDialogOpen()) return;
         if (state.multi.size && !isEditorOpen() && el.menu.hidden && el.contextMenu.hidden) { clearMulti(); return; }
         if (!el.contextMenu.hidden) { hideContextMenu(); return; }
         if (!el.menu.hidden) { closeMenu(); return; }
-        if (isEditorOpen()) { closeEditor(); return; }
+        if (isEditorOpen()) { await closeEditor(); return; }
         if (isNarrow() && document.body.classList.contains('view-editor')) showEditorView(false);
       }
     });
 
-    window.addEventListener('beforeunload', e => {
-      if (state.editSeq !== state.savedSeq) { e.preventDefault(); e.returnValue = ''; }
-    });
-    document.addEventListener('visibilitychange', () => { if (document.hidden) persistNow(); });
-    window.addEventListener('pagehide', () => persistNow());
   }
 
   boot().catch(e => {
