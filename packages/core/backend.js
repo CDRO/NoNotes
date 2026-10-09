@@ -35,6 +35,8 @@
     'listQuestions', 'countQuestions', 'getQuestion', 'answerQuestion',
     // Aufgaben
     'listTasks', 'countTasks', 'getTask', 'setTaskDone', 'toggleTaskTree',
+    // Verlauf
+    'listHistory', 'getHistoryVersion', 'restoreHistoryVersion', 'clearHistory',
     // Anhänge
     'addAttachment', 'listAttachments', 'getAttachment', 'deleteAttachment', 'allAttachments', 'attachmentsSize',
   ];
@@ -45,7 +47,7 @@
     'setMeta', 'setMapTitle', 'createNote', 'updateNote', 'renameNote', 'setParent', 'moveNote',
     'moveAmongSiblings', 'setCollapsed', 'setAllCollapsed', 'deleteNote', 'purgeNote', 'restoreNote',
     'emptyTrash', 'archiveNote', 'unarchiveNote', 'setTags', 'answerQuestion', 'setTaskDone',
-    'toggleTaskTree', 'addAttachment', 'deleteAttachment',
+    'toggleTaskTree', 'addAttachment', 'deleteAttachment', 'restoreHistoryVersion', 'clearHistory',
   ]);
 
   /** Prüft, ob ein Backend alle Methoden hat. Gibt die fehlenden zurück. */
@@ -72,6 +74,8 @@
     TASK_STALE: N_('Die Aufgabe steht nicht mehr so im Text.'),
     QUESTION_NOT_FOUND: N_('Frage nicht gefunden.'),
     QUESTION_STALE: N_('Die Frage steht nicht mehr so im Text.'),
+    HISTORY_NOT_FOUND: N_('Diese Fassung gibt es nicht mehr.'),
+    ARCHIVED_READONLY: N_('Archivierte Notizen sind schreibgeschützt. Erst zurückholen.'),
   };
 
   /** Text eines Fehlers in der Sprache der Oberfläche. Kennt ein Backend die Kennung nicht, bleibt seine Meldung. */

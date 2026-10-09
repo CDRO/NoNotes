@@ -63,6 +63,22 @@ async function contract() {
   const b = await call('createNote', a);
   await call('updateNote', a, 'Alpha', 'Text\n- [ ] Aufgabe @15.10.2026\n  - [ ] Unterpunkt\n? Frage? @16.10.2026\n[[Beta]]');
   await call('renameNote', b, 'Beta');
+  // Verlauf: die Uhr der Seite um eine Pause vorstellen, damit eine Fassung entsteht
+  const RealDate = window.Date;
+  let skew = 0;
+  window.Date = class extends RealDate {
+    constructor(...args) { if (args.length === 0) super(RealDate.now() + skew); else super(...args); }
+    static now() { return RealDate.now() + skew; }
+  };
+  skew += 10 * 60 * 1000;
+  await call('updateNote', a, 'Alpha', 'Text geändert');
+  const history = await call('listHistory', a);
+  if (history.length !== 1) fail('listHistory: eine Fassung erwartet, ist ' + history.length);
+  const version = await call('getHistoryVersion', a, history[0].id);
+  if (!version || typeof version.body !== 'string' || typeof version.title !== 'string') fail('getHistoryVersion liefert title und body');
+  await call('restoreHistoryVersion', a, history[0].id);
+  await call('clearHistory', a);
+  window.Date = RealDate;
   await call('setTags', a, ['x', 'y']);
   await call('setMeta', 'testkey', 'wert');
   await call('setMapTitle', 'Karte');
@@ -122,8 +138,10 @@ async function contract() {
   };
   await expect('ARCHIVED_NO_CHILD', () => B.createNote(a));
   await expect('ARCHIVED_NO_MOVE', () => B.setParent(b, null));
+  await expect('ARCHIVED_READONLY', () => B.restoreHistoryVersion(a, 1));
   await call('unarchiveNote', a);
   await expect('MOVE_INTO_SELF', () => B.setParent(a, a));
+  await expect('HISTORY_NOT_FOUND', () => B.getHistoryVersion(a, 999999));
   const t2 = tasks.find(t => t.parent_id == null) || tasks[0];
   if (t2) {
     await B.setTaskDone(t2.id, true).then(() => fail('Hauptaufgabe mit offener Unteraufgabe abgehakt')).catch(e => { if (e.code !== 'SUBTASKS_OPEN') fail('SUBTASKS_OPEN erwartet, ' + e.code); else if (typeof e.open !== 'number') fail('SUBTASKS_OPEN ohne Anzahl open'); });

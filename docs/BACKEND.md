@@ -40,6 +40,7 @@ Die Argumente entsprechen den Funktionen in `packages/data/db.js` ohne das erste
 | Tags | `getTags(noteId)`, `setTags(noteId, names)`, `listAllTags()` |
 | Fragen | `listQuestions(options)`, `countQuestions(nowIso)`, `getQuestion(id)`, `answerQuestion(id, text)` |
 | Aufgaben | `listTasks(options)`, `countTasks(nowIso)`, `getTask(id)`, `setTaskDone(id, done)`, `toggleTaskTree(id)` |
+| Verlauf | `listHistory(noteId)`, `getHistoryVersion(noteId, historyId)`, `restoreHistoryVersion(noteId, historyId)`, `clearHistory(noteId)` |
 | Bilder | `addAttachment(noteId, { name, mime, bytes })`, `listAttachments(noteId)`, `getAttachment(id)`, `deleteAttachment(id)`, `allAttachments({ archived })`, `attachmentsSize()` |
 
 Reine Hilfsfunktionen ohne Datenzugriff liegen direkt auf `NoNotesBackend`: `normalizeTag(name)`,
@@ -56,6 +57,8 @@ Reine Hilfsfunktionen ohne Datenzugriff liegen direkt auf `NoNotesBackend`: `nor
 | `MOVE_INTO_SELF` | Eine Notiz kann nicht unter sich selbst hängen |
 | `TARGET_NOT_FOUND`, `NOTE_NOT_FOUND`, `TASK_NOT_FOUND`, `QUESTION_NOT_FOUND` | Ziel oder Eintrag fehlt |
 | `TASK_STALE`, `QUESTION_STALE` | Die Zeile steht nicht mehr so im Text |
+| `HISTORY_NOT_FOUND` | Die Fassung gibt es nicht mehr (zum Beispiel gekürzt) |
+| `ARCHIVED_READONLY` | Archivierte Notizen sind schreibgeschützt (Wiederherstellen einer Fassung) |
 | `SUBTASKS_OPEN` | Eine Aufgabe lässt sich nicht abschliessen, solange Unteraufgaben offen sind (`open` = Anzahl) |
 
 Neue Kennungen gehören mit ihrem deutschen Text in `NoNotesBackend.ERRORS` (mit `N_()` markiert),

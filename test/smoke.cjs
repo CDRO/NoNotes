@@ -24,7 +24,7 @@ const { chromium } = loadPlaywright();
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '10'; // muss zu js/db.js passen
+const SCHEMA_VERSION = '11'; // muss zu js/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 function watchErrors(page) {
@@ -2109,7 +2109,7 @@ async function main() {
     assert.equal(db22b.exec('SELECT count(*) FROM notes WHERE archived_at IS NOT NULL')[0].values[0][0], 0);
     db22b.close();
     assert.deepEqual(errors22, [], 'keine Konsolenfehler beim Archiv');
-    assert.deepEqual(errors22b, [], 'keine Konsolenfehler bei der Migration auf Schema 10');
+    assert.deepEqual(errors22b, [], 'keine Konsolenfehler bei der Migration auf das aktuelle Schema');
     await ctx22.close();
     await ctx22b.close();
     step('Archiv: Spalte in der Datei, Migration einer Schema-9-Datei');

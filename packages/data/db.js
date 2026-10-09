@@ -3,7 +3,14 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 10;
+  const SCHEMA_VERSION = 11;
+
+  // Verlauf pro Notiz: eine «Arbeitsphase» endet nach so langer Pause oder so langer Dauer; danach beginnt eine neue Fassung.
+  // Aufbewahrt werden höchstens so viele Fassungen und Tage; meta history_max_versions / history_max_days / history_enabled ('0') ändern das.
+  const HISTORY_GAP_MS = 5 * 60 * 1000;
+  const HISTORY_BURST_MS = 30 * 60 * 1000;
+  const HISTORY_MAX_VERSIONS = 50;
+  const HISTORY_MAX_DAYS = 180;
   let defaultMapTitle = 'Meine Notizen'; // i18n-ignore: Anfangswert; die Ausprägung setzt ihn über configure() in der Sprache der Oberfläche
 
   function nowIso() { return new Date().toISOString(); }
@@ -129,9 +136,28 @@
       );
       CREATE INDEX idx_tasks_note ON tasks (note_id);
     `);
+    createHistoryTable(db);
     setMeta(db, 'schema_version', SCHEMA_VERSION);
     setMeta(db, 'created_at', nowIso());
     setMeta(db, 'map_title', defaultMapTitle);
+  }
+
+  /** Verlauf: pro Fassung ein Rückwärts-Patch zur nächstneueren (siehe packages/core/history.js). */
+  function createHistoryTable(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS note_history (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        note_id    INTEGER NOT NULL,
+        at         TEXT NOT NULL,       -- Zeitpunkt der letzten Änderung dieser Fassung
+        started_at TEXT NOT NULL,       -- Beginn der Arbeitsphase, die auf diese Fassung folgte
+        open       INTEGER NOT NULL DEFAULT 0,  -- 1 = die Arbeitsphase läuft noch, der Patch wird bei jeder Änderung nachgeführt
+        title      TEXT NOT NULL,       -- Titel dieser Fassung
+        p          INTEGER NOT NULL,    -- gemeinsamer Anfang mit der nächstneueren Fassung
+        s          INTEGER NOT NULL,    -- gemeinsames Ende
+        r          TEXT NOT NULL        -- der Teil dazwischen, wie er in dieser Fassung steht
+      );
+      CREATE INDEX IF NOT EXISTS idx_history_note ON note_history (note_id, id);
+    `);
   }
 
   /** Fügt der Aufgabentabelle die Spalten für Unteraufgaben hinzu, falls sie fehlen (ältere Datenbanken). */
@@ -260,6 +286,12 @@
       const cols = selectAll(db, 'PRAGMA table_info(notes)').map(c => c.name);
       if (!cols.includes('archived_at')) db.exec('ALTER TABLE notes ADD COLUMN archived_at TEXT');
       version = 10;
+    }
+
+    if (version < 11) {
+      // Verlauf pro Notiz
+      createHistoryTable(db);
+      version = 11;
     }
 
     setMeta(db, 'schema_version', SCHEMA_VERSION);
@@ -406,8 +438,10 @@
     return scalar(db, 'SELECT last_insert_rowid()');
   }
 
-  function updateNote(db, id, title, body) {
+  function updateNote(db, id, title, body, options) {
     const ts = nowIso();
+    const old = selectOne(db, 'SELECT title, body, updated_at, created_at FROM notes WHERE id = ?', [id]);
+    if (old) recordHistory(db, id, old, title, body, ts, !!(options && options.newVersion));
     db.run('UPDATE notes SET title = ?, body = ?, updated_at = ? WHERE id = ?', [title, body, ts, id]);
     syncQuestions(db, id, body);
     syncTasks(db, id, body);
@@ -416,8 +450,110 @@
 
   function renameNote(db, id, title) {
     const ts = nowIso();
+    const old = selectOne(db, 'SELECT title, body, updated_at, created_at FROM notes WHERE id = ?', [id]);
+    if (old) recordHistory(db, id, old, title, old.body, ts, false);
     db.run('UPDATE notes SET title = ?, updated_at = ? WHERE id = ?', [title, ts, id]);
     return ts;
+  }
+
+  // ---------- Verlauf ----------
+
+  function historySetting(db, key, fallback) {
+    const v = Number(getMeta(db, key));
+    return Number.isFinite(v) && v > 0 ? v : fallback;
+  }
+
+  /** Hält die Fassungen einer Notiz fest, bevor sie überschrieben wird. old ist der Stand vor der Änderung.
+   *  Während einer Arbeitsphase (Pausen unter 5 Minuten, höchstens 30 Minuten) bleibt es bei einer einzigen Fassung:
+   *  dem Stand vor der Phase, dessen Patch bei jeder Änderung auf den neuen Text umgerechnet wird. */
+  function recordHistory(db, id, old, newTitle, newBody, ts, force) {
+    const H = global.NoNotesHistory;
+    if (!H || getMeta(db, 'history_enabled') === '0') return;
+    if (old.title === newTitle && old.body === newBody) return;
+    const now = Date.parse(ts);
+    const last = Date.parse(old.updated_at);
+    const open = selectOne(db, 'SELECT * FROM note_history WHERE note_id = ? AND open = 1 ORDER BY id DESC LIMIT 1', [id]);
+    let continuing = !force && Number.isFinite(now) && Number.isFinite(last) && (now - last) < HISTORY_GAP_MS;
+    if (continuing) {
+      // Beginn der Phase: bei offener Fassung deren Zeitpunkt, sonst (Phase ab leerer Notiz) die Erstellung der Notiz
+      const started = Date.parse(open ? open.started_at : old.created_at);
+      if (Number.isFinite(started) && now - started >= HISTORY_BURST_MS) continuing = false;
+    }
+    if (continuing) {
+      if (!open) return; // die Phase begann bei einer leeren Notiz: es gibt nichts zu sichern
+      const before = H.apply(old.body, open);
+      const patch = H.diff(newBody, before);
+      db.run('UPDATE note_history SET p = ?, s = ?, r = ? WHERE id = ?', [patch.p, patch.s, patch.r, open.id]);
+      return;
+    }
+    if (open) {
+      // Phase zu Ende. War am Ende alles wieder wie vorher, ist die Fassung überflüssig.
+      if (H.apply(old.body, open) === old.body && open.title === old.title) db.run('DELETE FROM note_history WHERE id = ?', [open.id]);
+      else db.run('UPDATE note_history SET open = 0 WHERE id = ?', [open.id]);
+    }
+    if (!old.title && !old.body) return; // nichts zu sichern
+    const patch = H.diff(newBody, old.body);
+    db.run('INSERT INTO note_history (note_id, at, started_at, open, title, p, s, r) VALUES (?, ?, ?, 1, ?, ?, ?, ?)',
+      [id, old.updated_at, ts, old.title, patch.p, patch.s, patch.r]);
+    pruneHistory(db, id, ts);
+  }
+
+  /** Kürzt den Verlauf von hinten: zu alte und zu viele Fassungen gehen, die neueren bleiben lesbar. */
+  function pruneHistory(db, id, ts) {
+    const maxVersions = Math.floor(historySetting(db, 'history_max_versions', HISTORY_MAX_VERSIONS));
+    const maxDays = historySetting(db, 'history_max_days', HISTORY_MAX_DAYS);
+    const cutoff = new Date(Date.parse(ts) - maxDays * 86400000).toISOString();
+    const expired = scalar(db, 'SELECT max(id) FROM note_history WHERE note_id = ? AND open = 0 AND at < ?', [id, cutoff]);
+    if (expired != null) db.run('DELETE FROM note_history WHERE note_id = ? AND id <= ?', [id, expired]);
+    db.run('DELETE FROM note_history WHERE note_id = ? AND id NOT IN (SELECT id FROM note_history WHERE note_id = ? ORDER BY id DESC LIMIT ?)', [id, id, maxVersions]);
+  }
+
+  /** Fassungen einer Notiz, neueste zuerst. Ohne den Text selbst: Zeitpunkt, Titel und Umfang der Änderung danach. */
+  function listHistory(db, noteId) {
+    const note = selectOne(db, 'SELECT title, body FROM notes WHERE id = ?', [noteId]);
+    if (!note) return [];
+    const out = [];
+    let len = note.body.length;
+    let newerTitle = note.title;
+    for (const r of selectAll(db, 'SELECT * FROM note_history WHERE note_id = ? ORDER BY id DESC', [noteId])) {
+      const added = Math.max(0, len - r.p - r.s);   // Zeichen, die seitdem dazukamen
+      const titleChanged = r.title !== newerTitle;
+      const newLen = len - added + r.r.length;
+      // eine Fassung ohne Unterschied zur neueren (Rückkehr zum Stand von vorher) zeigt nur dasselbe noch einmal
+      if (added || r.r.length || titleChanged) {
+        out.push({ id: r.id, at: r.at, title: r.title, added, removed: r.r.length, titleChanged, length: newLen });
+      }
+      len = newLen;
+      newerTitle = r.title;
+    }
+    return out;
+  }
+
+  /** Eine Fassung samt Text, aus dem aktuellen Stand durch die Patches zurückgerechnet. */
+  function getHistoryVersion(db, noteId, historyId) {
+    const H = global.NoNotesHistory;
+    const note = selectOne(db, 'SELECT title, body FROM notes WHERE id = ?', [noteId]);
+    if (!note) throw fail('NOTE_NOT_FOUND', 'Notiz nicht gefunden.');
+    let text = note.body;
+    for (const r of selectAll(db, 'SELECT * FROM note_history WHERE note_id = ? ORDER BY id DESC', [noteId])) {
+      text = H.apply(text, r);
+      if (r.id === historyId) return { id: r.id, at: r.at, title: r.title, body: text };
+    }
+    throw fail('HISTORY_NOT_FOUND', 'Diese Fassung gibt es nicht mehr.');
+  }
+
+  /** Macht eine frühere Fassung wieder zum Text der Notiz. Der Stand davor bleibt als Fassung erhalten. */
+  function restoreHistoryVersion(db, noteId, historyId) {
+    const note = selectOne(db, 'SELECT archived_at, deleted_at FROM notes WHERE id = ?', [noteId]);
+    if (!note || note.deleted_at) throw fail('NOTE_NOT_FOUND', 'Notiz nicht gefunden.');
+    if (note.archived_at) throw fail('ARCHIVED_READONLY', 'Archivierte Notizen sind schreibgeschützt. Erst zurückholen.');
+    const v = getHistoryVersion(db, noteId, historyId);
+    const ts = updateNote(db, noteId, v.title, v.body, { newVersion: true });
+    return { ts, title: v.title, body: v.body };
+  }
+
+  function clearHistory(db, noteId) {
+    db.run('DELETE FROM note_history WHERE note_id = ?', [noteId]);
   }
 
   /** Ist candidate ein Nachfahre von ancestorId (oder gleich)? */
@@ -585,6 +721,7 @@
     db.run('DELETE FROM note_tags WHERE note_id = ?', [id]);
     db.run('DELETE FROM attachments WHERE note_id = ?', [id]);
     db.run('DELETE FROM tasks WHERE note_id = ?', [id]);
+    db.run('DELETE FROM note_history WHERE note_id = ?', [id]);
     db.run('DELETE FROM notes WHERE id = ?', [id]);
     pruneTags(db);
   }
@@ -1012,6 +1149,10 @@
     countTrash,
     restoreNote,
     emptyTrash,
+    listHistory,
+    getHistoryVersion,
+    restoreHistoryVersion,
+    clearHistory,
     getTags,
     setTags,
     listAllTags,

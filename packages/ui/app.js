@@ -86,6 +86,9 @@
     storageHelpBtn: $('#storageHelpBtn'), menuHelpBtn: $('#menuHelpBtn'), langRow: $('#langRow'), langSelect: $('#langSelect'), accentSwatches: $('#accentSwatches'),
     themeRow: $('#themeRow'), themeSelect: $('#themeSelect'), pluginMenu: $('#pluginMenu'), pluginsBtn: $('#pluginsBtn'),
     pluginsDialog: $('#pluginsDialog'), pluginList: $('#pluginList'),
+    historyBtn: $('#historyBtn'), historyDialog: $('#historyDialog'), historyLead: $('#historyLead'), historyList: $('#historyList'),
+    historyMeta: $('#historyMeta'), historyText: $('#historyText'), historyDiff: $('#historyDiff'), historyLegend: $('#historyLegend'),
+    historyRestoreBtn: $('#historyRestoreBtn'), historyClearBtn: $('#historyClearBtn'),
     viewTasksBtn: $('#viewTasksBtn'), tasksView: $('#tasksView'), tFilter: $('#tFilter'), tSort: $('#tSort'),
     tSearch: $('#tSearch'), tTagFilter: $('#tTagFilter'), tPrintBtn: $('#tPrintBtn'), tCount: $('#tCount'),
     tList: $('#tList'), tEmpty: $('#tEmpty'),
@@ -598,6 +601,125 @@
     el.themeSelect.addEventListener('change', () => chooseTheme(el.themeSelect.value));
   }
 
+  // ---------- Verlauf ----------
+
+  /** Dialog mit den früheren Fassungen der offenen Notiz. */
+  async function openHistoryDialog() {
+    if (state.currentId == null) return;
+    state.history = { noteId: state.currentId, items: [], selected: null, token: 0 };
+    await renderHistoryList();
+    if (typeof el.historyDialog.showModal === 'function') el.historyDialog.showModal();
+    else el.historyDialog.setAttribute('open', '');
+  }
+
+  function closeHistoryDialog() {
+    if (el.historyDialog.open) el.historyDialog.close();
+  }
+
+  async function renderHistoryList(selectId) {
+    const h = state.history;
+    const note = await B.getNote(h.noteId);
+    if (!note) { closeHistoryDialog(); return; }
+    h.items = await B.listHistory(h.noteId);
+    h.locked = !!note.archived_at;
+    el.historyLead.textContent = t('Frühere Fassungen von «{titel}»', { titel: note.title.trim() || t('Ohne Titel') });
+    el.historyList.replaceChildren();
+    el.historyRestoreBtn.disabled = true;
+    el.historyClearBtn.disabled = h.items.length === 0;
+    if (!h.items.length) {
+      const li = document.createElement('li');
+      li.className = 'history-empty';
+      li.textContent = t('Noch keine früheren Fassungen. Eine Fassung entsteht, sobald du nach einer Pause weiterarbeitest.');
+      el.historyList.appendChild(li);
+      h.selected = null;
+      el.historyMeta.textContent = '';
+      el.historyText.replaceChildren();
+      el.historyLegend.textContent = '';
+      return;
+    }
+    for (const item of h.items) {
+      const li = document.createElement('li');
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.id = String(item.id);
+      const time = document.createElement('span');
+      time.className = 'h-time';
+      time.textContent = fmtDate(item.at);
+      const info = document.createElement('span');
+      info.className = 'h-info';
+      const parts = [item.title.trim() || t('Ohne Titel')];
+      if (item.titleChanged) parts.push(t('Titel danach geändert'));
+      if (item.added || item.removed) parts.push(t('danach +{plus} −{minus} Zeichen', { plus: item.added, minus: item.removed }));
+      info.textContent = parts.join(' · ');
+      b.append(time, info);
+      b.addEventListener('click', () => selectHistory(item.id));
+      li.appendChild(b);
+      el.historyList.appendChild(li);
+    }
+    const keep = selectId != null && h.items.some(i => i.id === selectId) ? selectId : h.items[0].id;
+    await selectHistory(keep);
+  }
+
+  async function selectHistory(id) {
+    const h = state.history;
+    const token = ++h.token;
+    const version = await B.getHistoryVersion(h.noteId, id);
+    if (token !== h.token) return; // zwischenzeitlich eine andere Fassung gewählt
+    const note = await B.getNote(h.noteId);
+    h.selected = id;
+    h.version = version;
+    h.currentBody = note ? note.body : '';
+    for (const b of el.historyList.querySelectorAll('button')) b.setAttribute('aria-current', String(b.dataset.id === String(id)));
+    el.historyMeta.textContent = t('Fassung vom {datum}: «{titel}»', { datum: fmtDate(version.at), titel: version.title.trim() || t('Ohne Titel') });
+    el.historyRestoreBtn.disabled = !!h.locked;
+    el.historyRestoreBtn.title = h.locked ? t('Archivierte Notizen sind schreibgeschützt. Erst zurückholen.') : '';
+    renderHistoryText();
+  }
+
+  /** Text der gewählten Fassung; auf Wunsch mit den Zeilen, die beim Wiederherstellen dazukommen oder verloren gehen. */
+  function renderHistoryText() {
+    const h = state.history;
+    if (!h || !h.version) return;
+    const box = el.historyText;
+    box.replaceChildren();
+    const mark = el.historyDiff.checked;
+    el.historyLegend.textContent = mark ? t('Grün: kommt beim Wiederherstellen dazu. Rot, durchgestrichen: geht dabei verloren.') : '';
+    if (!mark) { box.textContent = h.version.body; return; }
+    const frag = document.createDocumentFragment();
+    for (const line of NoNotesHistory.lineDiff(h.currentBody, h.version.body)) {
+      const div = document.createElement('div');
+      div.className = 'hl ' + (line.type === 'add' ? 'add' : line.type === 'del' ? 'del' : 'same');
+      div.textContent = line.text === '' ? ' ' : line.text; // eine leere Zeile behält ihre Höhe
+      frag.appendChild(div);
+    }
+    box.appendChild(frag);
+  }
+
+  async function restoreHistoryVersion() {
+    const h = state.history;
+    if (!h || h.selected == null) return;
+    const at = h.version ? fmtDate(h.version.at) : '';
+    try {
+      await B.restoreHistoryVersion(h.noteId, h.selected);
+    } catch (e) {
+      setStatus(errorText(e), 'error');
+      return;
+    }
+    closeHistoryDialog();
+    markEdited();
+    await renderAll();
+    setStatus(t('Fassung vom {datum} wiederhergestellt', { datum: at }), saveState());
+  }
+
+  async function clearHistory() {
+    const h = state.history;
+    if (!h || !h.items.length) return;
+    if (!confirm(t('Den Verlauf dieser Notiz löschen? Der aktuelle Text bleibt erhalten.'))) return;
+    await B.clearHistory(h.noteId);
+    markEdited();
+    await renderHistoryList();
+  }
+
   // ---------- Erweiterungen ----------
 
   const emitPlugins = (event, data) => { Plugins.emit(event, data); };
@@ -1095,6 +1217,7 @@
     el.body.readOnly = locked;
     el.tagInput.disabled = locked;
     el.deleteBtn.hidden = trashed;
+    el.historyBtn.hidden = trashed;
     el.childBtn.hidden = locked;
     el.archiveBtn.hidden = locked;
     for (const b of el.mdToolbar.querySelectorAll('button')) b.disabled = locked;
@@ -2092,7 +2215,7 @@
   }
 
   function anyDialogOpen() {
-    return [el.exportDialog, el.printDialog, el.qaPrintDialog, el.taskPrintDialog, el.helpDialog, el.calDialog, el.pluginsDialog].some(d => d.open);
+    return [el.exportDialog, el.printDialog, el.qaPrintDialog, el.taskPrintDialog, el.helpDialog, el.calDialog, el.pluginsDialog, el.historyDialog].some(d => d.open);
   }
 
   function onQuestionSearchInput() {
@@ -2603,6 +2726,10 @@
 
     el.childBtn.addEventListener('click', newChildOfCurrent);
     el.deleteBtn.addEventListener('click', async () => { if (state.currentId != null) await deleteNoteById(state.currentId); });
+    el.historyBtn.addEventListener('click', openHistoryDialog);
+    el.historyDiff.addEventListener('change', () => renderHistoryText());
+    el.historyRestoreBtn.addEventListener('click', restoreHistoryVersion);
+    el.historyClearBtn.addEventListener('click', clearHistory);
     el.backBtn.addEventListener('click', closeEditor);
     el.title.addEventListener('input', onEdit);
     el.body.addEventListener('input', onEdit);

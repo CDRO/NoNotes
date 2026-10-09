@@ -162,6 +162,7 @@
             <button type="button" id="backBtn" class="ghost back-btn" title="Zurück (Esc)">← Zurück</button>
             <nav class="crumbs" id="crumbs" aria-label="Pfad"></nav>
             <span class="meta" id="noteMeta"></span>
+            <button type="button" id="historyBtn" class="ghost" title="Frühere Fassungen dieser Notiz ansehen und wiederherstellen">Verlauf</button>
             <button type="button" id="printBtn" class="ghost" title="Diese Notiz drucken (Ctrl+P)">Drucken</button>
             <button type="button" id="childBtn" class="ghost" title="Unternotiz anlegen">+ Unternotiz</button>
             <button type="button" id="archiveBtn" class="ghost" title="Notiz samt Unternotizen ins Archiv legen">Archivieren</button>
@@ -315,6 +316,28 @@
     </form>
   </dialog>
 
+  <dialog id="historyDialog" class="dialog dialog-wide history-dialog" aria-labelledby="historyTitle">
+    <form method="dialog" id="historyForm">
+      <h2 id="historyTitle">Verlauf</h2>
+      <p class="dialog-lead" id="historyLead"></p>
+      <div class="history-body">
+        <ul id="historyList" class="history-list" aria-label="Fassungen"></ul>
+        <div class="history-view">
+          <div class="history-meta" id="historyMeta"></div>
+          <label class="suboption"><input type="checkbox" id="historyDiff" checked> Unterschiede zur aktuellen Fassung markieren</label>
+          <div id="historyText" class="history-text" tabindex="0" aria-label="Text der Fassung"></div>
+          <p class="hint" id="historyLegend"></p>
+        </div>
+      </div>
+      <div class="row">
+        <button type="button" id="historyRestoreBtn" class="primary">Diese Fassung wiederherstellen</button>
+        <button type="button" id="historyClearBtn" class="danger">Verlauf dieser Notiz löschen</button>
+        <button type="submit" value="close" class="ghost">Schliessen</button>
+      </div>
+      <p class="hint">Eine neue Fassung entsteht, wenn du nach einer Pause weiterarbeitest. Gespeichert werden nur die Unterschiede; aufbewahrt werden höchstens 50 Fassungen und 180 Tage. Beim Wiederherstellen bleibt der aktuelle Stand als Fassung erhalten.</p>
+    </form>
+  </dialog>
+
   <dialog id="pluginsDialog" class="dialog dialog-wide" aria-labelledby="pluginsTitle">
     <form method="dialog" id="pluginsForm">
       <h2 id="pluginsTitle">Erweiterungen</h2>
@@ -440,6 +463,7 @@
             </dl>
             <h3>Archiv</h3>
             <p>Eine archivierte Notiz ist samt allen Unternotizen ausgeblendet, behält aber ihren Platz im Baum. Archivieren geht per Rechtsklick auf den Knoten, mit dem Knopf <em>Archivieren</em> im Editor oder in der Auswahlleiste (mehrere Notizen). Der Schalter <em>Archiv anzeigen</em> in der Mindmap-Leiste blendet sie blass und gestrichelt ein, die Liste hat dafür den Bereich <em>Archiv</em>. Die Suche findet archivierte Notizen immer, auch bei ausgeblendetem Archiv. Archivierte Notizen sind schreibgeschützt, und ihre Fragen und Aufgaben fehlen in den Listen. Zurückgeholt wird Notiz für Notiz: <em>Zurückholen</em> holt genau diese Notiz und alle archivierten Notizen darüber, ihre archivierten Unternotizen bleiben im Archiv. Beim Drucken und Exportieren sind Archivierte nur mit dem Kästchen <em>Archivierte Notizen mit einbeziehen</em> dabei.</p>
+            <p><strong>Verlauf:</strong> Der Knopf <em>Verlauf</em> im Editor zeigt frühere Fassungen der Notiz. Eine neue Fassung entsteht, wenn du nach einer Pause weiterarbeitest; gespeichert werden nur die Unterschiede. Die gewählte Fassung lässt sich ansehen (mit markierten Unterschieden zur aktuellen) und <em>wiederherstellen</em>; der Stand davor bleibt als Fassung erhalten.</p>
           </div>
         </div>
       </section>
@@ -510,6 +534,7 @@
   <!-- LANG-PACKS -->
   <script src="../../packages/core/palette.js"></script>
   <script src="../../packages/core/plugins.js"></script>
+  <script src="../../packages/core/history.js"></script>
   <script src="../../packages/core/dates.js"></script>
   <script src="../../packages/core/questions.js"></script>
   <script src="../../packages/core/tasks.js"></script>

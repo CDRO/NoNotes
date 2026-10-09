@@ -140,6 +140,25 @@ der Fläche gut lesbar bleibt. Die Farbe wird **in der Datenbankdatei** gespeich
 `accent`), gehört also zur Datei und wandert mit ihr; ein Zwischenspeicher im Browser verhindert, dass beim Start
 kurz Blau aufblitzt. Das Mindmap-Bild in Export und Druck übernimmt die Farbe.
 
+### Verlauf pro Notiz
+
+Der Knopf **Verlauf** im Editor zeigt frühere Fassungen der Notiz. Eine neue Fassung entsteht, wenn du nach einer
+Pause von mehr als fünf Minuten weiterarbeitest (oder nach 30 Minuten Dauerarbeit); während des Schreibens bleibt es
+bei einer Fassung, damit der Verlauf nicht aus Hunderten Tastenanschlägen besteht. Gespeichert werden **nur die
+Unterschiede**, nicht ganze Kopien: bei einer 100-KB-Notiz mit Änderungen an einer Stelle kostet jede Fassung nur die
+geänderte Stelle.
+
+- Im Dialog wählst du eine Fassung und siehst ihren Text. Mit **Unterschiede zur aktuellen Fassung markieren** (Vorgabe)
+  sind die Zeilen grün, die beim Wiederherstellen dazukommen, und rot durchgestrichen die, die dabei verloren gehen.
+- **Diese Fassung wiederherstellen** macht sie zum Text der Notiz (Titel eingeschlossen). Der Stand davor bleibt als
+  Fassung erhalten, ein Wiederherstellen lässt sich also selbst wieder rückgängig machen.
+- **Verlauf dieser Notiz löschen** leert den Verlauf, der aktuelle Text bleibt.
+- Aufbewahrt werden höchstens **50 Fassungen** und **180 Tage** je Notiz; die ältesten gehen zuerst. Die Werte lassen sich
+  in der Tabelle `meta` ändern: `history_max_versions`, `history_max_days`; `history_enabled` = `0` schaltet den
+  Verlauf aus.
+- Archivierte Notizen kann man im Verlauf ansehen, aber nicht wiederherstellen. Der Verlauf liegt in der Datenbankdatei
+  (Tabelle `note_history`) und geht mit der Notiz in den Papierkorb; endgültiges Löschen entfernt ihn.
+
 ### Erweiterungen und Designs
 
 NoNotes lässt sich mit **Erweiterungen** (Plugins) ergänzen: Skriptdateien im Ordner `plugins/` neben der App.
@@ -312,6 +331,7 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | Druck | `packages/ui/print.js` baut das Druckdokument in `#printArea`; `@media print` blendet den Rest der App aus |
 | Scroll-Sync | `packages/ui/scrollsync.js`: Spiegel des Textes misst Zeilenhöhen, Vorschau-Blöcke tragen `data-line`, lineare Interpolation dazwischen |
 | Erweiterungen | `packages/core/plugins.js` (Verzeichnis, Lader, Ereignisse) und die Anbindung in `packages/ui/app.js`; Ordner `plugins/` mit Liste, Anleitung und Beispielen (siehe [docs/PLUGINS.md](docs/PLUGINS.md)) |
+| Verlauf | `packages/core/history.js` (Patches und Zeilenvergleich als reine Textfunktionen); Fassungen und Aufbewahrung in `packages/data/db.js`, Dialog in `packages/ui/app.js` |
 | Hauptfarbe | `packages/core/palette.js`: acht Farben mit heller und dunkler Fassung (Fläche, Schrift auf der Fläche, Farbe als Schrift, Tönung); die Seite setzt sie über CSS-Variablen, Export und Druck über `toSvgString` |
 | Kalender | `packages/core/ical.js`: iCalendar nach RFC 5545 mit festen UIDs, SEQUENCE, VALARM, Zeilenfaltung; gemerkte Kennungen in `meta` |
 | Backend | `packages/core/backend.js`: asynchrone Schnittstelle für alle Datenzugriffe; `packages/store-local/backend-local.js` setzt sie über SQLite um |
@@ -326,7 +346,7 @@ Language Mode zur Verfügung. Dort sind weder `HttpListener` noch der Zugriff au
 File System Access API alles mit, um direkt in die Datenbankdatei zu schreiben, und
 sql.js liefert SQLite als reines JavaScript.
 
-Schema (Version 10). Ältere Datenbanken werden beim Öffnen automatisch migriert.
+Schema (Version 11). Ältere Datenbanken werden beim Öffnen automatisch migriert.
 
 ```sql
 CREATE TABLE notes (
@@ -362,6 +382,15 @@ CREATE TABLE tasks (                -- Index über die "- [ ]"-Zeilen, aus dem T
   parent_id INTEGER,                -- Hauptaufgabe (tasks.id) bei Unteraufgaben, sonst NULL
   depth INTEGER NOT NULL DEFAULT 0  -- Anzahl übergeordneter Aufgaben
 );
+CREATE TABLE note_history (          -- Verlauf: pro Fassung ein Rückwärts-Patch zur nächstneueren
+  id INTEGER PRIMARY KEY AUTOINCREMENT, note_id INTEGER NOT NULL,
+  at TEXT NOT NULL,                 -- Zeitpunkt der letzten Änderung dieser Fassung
+  started_at TEXT NOT NULL,         -- Beginn der Arbeitsphase danach
+  open INTEGER NOT NULL DEFAULT 0,  -- 1 = Arbeitsphase läuft noch (Patch wird nachgeführt)
+  title TEXT NOT NULL,              -- Titel dieser Fassung
+  p INTEGER NOT NULL, s INTEGER NOT NULL,   -- gemeinsamer Anfang und Ende mit der neueren Fassung (Zeichen)
+  r TEXT NOT NULL                   -- der Teil dazwischen, wie er in dieser Fassung steht
+);
 CREATE TABLE attachments (          -- Bilder, im Text als ![Name](att:ID) referenziert
   id INTEGER PRIMARY KEY AUTOINCREMENT, note_id INTEGER NOT NULL, name TEXT NOT NULL,
   mime TEXT NOT NULL, size INTEGER NOT NULL, data BLOB NOT NULL, created_at TEXT NOT NULL
@@ -383,7 +412,7 @@ in die Datenbankdatei, die Mindmap-Bedienung, Fragen, Markdown-Vorschau, Tags, P
 Umsortieren per Drag & Drop, Bild-Anhänge, den Export (Ordner und ZIP), das Drucken (mit gestubbtem
 `window.print`), Toolleiste und Hilfe, Aufgaben, Termine mit Uhrzeit, den Kalenderexport, das synchrone
 Scrollen der geteilten Ansicht, Unteraufgaben, das Archiv und die Migration alter Datenbanken. Dazu
-kommen der Vertrag der Backend-Schnittstelle (`test/backend.cjs`), die Hauptfarbe (`test/palette.cjs`), die Erweiterungs-Schnittstelle (`test/plugins.cjs`) und die
+kommen der Vertrag der Backend-Schnittstelle (`test/backend.cjs`), die Hauptfarbe (`test/palette.cjs`), die Erweiterungs-Schnittstelle (`test/plugins.cjs`), den Verlauf (`test/history.cjs`) und die
 Sprachprüfungen (`test/i18n.cjs`, `tools/i18n.cjs lint` und `check`):
 
 ```bash

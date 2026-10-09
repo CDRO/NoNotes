@@ -114,7 +114,7 @@ async function pseudoTest(browser) {
   await page.dblclick('.mm-node:not(.mm-root)');
   await page.waitForSelector('#editorPane:not([hidden])');
   await check('Editor leer');
-  await page.fill('#body', [
+  const SAMPLE_BODY = [
     'Intro',
     '- [ ] Offerte einholen @15.10.2026',
     '  - [ ] Unterpunkt',
@@ -123,7 +123,8 @@ async function pseudoTest(browser) {
     '! Wichtig',
     '? Liefertermin?',
     '[[Alpha]] [[Gamma]] ![Bild](att:99)',
-  ].join('\n'));
+  ].join('\n');
+  await page.fill('#body', SAMPLE_BODY);
   await page.fill('#tagInput', 'Tagx');
   await page.keyboard.press('Enter');
   await page.waitForFunction(SAVED);
@@ -134,6 +135,30 @@ async function pseudoTest(browser) {
     await check('Editor ' + mode);
   }
   await page.click('#modeSwitch [data-mode="edit"]');
+
+  // Verlauf (zwei Fassungen anlegen, dann den Dialog prüfen)
+  await page.evaluate(() => {
+    const RealDate = Date;
+    window.__skew = 0;
+    window.Date = class extends RealDate {
+      constructor(...a) { if (a.length === 0) super(RealDate.now() + window.__skew); else super(...a); }
+      static now() { return RealDate.now() + window.__skew; }
+    };
+  });
+  for (const text of ['Intro Alpha', 'Intro Beta Gamma']) {
+    await page.evaluate(() => { window.__skew += 10 * 60 * 1000; });
+    await page.fill('#body', text);
+    await page.waitForFunction(SAVED);
+  }
+  await page.click('#historyBtn');
+  await page.waitForSelector('#historyDialog[open]');
+  await page.waitForFunction(() => document.querySelectorAll('#historyList button').length >= 1);
+  await check('Verlauf');
+  await page.uncheck('#historyDiff');
+  await check('Verlauf ohne Markierung');
+  await page.keyboard.press('Escape');
+  await page.fill('#body', SAMPLE_BODY); // zurück zum Ausgangstext der weiteren Schritte
+  await page.waitForFunction(SAVED);
 
   // Hilfe
   await page.click('#helpBtn');
