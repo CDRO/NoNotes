@@ -48,7 +48,7 @@
     for (const r of rows) {
       byId.set(r.id, {
         id: r.id, title: r.title, parentId: r.parent_id, order: r.sort_order,
-        collapsed: !!r.collapsed, badge: r.badge || 0, tbadge: r.tbadge || 0, children: [],
+        collapsed: !!r.collapsed, badge: r.badge || 0, tbadge: r.tbadge || 0, archived: !!r.archived_at, children: [],
       });
     }
     const root = { id: 'root', isRoot: true, title: mapTitle, children: [], badge: 0, tbadge: 0 };
@@ -187,6 +187,7 @@
     function drawNode(n) {
       const g = svgEl('g', {
         class: 'mm-node' + (n.isRoot ? ' mm-root' : '') + (String(n.id) === String(inst.selectedId) ? ' mm-selected' : '')
+          + (n.archived ? ' mm-archived' : '')
           + (n.match ? ' mm-match' : '') + (n.matchInside ? ' mm-match-inside' : '')
           + (!n.isRoot && inst.multi.has(n.id) ? ' mm-multi' : '')
           + (svg.classList.contains('has-matches') && !n.isRoot && !n.match && !n.matchInside ? ' mm-dim' : ''),
@@ -402,13 +403,14 @@
       }
       if (drag.id === 'root') return;
       const n = nodeOf(drag.id);
-      if (!n) return;
+      if (!n || n.archived) return; // archivierte Notizen lassen sich nicht umhängen
       drag.el.classList.add('mm-dragging');
       drag.el.setAttribute('transform', `translate(${n.x + dx / inst.k} ${n.y + dy / inst.k})`);
       const under = document.elementFromPoint(e.clientX, e.clientY);
       const targetEl = under && under.closest ? under.closest('.mm-node') : null;
       const targetId = targetEl ? targetEl.dataset.id : null;
-      const valid = !!targetId && targetId !== drag.id && !isAncestorOrSelf(drag.id, targetId);
+      const valid = !!targetId && targetId !== drag.id && !isAncestorOrSelf(drag.id, targetId)
+        && !(targetEl && targetEl.classList.contains('mm-archived')); // und nicht unter eine archivierte Notiz
       // Ablagezone: oberes Viertel = davor, unteres Viertel = danach, sonst als Unternotiz. Wurzel: nur Unternotiz.
       let where = 'child';
       if (valid && targetId !== 'root') {
@@ -521,7 +523,7 @@
       getSelected: () => inst.selectedId,
       nodeInfo: id => {
         const n = nodeOf(id);
-        return n ? { id: n.id, isRoot: !!n.isRoot, title: n.title, parentId: n.isRoot ? undefined : n.parentId, childCount: n.children.length, collapsed: !!n.collapsed, dir: n.dir } : null;
+        return n ? { id: n.id, isRoot: !!n.isRoot, title: n.title, parentId: n.isRoot ? undefined : n.parentId, childCount: n.children.length, collapsed: !!n.collapsed, archived: !!n.archived, dir: n.dir } : null;
       },
       nodeCount: () => inst.byId.size,
     };
@@ -572,8 +574,8 @@
       const stroke = n.isRoot ? c.accent : c.border;
       const textFill = n.isRoot ? c.accentContrast : c.text;
       const font = n.isRoot ? '700 16px' : '600 14px';
-      parts.push(`<g transform="translate(${n.x} ${n.y})">`);
-      parts.push(`<rect width="${n.w}" height="${n.h}" rx="${n.isRoot ? 12 : 9}" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>`);
+      parts.push(`<g transform="translate(${n.x} ${n.y})"${n.archived ? ' opacity="0.6"' : ''}>`);
+      parts.push(`<rect width="${n.w}" height="${n.h}" rx="${n.isRoot ? 12 : 9}" fill="${fill}" stroke="${stroke}" stroke-width="1.5"${n.archived ? ' stroke-dasharray="5 3"' : ''}/>`);
       parts.push(`<text x="${n.w / 2}" y="${n.h / 2}" text-anchor="middle" dominant-baseline="central" fill="${textFill}" style="font: ${font} ${esc(FONT_FAMILY.replace(/"/g, "'"))}">${esc(n.label)}</text>`);
       if (!n.isRoot && n.collapsed && n.children.length) {
         const tx = n.dir > 0 ? n.w + 11 : -11;

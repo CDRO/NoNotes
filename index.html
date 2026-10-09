@@ -63,6 +63,7 @@
           <button type="button" id="mapZoomOutBtn" title="Verkleinern (−)" aria-label="Verkleinern">−</button>
           <button type="button" id="mapZoomInBtn" title="Vergrössern (+)" aria-label="Vergrössern">+</button>
           <button type="button" id="mapPrintBtn" title="Drucken (Ctrl+P)">Drucken…</button>
+          <button type="button" id="mapArchiveBtn" aria-pressed="false" title="Archivierte Notizen in der Mindmap ein- oder ausblenden">Archiv anzeigen</button>
           <input type="search" id="mapSearch" class="map-search" placeholder="Suchen…" aria-label="Notizen durchsuchen" autocomplete="off">
           <span class="map-matches" id="mapMatches" hidden></span>
           <span class="map-hint">Doppelklick öffnet · Rechtsklick für Aktionen · Ziehen hängt um</span>
@@ -122,6 +123,7 @@
         <div class="sidebar-filters">
           <select id="listScope" aria-label="Bereich">
             <option value="live">Notizen</option>
+            <option value="archive">Archiv</option>
             <option value="trash">Papierkorb</option>
           </select>
           <select id="tagFilter" aria-label="Nach Tag filtern"><option value="">Alle Tags</option></select>
@@ -146,7 +148,12 @@
             <span class="meta" id="noteMeta"></span>
             <button type="button" id="printBtn" class="ghost" title="Diese Notiz drucken (Ctrl+P)">Drucken</button>
             <button type="button" id="childBtn" class="ghost" title="Unternotiz anlegen">+ Unternotiz</button>
+            <button type="button" id="archiveBtn" class="ghost" title="Notiz samt Unternotizen ins Archiv legen">Archivieren</button>
             <button type="button" id="deleteBtn" class="ghost danger">Löschen</button>
+          </div>
+          <div id="archiveBar" class="trash-bar archive-bar" hidden>
+            <span id="archiveBarText">Diese Notiz ist archiviert.</span>
+            <button type="button" id="unarchiveBtn" class="primary" title="Diese Notiz zurückholen, dazu alle archivierten Notizen darüber">Zurückholen</button>
           </div>
           <div id="trashBar" class="trash-bar" hidden>
             <span>Diese Notiz liegt im Papierkorb.</span>
@@ -213,6 +220,7 @@
   <div id="multiBar" class="multi-bar" role="status" hidden>
     <span id="multiCount"></span>
     <button type="button" id="multiPrintBtn" class="primary">Drucken…</button>
+    <button type="button" id="multiArchiveBtn" title="Ausgewählte Notizen samt Unternotizen archivieren">Archivieren…</button>
     <button type="button" id="multiClearBtn">Auswahl aufheben</button>
   </div>
 
@@ -232,6 +240,7 @@
         <label class="suboption"><input type="checkbox" id="printIncludeMap" checked> Mindmap-Bild voranstellen</label>
         <label class="suboption"><input type="checkbox" id="printIncludeToc" checked> Inhaltsverzeichnis</label>
         <label class="suboption"><input type="checkbox" id="printPageBreaks"> Jede Notiz auf einer neuen Seite</label>
+        <label class="suboption"><input type="checkbox" id="printArchive"> Archivierte Notizen mit einbeziehen</label>
       </fieldset>
       <div class="row">
         <button type="button" id="printGoBtn" class="primary">Drucken</button>
@@ -397,10 +406,12 @@
               <dt><kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd></dt><dd>Zoom, Einpassen</dd>
               <dt><kbd>Ctrl</kbd>+Klick</dt><dd>Mehrere Notizen auswählen</dd>
               <dt>Doppelklick</dt><dd>Notiz öffnen, auf der Wurzel: Titel ändern</dd>
-              <dt>Rechtsklick</dt><dd>Aktionen zum Knoten</dd>
+              <dt>Rechtsklick</dt><dd>Aktionen zum Knoten, auch <em>Archivieren…</em>; auf einer archivierten Notiz <em>Zurückholen</em></dd>
               <dt>Ziehen</dt><dd>Mitte: Unternotiz · oberer/unterer Rand: davor/danach einordnen</dd>
               <dt><kbd>Esc</kbd></dt><dd>Auswahl aufheben</dd>
             </dl>
+            <h3>Archiv</h3>
+            <p>Eine archivierte Notiz ist samt allen Unternotizen ausgeblendet, behält aber ihren Platz im Baum. Archivieren geht per Rechtsklick auf den Knoten, mit dem Knopf <em>Archivieren</em> im Editor oder in der Auswahlleiste (mehrere Notizen). Der Schalter <em>Archiv anzeigen</em> in der Mindmap-Leiste blendet sie blass und gestrichelt ein, die Liste hat dafür den Bereich <em>Archiv</em>. Die Suche findet archivierte Notizen immer, auch bei ausgeblendetem Archiv. Archivierte Notizen sind schreibgeschützt, und ihre Fragen und Aufgaben fehlen in den Listen. Zurückgeholt wird Notiz für Notiz: <em>Zurückholen</em> holt genau diese Notiz und alle archivierten Notizen darüber, ihre archivierten Unternotizen bleiben im Archiv. Beim Drucken und Exportieren sind Archivierte nur mit dem Kästchen <em>Archivierte Notizen mit einbeziehen</em> dabei.</p>
           </div>
         </div>
       </section>
@@ -450,6 +461,7 @@
         <input type="radio" name="exportMode" value="single">
         <span><strong>Alles in einer Datei</strong><br><small>Eine Markdown-Datei mit dem Mindmap-Bild oben und allen Notizen als Abschnitte; die Bilder liegen als Anhänge daneben</small></span>
       </label>
+      <label class="suboption"><input type="checkbox" id="exportArchive"> Archivierte Notizen mit einbeziehen</label>
       <div class="row">
         <button type="button" id="exportDirBtn" class="primary">In Ordner speichern…</button>
         <button type="button" id="exportZipBtn">Als ZIP herunterladen</button>

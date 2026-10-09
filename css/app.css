@@ -471,6 +471,12 @@ mark { background: color-mix(in srgb, var(--warn) 35%, transparent); color: inhe
 /* Papierkorb */
 .trash-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-radius: var(--radius); background: color-mix(in srgb, var(--danger) 12%, var(--panel)); border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--border)); }
 .trash-bar span { flex: 1; }
+.archive-bar { background: color-mix(in srgb, var(--accent) 10%, var(--panel)); border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+.map-toolbar button[aria-pressed="true"] { background: var(--active); border-color: var(--accent); }
+.note-item.archived .note-title, .note-item.archived .note-snippet { opacity: .65; }
+.mm-node.mm-archived { opacity: .6; }
+.mm-node.mm-archived rect { stroke-dasharray: 5 3; }
+.mm-node.mm-archived.mm-match, .mm-node.mm-archived.mm-selected { opacity: 1; }
 .editor.readonly .title, .editor.readonly .body { opacity: .7; }
 .editor.readonly .chip button { display: none; }
 .editor.readonly .editor-tools .segmented { display: inline-flex; }

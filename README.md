@@ -131,7 +131,7 @@ Die Notizen bilden einen Baum um einen zentralen Knoten, dessen Titel du per Dop
 | Navigieren | Pfeiltasten wandern durch den Baum. Mausrad zoomt, Ziehen der Fläche verschiebt, `0` oder **Einpassen** zeigt alles. |
 | Mehrere auswählen | `Ctrl`+Klick (oder `Shift`+Klick) sammelt Knoten; die Leiste unten zeigt die Anzahl, bietet **Drucken…** und **Auswahl aufheben** (`Esc`). In der Liste geht `Ctrl`+Klick ebenso. |
 
-### Liste, Suche, Tags, Papierkorb
+### Liste, Suche, Tags, Papierkorb, Archiv
 
 Der Umschalter oben wechselt zur klassischen Liste mit Suche und Editor nebeneinander.
 
@@ -141,6 +141,25 @@ Der Umschalter oben wechselt zur klassischen Liste mit Suche und Editor nebenein
   Treffer (auch in eingeklappte Äste).
 - **Tags** vergibst du im Editor unter dem Titel: tippen, `Enter` oder Komma. Die Auswahl
   «Alle Tags» in Liste und Fragen filtert danach.
+- **Archivieren** legt eine Notiz samt allen Unternotizen ins **Archiv**: per Rechtsklick auf den
+  Knoten, mit dem Knopf im Editor oder in der Auswahlleiste (mehrere Notizen), jeweils nach
+  Rückfrage mit der Anzahl. Archivierte Notizen behalten ihren Platz im Baum, sind aber ausgeblendet.
+  - Der Schalter **Archiv anzeigen** in der Mindmap-Leiste blendet sie blass und gestrichelt ein
+    (die Wahl wird gemerkt); die Liste hat den Bereich «Archiv».
+  - **Die Suche findet das Archiv immer**, in Liste und Mindmap. Das unterscheidet es vom
+    Papierkorb. Treffer im Archiv erscheinen in der Mindmap samt ihren archivierten Vorfahren, auch
+    wenn das Archiv ausgeblendet ist.
+  - Archivierte Notizen sind schreibgeschützt: kein Umbenennen, kein Umhängen, keine Unternotiz.
+    Ihre Fragen und Aufgaben fehlen in den Listen, Zählern und Mindmap-Marken; im Kalenderexport
+    werden ihre Termine beim nächsten Export als abgesagt mitgeschrieben. `[[Verweise]]` auf sie
+    bleiben gültig.
+  - **Zurückholen** geht Notiz für Notiz (Rechtsklick auf den archivierten Knoten oder Knopf im
+    Editor). Es holt genau diese Notiz und alle archivierten Notizen darüber zurück, damit sie nicht
+    in der Luft hängt. Ihre archivierten Unternotizen bleiben im Archiv.
+  - Beim Drucken und Exportieren sind archivierte Notizen nur mit dem Kästchen «Archivierte Notizen
+    mit einbeziehen» dabei.
+  - Archiv und Papierkorb sind unabhängig: Eine archivierte Notiz lässt sich löschen, und beim
+    Wiederherstellen aus dem Papierkorb liegt sie weiterhin im Archiv.
 - **Löschen** verschiebt in den **Papierkorb** (Auswahl «Papierkorb» in der Liste). Dort
   lässt sich eine Notiz wiederherstellen oder endgültig löschen; «Papierkorb leeren» räumt
   alles weg. Notizen im Papierkorb erscheinen weder in der Mindmap noch bei den Fragen.
@@ -256,7 +275,7 @@ Dasselbe gilt für Fragen.
 | Teil | Umsetzung |
 | --- | --- |
 | Oberfläche | `index.html`, `css/app.css`, `js/app.js` – reines HTML/CSS/JS, keine Frameworks, kein Build |
-| Mindmap | `js/mindmap.js`: eigenes Layout (links/rechts ausbalanciert), SVG, Zoom, Ziehen, Tastatur |
+| Mindmap | `js/mindmap.js`: eigenes Layout (links/rechts ausbalanciert), SVG, Zoom, Ziehen, Tastatur; archivierte Knoten blass und gestrichelt |
 | Fragen | `js/questions.js`: Parser für `?`/`!`-Zeilen; Index in der Tabelle `questions`, bei jeder Änderung abgeglichen |
 | Aufgaben | `js/tasks.js`: Parser für `- [ ]`-Zeilen mit `@Datum`, Unteraufgaben über die Einrückung, Abschluss-Regeln als reine Textfunktionen; Index in der Tabelle `tasks`, gleiches Prinzip |
 | Termine | `js/dates.js`: gemeinsame Logik für `@TT.MM.JJJJ` bzw. `@JJJJ-MM-TT`, Dringlichkeit, Anzeige |
@@ -276,7 +295,7 @@ Language Mode zur Verfügung. Dort sind weder `HttpListener` noch der Zugriff au
 File System Access API alles mit, um direkt in die Datenbankdatei zu schreiben, und
 sql.js liefert SQLite als reines JavaScript.
 
-Schema (Version 9). Ältere Datenbanken werden beim Öffnen automatisch migriert.
+Schema (Version 10). Ältere Datenbanken werden beim Öffnen automatisch migriert.
 
 ```sql
 CREATE TABLE notes (
@@ -288,7 +307,8 @@ CREATE TABLE notes (
   parent_id  INTEGER,         -- NULL = hängt an der Wurzel
   sort_order INTEGER NOT NULL DEFAULT 0,
   collapsed  INTEGER NOT NULL DEFAULT 0,
-  deleted_at TEXT             -- gesetzt = im Papierkorb
+  deleted_at TEXT,            -- gesetzt = im Papierkorb
+  archived_at TEXT            -- gesetzt = im Archiv (ausgeblendet, durchsuchbar, schreibgeschützt)
 );
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);  -- schema_version, created_at, map_title,
                                                                 -- calendar_uid, calendar_sequence, calendar_known
@@ -326,7 +346,7 @@ prüft Anlegen, Suchen, Speichern, Neuladen, Herunterladen, Importieren, Lösche
 Schreiben in die Datenbankdatei, die Mindmap-Bedienung, die Fragen, Markdown-Vorschau, Tags,
 Papierkorb, Suche, Umsortieren per Drag & Drop, Bild-Anhänge, den Export (Ordner und ZIP),
 das Drucken (mit gestubbtem `window.print`), Toolleiste und Hilfe, Aufgaben, Termine mit Uhrzeit,
-den Kalenderexport, das synchrone Scrollen der geteilten Ansicht, Unteraufgaben und die Migration alter Datenbanken:
+den Kalenderexport, das synchrone Scrollen der geteilten Ansicht, Unteraufgaben, das Archiv und die Migration alter Datenbanken:
 
 ```bash
 npm install

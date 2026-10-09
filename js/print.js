@@ -31,17 +31,21 @@
 
   /** Löst die gewünschte Auswahl in eine geordnete Liste von Knoten (Baumreihenfolge) auf. */
   function resolveNotes(db, options) {
-    const nodes = Exporter().treeOrder(db);
+    // Archivierte Notizen sind nur dabei, wenn options.archived gesetzt ist. Ausdrücklich gewählte Notizen
+    // (diese Notiz, Auswahl) werden auch dann gedruckt, wenn sie selbst archiviert sind.
+    const nodes = Exporter().treeOrder(db, { archived: true });
+    const byId = new Map(nodes.map(n => [n.id, n]));
+    const allowed = n => !!options.archived || !n.archived_at;
     let wanted;
     if (options.scope === 'all') {
-      wanted = new Set(nodes.map(n => n.id));
+      wanted = new Set(nodes.filter(allowed).map(n => n.id));
     } else {
       const ids = options.scope === 'selection' ? (options.ids || []) : [options.noteId];
       wanted = new Set();
       for (const id of ids) {
-        if (id == null) continue;
-        if (options.withChildren) subtreeIds(nodes, id).forEach(x => wanted.add(x));
-        else wanted.add(id);
+        if (id == null || !byId.has(id)) continue;
+        wanted.add(id);
+        if (options.withChildren) subtreeIds(nodes, id).filter(x => allowed(byId.get(x))).forEach(x => wanted.add(x));
       }
     }
     const list = nodes.filter(n => wanted.has(n.id));
@@ -55,9 +59,9 @@
     return list;
   }
 
-  function mapSvgFor(db, list, scope) {
-    const rows = DB().getTree(db);
-    if (scope === 'all') return Mindmap().toSvgString(rows, { mapTitle: DB().getMapTitle(db), expandAll: true });
+  function mapSvgFor(db, list, scope, archived) {
+    if (scope === 'all') return Mindmap().toSvgString(DB().getTree(db, { archive: !!archived }), { mapTitle: DB().getMapTitle(db), expandAll: true });
+    const rows = DB().getTree(db, { archive: true });
     const included = new Set(list.map(n => n.id));
     const subset = rows.filter(r => included.has(r.id)).map(r => Object.assign({}, r, {
       parent_id: r.parent_id != null && included.has(r.parent_id) ? r.parent_id : null,
@@ -71,14 +75,14 @@
     let p = n.parentNode;
     while (p) { path.unshift(p.title.trim() || 'Ohne Titel'); p = p.parentNode; }
     if (path.length) parts.push(`Pfad: ${esc(path.join(' › '))}`);
-    parts.push(`Erstellt ${esc(fmtDate(note.created_at))} · Geändert ${esc(fmtDate(note.updated_at))}`);
+    parts.push(`Erstellt ${esc(fmtDate(note.created_at))} · Geändert ${esc(fmtDate(note.updated_at))}${note.archived_at ? ` · Archiviert ${esc(fmtDate(note.archived_at))}` : ''}`);
     const tags = DB().getTags(db, n.id);
     if (tags.length) parts.push(`Tags: ${esc(tags.join(', '))}`);
     return `<p class="print-meta">${parts.join(' · ')}</p>`;
   }
 
   /** HTML für den Druck von Notizen.
-   *  options: { scope: 'current'|'subtree'|'selection'|'all', noteId, ids, withChildren,
+   *  options: { scope: 'current'|'subtree'|'selection'|'all', noteId, ids, withChildren, archived,
    *             includeMap, includeToc, pageBreaks, resolveAttachment } */
   function buildNotesDocument(db, options) {
     const list = resolveNotes(db, options);
@@ -93,7 +97,7 @@
     const parts = [];
     parts.push(`<header class="print-head"><h1>${esc(title)}</h1><p class="print-meta">${esc(mapTitle)} · Gedruckt ${esc(fmtDate(new Date().toISOString()))} · ${list.length === 1 ? '1 Notiz' : list.length + ' Notizen'}</p></header>`);
     if (options.includeMap && list.length) {
-      parts.push(`<figure class="print-map">${mapSvgFor(db, list, options.scope)}</figure>`);
+      parts.push(`<figure class="print-map">${mapSvgFor(db, list, options.scope, options.archived)}</figure>`);
     }
     if (options.includeToc && list.length > 1) {
       parts.push('<nav class="print-toc"><h2>Inhalt</h2><ul>' + list.map(n =>

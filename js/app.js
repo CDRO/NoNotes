@@ -22,6 +22,7 @@
   const SEARCH_DELAY_MS = 120;
   const VIEW_KEY = 'nonotes.view';
   const MODE_KEY = 'nonotes.editorMode';
+  const ARCHIVE_KEY = 'nonotes.showArchive';
   const PREVIEW_DELAY_MS = 150;
 
   const $ = sel => document.querySelector(sel);
@@ -38,6 +39,8 @@
     mapSearch: $('#mapSearch'), mapMatches: $('#mapMatches'), qTagFilter: $('#qTagFilter'),
     listScope: $('#listScope'), tagFilter: $('#tagFilter'), emptyTrashBtn: $('#emptyTrashBtn'),
     editor: $('#editor'), trashBar: $('#trashBar'), restoreBtn: $('#restoreBtn'), purgeBtn: $('#purgeBtn'),
+    archiveBar: $('#archiveBar'), archiveBarText: $('#archiveBarText'), unarchiveBtn: $('#unarchiveBtn'), archiveBtn: $('#archiveBtn'),
+    mapArchiveBtn: $('#mapArchiveBtn'), multiArchiveBtn: $('#multiArchiveBtn'), printArchive: $('#printArchive'), exportArchive: $('#exportArchive'),
     tagChips: $('#tagChips'), tagInput: $('#tagInput'), tagSuggestions: $('#tagSuggestions'),
     modeSwitch: $('#modeSwitch'), preview: $('#preview'),
     exportBtn: $('#exportBtn'), exportDialog: $('#exportDialog'), exportForm: $('#exportForm'),
@@ -106,6 +109,7 @@
     tSearchTimer: null,
     calHandle: null,          // gemerkte Kalenderdatei (.ics)
     scrollSync: null,         // synchrones Scrollen in der geteilten Ansicht
+    showArchive: false,       // archivierte Notizen in der Mindmap zeigen
     // Speichern: jede Änderung erhöht editSeq; savedSeq ist der zuletzt vollständig gesicherte Stand.
     editSeq: 0,
     savedSeq: 0,
@@ -250,6 +254,7 @@
     try {
       view = localStorage.getItem(VIEW_KEY) || 'map';
       mode = localStorage.getItem(MODE_KEY) || 'edit';
+      state.showArchive = localStorage.getItem(ARCHIVE_KEY) === '1';
     } catch (e) { /* egal */ }
     setEditorMode(['edit', 'split', 'preview'].includes(mode) ? mode : 'edit');
 
@@ -604,11 +609,12 @@
     el.exportDirBtn.disabled = true;
     el.exportZipBtn.disabled = true;
     try {
-      const svg = Exporter.renderSvg(state.db);
+      const archived = el.exportArchive.checked;
+      const svg = Exporter.renderSvg(state.db, { archived });
       let png = null;
       try { png = await Exporter.svgToPng(svg, 2); }
       catch (e) { console.warn('PNG', e); }
-      const files = Exporter.buildFiles(state.db, { mode, svg, png, version: window.NONOTES_VERSION || 'dev' });
+      const files = Exporter.buildFiles(state.db, { mode, svg, png, version: window.NONOTES_VERSION || 'dev', archived });
       const n = files.length;
       if (target === 'dir') {
         const dir = await window.showDirectoryPicker({ mode: 'readwrite' });
@@ -772,9 +778,13 @@
     if (!state.map || state.view !== 'map' || isEditorOpen()) { state.mapDirty = true; return; }
     if (!el.mindmap.getBoundingClientRect().width) { state.mapDirty = true; return; }
     let matchIds = null;
+    let reveal = state.showArchive;
     if (state.query.trim()) {
-      state.mapMatches = DB.listNotes(state.db, state.query).map(r => r.id);
+      const hits = DB.listNotes(state.db, state.query); // die Suche findet auch das Archiv
+      state.mapMatches = hits.map(r => r.id);
       matchIds = new Set(state.mapMatches);
+      // Treffer im Archiv werden samt ihren archivierten Vorfahren eingeblendet, auch bei ausgeblendetem Archiv.
+      if (!reveal) { const archivedHits = hits.filter(r => r.archived_at).map(r => r.id); if (archivedHits.length) reveal = archivedHits; }
       el.mapMatches.hidden = false;
       el.mapMatches.textContent = state.mapMatches.length === 1 ? '1 Treffer' : `${state.mapMatches.length} Treffer`;
     } else {
@@ -783,7 +793,8 @@
       el.mapMatches.hidden = true;
     }
     pruneMulti();
-    state.map.render(DB.getTree(state.db), { mapTitle: DB.getMapTitle(state.db), matchIds });
+    state.map.render(DB.getTree(state.db, { archive: reveal }), { mapTitle: DB.getMapTitle(state.db), matchIds });
+    renderArchiveButton();
     state.map.setSelected(state.mapSelection);
     state.map.setMulti(state.multi);
     state.mapDirty = false;
@@ -796,6 +807,19 @@
       const n = DB.getNote(state.db, id);
       if (!n || n.deleted_at) state.multi.delete(id);
     }
+  }
+
+  function renderArchiveButton() {
+    const n = DB.countArchived(state.db);
+    el.mapArchiveBtn.setAttribute('aria-pressed', String(state.showArchive));
+    el.mapArchiveBtn.textContent = (state.showArchive ? 'Archiv ausblenden' : 'Archiv anzeigen') + (n ? ` (${n})` : '');
+  }
+
+  function toggleArchiveView() {
+    state.showArchive = !state.showArchive;
+    try { localStorage.setItem(ARCHIVE_KEY, state.showArchive ? '1' : '0'); } catch (e) { /* egal */ }
+    if (typeof state.mapSelection === 'number' && !state.showArchive && DB.isArchived(state.db, state.mapSelection)) state.mapSelection = 'root';
+    renderMap();
   }
 
   function toggleMulti(id) {
@@ -818,10 +842,11 @@
 
   // ---------- Drucken ----------
 
-  function subtreeCount(id) {
-    const nodes = Exporter.treeOrder(state.db);
+  /** Anzahl der Notiz samt Unternotizen; archivierte nur, wenn sie einbezogen werden. */
+  function subtreeCount(id, archived) {
+    const nodes = Exporter.treeOrder(state.db, { archived: true });
     const byId = new Map(nodes.map(n => [n.id, n]));
-    const count = n => 1 + n.children.reduce((s, c) => s + count(c), 0);
+    const count = n => 1 + n.children.filter(c => archived || !c.archived_at).reduce((s, c) => s + count(c), 0);
     const start = byId.get(id);
     return start ? count(start) : 0;
   }
@@ -835,18 +860,9 @@
     state.printNoteId = noteId;
     pruneMulti();
     const note = noteId != null ? DB.getNote(state.db, noteId) : null;
-    const title = note ? (note.title.trim() || 'Ohne Titel') : null;
-    const sub = noteId != null ? subtreeCount(noteId) : 0;
-    const total = DB.countNotes(state.db);
     const radios = Object.fromEntries([...el.printForm.querySelectorAll('input[name="printScope"]')].map(r => [r.value, r]));
-
-    radios.current.disabled = !note;
-    radios.subtree.disabled = !note || sub <= 1;
-    radios.selection.disabled = state.multi.size === 0;
-    el.printScopeCurrent.textContent = note ? `Diese Notiz: „${title}“` : 'Diese Notiz';
-    el.printScopeSubtree.textContent = note ? `„${title}“ mit Unternotizen (${sub})` : 'Diese Notiz mit Unternotizen';
-    el.printScopeSelection.textContent = state.multi.size ? `Ausgewählte Notizen (${state.multi.size})` : 'Ausgewählte Notizen (keine Auswahl)';
-    el.printScopeAll.textContent = `Alle Notizen (${total})`;
+    el.printArchive.checked = false; // Archivierte Notizen sind nur auf Wunsch dabei
+    const sub = updatePrintLabels();
 
     let scope = opts.scope;
     if (!scope || radios[scope].disabled) {
@@ -855,6 +871,25 @@
     radios[scope].checked = true;
     if (typeof el.printDialog.showModal === 'function') el.printDialog.showModal();
     else el.printDialog.setAttribute('open', '');
+  }
+
+  /** Beschriftung und Verfügbarkeit der Umfänge; hängt vom Kästchen «Archivierte einbeziehen» ab. Gibt die Grösse des Teilbaums zurück. */
+  function updatePrintLabels() {
+    const archived = el.printArchive.checked;
+    const noteId = state.printNoteId;
+    const note = noteId != null ? DB.getNote(state.db, noteId) : null;
+    const title = note ? (note.title.trim() || 'Ohne Titel') : null;
+    const sub = noteId != null ? subtreeCount(noteId, archived) : 0;
+    const total = archived ? DB.countNotes(state.db) : DB.countNotes(state.db, { archived: false });
+    const radios = Object.fromEntries([...el.printForm.querySelectorAll('input[name="printScope"]')].map(r => [r.value, r]));
+    radios.current.disabled = !note;
+    radios.subtree.disabled = !note || sub <= 1;
+    radios.selection.disabled = state.multi.size === 0;
+    el.printScopeCurrent.textContent = note ? `Diese Notiz: „${title}“` : 'Diese Notiz';
+    el.printScopeSubtree.textContent = note ? `„${title}“ mit Unternotizen (${sub})` : 'Diese Notiz mit Unternotizen';
+    el.printScopeSelection.textContent = state.multi.size ? `Ausgewählte Notizen (${state.multi.size})` : 'Ausgewählte Notizen (keine Auswahl)';
+    el.printScopeAll.textContent = `Alle Notizen (${total})`;
+    return sub;
   }
 
   function isHiddenNote(id) {
@@ -869,6 +904,7 @@
       noteId: state.printNoteId,
       ids: [...state.multi],
       withChildren: scope === 'subtree' || (scope === 'selection' && el.printSelectionChildren.checked),
+      archived: el.printArchive.checked,
       includeMap: el.printIncludeMap.checked,
       includeToc: el.printIncludeToc.checked,
       pageBreaks: el.printPageBreaks.checked,
@@ -939,7 +975,7 @@
     const frag = document.createDocumentFragment();
     for (const n of notes) {
       const li = document.createElement('li');
-      li.className = 'note-item' + (n.id === state.currentId ? ' active' : '') + (trash ? ' trashed' : '') + (state.multi.has(n.id) ? ' multi' : '');
+      li.className = 'note-item' + (n.id === state.currentId ? ' active' : '') + (trash ? ' trashed' : '') + (n.archived_at && !trash ? ' archived' : '') + (state.multi.has(n.id) ? ' multi' : '');
       li.dataset.id = String(n.id);
       li.tabIndex = 0;
       li.setAttribute('role', 'option');
@@ -955,7 +991,8 @@
 
       const d = document.createElement('div');
       d.className = 'note-date';
-      d.textContent = trash && n.deleted_at ? `Gelöscht ${fmtDate(n.deleted_at)}` : fmtDate(n.updated_at);
+      d.textContent = trash && n.deleted_at ? `Gelöscht ${fmtDate(n.deleted_at)}`
+        : n.archived_at ? `Archiviert ${fmtDate(n.archived_at)}` : fmtDate(n.updated_at);
 
       li.append(t, s, d);
       if (n.tags) {
@@ -977,6 +1014,7 @@
     el.listEmpty.hidden = !empty;
     el.listEmpty.textContent = q || state.tagFilter ? 'Keine Treffer.'
       : trash ? 'Der Papierkorb ist leer.'
+      : state.listScope === 'archive' ? 'Das Archiv ist leer. Archivierte Notizen sind ausgeblendet, bleiben aber durchsuchbar.'
       : 'Noch keine Notizen. Lege mit „Neue Notiz“ los.';
     el.emptyTrashBtn.hidden = !(trash && DB.countTrash(state.db) > 0);
   }
@@ -998,17 +1036,22 @@
     renderCrumbs(note);
     renderNoteQuestions(note.body);
     renderTags(DB.getTags(state.db, note.id));
-    renderAttachments(note.id, !!note.deleted_at);
     const trashed = !!note.deleted_at;
+    const archived = !trashed && !!note.archived_at;
+    const locked = trashed || archived; // Papierkorb und Archiv sind schreibgeschützt
+    renderAttachments(note.id, locked);
     el.trashBar.hidden = !trashed;
-    el.editor.classList.toggle('readonly', trashed);
-    el.title.readOnly = trashed;
-    el.body.readOnly = trashed;
-    el.tagInput.disabled = trashed;
+    el.archiveBar.hidden = !archived;
+    if (archived) el.archiveBarText.textContent = `Diese Notiz ist archiviert (seit ${fmtDate(note.archived_at)}) und schreibgeschützt.`;
+    el.editor.classList.toggle('readonly', locked);
+    el.title.readOnly = locked;
+    el.body.readOnly = locked;
+    el.tagInput.disabled = locked;
     el.deleteBtn.hidden = trashed;
-    el.childBtn.hidden = trashed;
-    for (const b of el.mdToolbar.querySelectorAll('button')) b.disabled = trashed;
-    el.headingSelect.disabled = trashed;
+    el.childBtn.hidden = locked;
+    el.archiveBtn.hidden = locked;
+    for (const b of el.mdToolbar.querySelectorAll('button')) b.disabled = locked;
+    el.headingSelect.disabled = locked;
     if (state.editorMode !== 'edit') renderPreview();
   }
 
@@ -1181,7 +1224,7 @@
   async function addAttachments(files) {
     if (state.currentId == null) return;
     const note = DB.getNote(state.db, state.currentId);
-    if (!note || note.deleted_at) return;
+    if (!note || note.deleted_at || note.archived_at) return;
     const images = [...files].filter(f => f && f.type && f.type.startsWith('image/'));
     if (!images.length) { setStatus('Nur Bilder können angehängt werden.', 'error'); return; }
     setStatus(images.length === 1 ? 'Bild wird eingefügt…' : `${images.length} Bilder werden eingefügt…`, 'saving');
@@ -1351,8 +1394,14 @@
       el.count.textContent = t === 1 ? '1 Notiz im Papierkorb' : `${t} Notizen im Papierkorb`;
       return;
     }
-    const n = DB.countNotes(state.db);
-    el.count.textContent = n === 1 ? '1 Notiz' : `${n} Notizen`;
+    if (state.listScope === 'archive') {
+      const a = DB.countArchived(state.db);
+      el.count.textContent = a === 1 ? '1 Notiz im Archiv' : `${a} Notizen im Archiv`;
+      return;
+    }
+    const n = DB.countNotes(state.db, { archived: false });
+    const a = DB.countArchived(state.db);
+    el.count.textContent = (n === 1 ? '1 Notiz' : `${n} Notizen`) + (a ? ` · ${a} im Archiv` : '');
   }
 
   function updateListItem(id, title, body, ts) {
@@ -1429,7 +1478,7 @@
     const id = DB.createNote(state.db, null);
     state.currentId = id;
     if (state.query) { state.query = ''; el.search.value = ''; el.mapSearch.value = ''; }
-    if (state.listScope === 'trash') { state.listScope = 'live'; el.listScope.value = 'live'; }
+    if (state.listScope !== 'live') { state.listScope = 'live'; el.listScope.value = 'live'; }
     renderAll();
     markEdited();
     if (isNarrow()) showEditorView(true);
@@ -1442,6 +1491,7 @@
 
   function newNoteInMap(parentId) {
     hideContextMenu();
+    if (parentId != null && DB.isArchived(state.db, parentId)) { hint('Unter einer archivierten Notiz lässt sich nichts anlegen. Erst zurückholen.'); return; }
     if (parentId != null) {
       const info = state.map.nodeInfo(parentId);
       if (info && info.collapsed) DB.setCollapsed(state.db, parentId, false);
@@ -1458,6 +1508,7 @@
   function newChildOfCurrent() {
     if (state.currentId == null) return;
     const parentId = state.currentId;
+    if (DB.isArchived(state.db, parentId)) { hint('Unter einer archivierten Notiz lässt sich nichts anlegen. Erst zurückholen.'); return; }
     const id = DB.createNote(state.db, parentId);
     const info = state.map.nodeInfo(parentId);
     if (info && info.collapsed) DB.setCollapsed(state.db, parentId, false);
@@ -2015,15 +2066,73 @@
     if (state.view === 'map') el.mindmap.focus({ preventScroll: true });
   }
 
+  /** Archiviert Notizen samt allen Unternotizen, nach Rückfrage mit der Anzahl. */
+  function archiveNotes(ids) {
+    hideContextMenu();
+    pruneMulti();
+    const targets = [...new Set(ids)].filter(id => { const n = DB.getNote(state.db, id); return n && !n.deleted_at && !n.archived_at; });
+    if (!targets.length) { hint('Nichts zu archivieren'); return; }
+    const count = DB.archiveCount(state.db, targets);
+    let message;
+    if (targets.length === 1) {
+      const n = DB.getNote(state.db, targets[0]);
+      const name = n.title.trim() ? `„${n.title.trim()}“` : 'diese Notiz';
+      message = count > 1 ? `${name} und ${count - 1} ${count - 1 === 1 ? 'Unternotiz' : 'Unternotizen'} archivieren?` : `${name} archivieren?`;
+    } else {
+      message = `${targets.length} Notizen archivieren` + (count > targets.length ? ` (mit Unternotizen insgesamt ${count})` : '') + '?';
+    }
+    if (!confirm(message + '\n\nArchivierte Notizen sind ausgeblendet, bleiben aber durchsuchbar und lassen sich einzeln zurückholen.')) return;
+
+    const first = DB.getNote(state.db, targets[0]);
+    const archivedIds = new Set();
+    for (const id of targets) for (const a of DB.archiveNote(state.db, id)) archivedIds.add(a);
+    for (const id of archivedIds) state.multi.delete(id);
+
+    let nextInList = null;
+    if (state.currentId != null && archivedIds.has(state.currentId)) {
+      const li = el.list.querySelector(`li[data-id="${state.currentId}"]`);
+      let nb = li && li.nextElementSibling;
+      while (nb && archivedIds.has(Number(nb.dataset.id))) nb = nb.nextElementSibling;
+      if (!nb && li) { nb = li.previousElementSibling; while (nb && archivedIds.has(Number(nb.dataset.id))) nb = nb.previousElementSibling; }
+      if (nb) nextInList = Number(nb.dataset.id);
+      state.currentId = state.view === 'list' ? nextInList : null;
+      if (state.view === 'map') document.body.classList.remove('editor-open');
+    }
+    if (typeof state.mapSelection === 'number' && archivedIds.has(state.mapSelection) && !state.showArchive) {
+      state.mapSelection = first.parent_id == null ? 'root' : first.parent_id;
+    }
+    markEdited();
+    renderAll();
+    if (state.currentId == null) showEditorView(false);
+    setStatus(`${archivedIds.size === 1 ? '1 Notiz' : archivedIds.size + ' Notizen'} archiviert`, 'dirty');
+    if (state.view === 'map') el.mindmap.focus({ preventScroll: true });
+  }
+
+  /** Holt genau diese Notiz aus dem Archiv, dazu die archivierten Notizen darüber. Unternotizen bleiben archiviert. */
+  function unarchiveById(id) {
+    hideContextMenu();
+    const note = DB.getNote(state.db, id);
+    if (!note || !note.archived_at) return;
+    const done = DB.unarchiveNote(state.db, id);
+    if (state.listScope === 'archive') { state.listScope = 'live'; el.listScope.value = 'live'; }
+    if (state.view === 'map') state.mapSelection = id;
+    markEdited();
+    renderAll();
+    const extra = done.length - 1;
+    const name = note.title.trim() ? `„${note.title.trim()}“` : 'Notiz';
+    setStatus(`${name} zurückgeholt` + (extra ? `, dazu ${extra} übergeordnete ${extra === 1 ? 'Notiz' : 'Notizen'}` : ''), 'dirty');
+  }
+
   function restoreCurrent() {
     if (state.currentId == null) return;
     const id = state.currentId;
     DB.restoreNote(state.db, id);
-    state.listScope = 'live';
-    el.listScope.value = 'live';
+    const restored = DB.getNote(state.db, id);
+    state.listScope = restored && restored.archived_at ? 'archive' : 'live'; // Archiv und Papierkorb sind unabhängig
+    el.listScope.value = state.listScope;
     markEdited();
     renderAll();
-    setStatus('Notiz wiederhergestellt', 'dirty');
+    setStatus(restored && restored.archived_at ? 'Notiz wiederhergestellt (liegt weiterhin im Archiv)' : 'Notiz wiederhergestellt', 'dirty');
   }
 
   function purgeCurrent() {
@@ -2121,6 +2230,7 @@
   function beginRename(id, opts) {
     hideContextMenu();
     cancelRename();
+    if (id !== 'root' && DB.isArchived(state.db, id)) { hint('Archivierte Notizen sind schreibgeschützt. Erst zurückholen.'); return; }
     const rect = state.map.screenRectOf(id);
     if (!rect) return;
     state.rename = { id, isNew: !!(opts && opts.isNew) };
@@ -2234,6 +2344,17 @@
       return;
     }
     const info = state.map.nodeInfo(id);
+    if (info && info.archived) {
+      // Archivierte Notizen: nur ansehen, zurückholen, ein-/ausklappen, löschen
+      const archivedItems = [
+        { label: 'Öffnen', key: 'Enter', action: () => openNote(id) },
+        { label: 'Zurückholen', action: () => unarchiveById(id) },
+      ];
+      if (info.childCount) archivedItems.push({ label: info.collapsed ? 'Ausklappen' : 'Einklappen', action: () => toggleCollapse(id) });
+      archivedItems.push('sep', { label: 'Löschen', key: 'Entf', danger: true, action: () => deleteNoteById(id) });
+      showContextMenu(archivedItems, x, y);
+      return;
+    }
     const items = [
       { label: 'Öffnen', key: 'Enter', action: () => openNote(id) },
       { label: 'Unternotiz anlegen', key: 'Tab', action: () => newNoteInMap(id) },
@@ -2244,6 +2365,7 @@
     }
     items.push(
       { label: 'Drucken…', action: () => openPrintDialog({ noteId: id, scope: 'subtree' }) },
+      { label: 'Archivieren…', action: () => archiveNotes([id]) },
       { label: 'Nach oben', key: 'Alt+↑', action: () => { state.mapSelection = id; moveSelected(-1); } },
       { label: 'Nach unten', key: 'Alt+↓', action: () => { state.mapSelection = id; moveSelected(1); } },
       'sep',
@@ -2424,6 +2546,11 @@
     el.qTagFilter.addEventListener('change', () => { state.qTag = el.qTagFilter.value; renderQuestions(); });
     el.emptyTrashBtn.addEventListener('click', emptyTrash);
     el.restoreBtn.addEventListener('click', restoreCurrent);
+    el.mapArchiveBtn.addEventListener('click', toggleArchiveView);
+    el.archiveBtn.addEventListener('click', () => { if (state.currentId != null) archiveNotes([state.currentId]); });
+    el.unarchiveBtn.addEventListener('click', () => { if (state.currentId != null) unarchiveById(state.currentId); });
+    el.multiArchiveBtn.addEventListener('click', () => archiveNotes([...state.multi]));
+    el.printArchive.addEventListener('change', updatePrintLabels);
     el.purgeBtn.addEventListener('click', purgeCurrent);
     el.modeSwitch.addEventListener('click', e => {
       const b = e.target.closest('button[data-mode]');

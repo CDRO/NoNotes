@@ -23,7 +23,7 @@ const { chromium } = loadPlaywright();
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '9'; // muss zu js/db.js passen
+const SCHEMA_VERSION = '10'; // muss zu js/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 function watchErrors(page) {
@@ -1839,6 +1839,279 @@ async function main() {
     await ctx21.close();
     await ctx21b.close();
     step('Unteraufgaben: Schema 9 in der Datei, Migration einer Schema-8-Datei');
+
+    // ---------- 22. Archiv ----------
+    const ctx22 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
+    await ctx22.addInitScript(() => {
+      window.__printed = [];
+      window.print = () => { window.__printed.push(document.getElementById('printArea').innerHTML); };
+      window.__exported = {};
+      const concat = chunks => { const n = chunks.reduce((s, c) => s + c.length, 0); const out = new Uint8Array(n); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; } return out; };
+      const makeDir = prefix => ({ kind: 'directory', name: 'Export', getDirectoryHandle: async n => makeDir(prefix + n + '/'), getFileHandle: async n => ({ kind: 'file', name: n, createWritable: async () => { const chunks = []; return { write: async d => { chunks.push(new Uint8Array(d)); }, close: async () => { window.__exported[prefix + n] = Array.from(concat(chunks)); }, abort: async () => {} }; } }) });
+      window.showDirectoryPicker = async () => { window.__exported = {}; return makeDir(''); };
+    });
+    const { page: p22, errors: errors22 } = await openApp(ctx22);
+    const dialogs22 = [];
+    p22.on('dialog', d => { dialogs22.push(d.message()); d.accept(); });
+    const addChild22 = async (parentId, title) => {
+      await p22.click(`.mm-node[data-id="${parentId}"]`);
+      await p22.keyboard.press('Tab');
+      await p22.waitForSelector('#renameInput:not([hidden])');
+      await p22.keyboard.type(title);
+      await p22.keyboard.press('Enter');
+      await p22.waitForFunction(t => [...document.querySelectorAll('.mm-node text')].some(x => x.textContent === t), title);
+      return idOfNode(p22, title);
+    };
+    const setBody22 = async (id, body) => {
+      await p22.dblclick(`.mm-node[data-id="${id}"]`);
+      await p22.waitForSelector('body.editor-open');
+      await p22.fill('#body', body);
+      await waitSaved(p22);
+      await p22.keyboard.press('Escape');
+      await p22.waitForSelector('body:not(.editor-open)');
+    };
+    const ids22 = {};
+    ids22.Alpha = await newRootNote(p22, 'Alpha');
+    ids22.Beta = await addChild22(ids22.Alpha, 'Beta');
+    ids22.Gamma = await addChild22(ids22.Beta, 'Gamma');
+    ids22.Delta = await addChild22(ids22.Alpha, 'Delta');
+    ids22.Epsilon = await newRootNote(p22, 'Epsilon');
+    await setBody22(ids22.Gamma, 'Quokka Gamma\n- [ ] Gamma-Aufgabe @31.12.2026\n? Gamma-Frage @30.12.2026');
+    await setBody22(ids22.Epsilon, 'Verweis auf [[Gamma]]');
+    const node22 = name => p22.locator(`.mm-node[data-id="${ids22[name]}"]`);
+    const visible22 = async () => (await p22.locator('.mm-node:not(.mm-root)').evaluateAll(ns => ns.map(n => n.querySelector('text').textContent))).sort();
+    assert.deepEqual(await visible22(), ['Alpha', 'Beta', 'Delta', 'Epsilon', 'Gamma']);
+    assert.equal(await p22.locator('#viewTasksBtn .count').innerText(), '1');
+    assert.equal(await p22.locator('#viewQuestionsBtn .count').innerText(), '1');
+    assert.equal(await p22.locator('#mapArchiveBtn').innerText(), 'Archiv anzeigen');
+    // Kalender vor dem Archivieren
+    const icsDownload22 = async () => {
+      await p22.click('#menuBtn');
+      await p22.click('#calendarBtn');
+      await p22.waitForSelector('#calDialog[open]');
+      const [dl] = await Promise.all([p22.waitForEvent('download'), p22.click('#calDownloadBtn')]);
+      const f = path.join(tmp, `archiv-${Date.now()}.ics`);
+      await dl.saveAs(f);
+      return parseIcs(fs.readFileSync(f, 'utf8'));
+    };
+    const cal1 = await icsDownload22();
+    const gamma1 = cal1.events.find(e => e.props.SUMMARY === 'Aufgabe: Gamma-Aufgabe');
+    assert.ok(gamma1 && gamma1.props.STATUS === 'CONFIRMED', 'Aufgabe von Gamma steht im Kalender');
+    step('Archiv: Baum mit Aufgabe und Frage aufgebaut, Kalender vor dem Archivieren');
+
+    // Beta archivieren: Rückfrage mit Anzahl, Unternotiz geht mit
+    await node22('Beta').click({ button: 'right' });
+    await p22.click('#contextMenu button:has-text("Archivieren…")');
+    await p22.waitForFunction(() => document.querySelectorAll('.mm-node').length === 4); // Wurzel, Alpha, Delta, Epsilon
+    assert.ok(dialogs22[0].startsWith('„Beta“ und 1 Unternotiz archivieren?'), dialogs22[0]);
+    assert.deepEqual(await visible22(), ['Alpha', 'Delta', 'Epsilon']);
+    assert.match(await p22.locator('#status').innerText(), /2 Notizen archiviert/);
+    await p22.waitForFunction(() => !document.querySelector('#viewTasksBtn .count') && !document.querySelector('#viewQuestionsBtn .count'));
+    assert.equal(await p22.locator('#mapArchiveBtn').innerText(), 'Archiv anzeigen (2)');
+    step('Archiv: Archivieren per Kontextmenü mit Rückfrage, Unternotiz geht mit, Zähler fallen weg');
+
+    // Archiv anzeigen: blass und gestrichelt, Wahl bleibt nach dem Neuladen
+    await p22.click('#mapArchiveBtn');
+    await p22.waitForFunction(() => document.querySelectorAll('.mm-node.mm-archived').length === 2);
+    assert.equal(await p22.locator('#mapArchiveBtn').getAttribute('aria-pressed'), 'true');
+    assert.equal(await p22.locator('#mapArchiveBtn').innerText(), 'Archiv ausblenden (2)');
+    assert.deepEqual(await visible22(), ['Alpha', 'Beta', 'Delta', 'Epsilon', 'Gamma']);
+    assert.equal(await node22('Gamma').evaluate(n => n.classList.contains('mm-archived')), true);
+    await waitSaved(p22);
+    await p22.reload();
+    await p22.waitForSelector(READY);
+    await p22.waitForFunction(() => document.querySelectorAll('.mm-node.mm-archived').length === 2);
+    await p22.click('#mapArchiveBtn');
+    await p22.waitForFunction(() => document.querySelectorAll('.mm-node').length === 4);
+    step('Archiv: Schalter «Archiv anzeigen», Wahl wird gemerkt');
+
+    // Suche findet das Archiv immer: Treffer samt archivierten Vorfahren erscheinen
+    await p22.fill('#mapSearch', 'Quokka');
+    await p22.waitForFunction(() => document.querySelectorAll('.mm-node.mm-archived').length === 2);
+    assert.equal(await p22.locator('#mapMatches').innerText(), '1 Treffer');
+    assert.equal(await p22.locator('.mm-node.mm-match').count(), 1);
+    assert.equal(await node22('Gamma').evaluate(n => n.classList.contains('mm-match')), true);
+    await p22.fill('#mapSearch', '');
+    await p22.waitForFunction(() => document.querySelectorAll('.mm-node').length === 4);
+    step('Archiv: Suche findet Archivierte immer und blendet Treffer samt Vorfahren ein');
+
+    // Alpha archivieren: nur noch noch nicht archivierte werden gezählt
+    await node22('Alpha').click({ button: 'right' });
+    await p22.click('#contextMenu button:has-text("Archivieren…")');
+    await p22.waitForFunction(() => document.querySelectorAll('.mm-node').length === 2); // Wurzel, Epsilon
+    assert.ok(dialogs22[1].startsWith('„Alpha“ und 1 Unternotiz archivieren?'), dialogs22[1]);
+    assert.deepEqual(await visible22(), ['Epsilon']);
+
+    // Liste: Bereich «Archiv», Suche findet Archivierte, schreibgeschützt
+    await p22.click('#viewListBtn');
+    await p22.waitForSelector('body.view-list');
+    await p22.waitForFunction(() => document.querySelectorAll('#list li').length === 1);
+    assert.equal(await p22.locator('#count').innerText(), '1 Notiz · 4 im Archiv');
+    await p22.fill('#search', 'Quokka');
+    await p22.waitForFunction(() => document.querySelectorAll('#list li.archived').length === 1 && document.querySelectorAll('#list li').length === 1);
+    assert.match(await p22.locator('#list li .note-date').first().innerText(), /^Archiviert /);
+    await p22.fill('#search', '');
+    await p22.waitForFunction(() => document.querySelectorAll('#list li.archived').length === 0 && document.querySelectorAll('#list li').length === 1);
+    await p22.selectOption('#listScope', 'archive');
+    await p22.waitForFunction(() => document.querySelectorAll('#list li').length === 4);
+    assert.equal(await p22.locator('#count').innerText(), '4 Notizen im Archiv');
+    await p22.locator('#list li', { hasText: 'Quokka' }).click();
+    await p22.waitForFunction(() => document.querySelector('#title').value === 'Gamma');
+    assert.equal(await p22.locator('#archiveBar').isVisible(), true);
+    assert.equal(await p22.locator('#title').evaluate(e => e.readOnly), true);
+    assert.equal(await p22.locator('#body').evaluate(e => e.readOnly), true);
+    assert.equal(await p22.locator('#archiveBtn').isHidden(), true);
+    assert.equal(await p22.locator('#childBtn').isHidden(), true);
+    assert.equal(await p22.locator('#trashBar').isHidden(), true);
+    step('Archiv: Liste mit Bereich und Suche, archivierte Notiz schreibgeschützt mit Zurückholen-Knopf');
+
+    // Zurückholen: Gamma holt Beta und Alpha mit, Delta bleibt im Archiv
+    await p22.click('#unarchiveBtn');
+    await p22.waitForFunction(() => /dazu 2 übergeordnete Notizen/.test(document.querySelector('#status').textContent));
+    assert.equal(await p22.locator('#listScope').inputValue(), 'live');
+    await p22.waitForFunction(() => document.querySelectorAll('#list li').length === 4);
+    assert.equal(await p22.locator('#body').evaluate(e => e.readOnly), false, 'zurückgeholte Notiz ist wieder bearbeitbar');
+    assert.equal(await p22.locator('#count').innerText(), '4 Notizen · 1 im Archiv');
+    await p22.click('#viewMapBtn');
+    await p22.waitForSelector('body.view-map');
+    await p22.waitForFunction(() => document.querySelectorAll('.mm-node:not(.mm-root)').length === 4);
+    assert.deepEqual(await visible22(), ['Alpha', 'Beta', 'Epsilon', 'Gamma']);
+    assert.equal(await p22.locator('#viewTasksBtn .count').innerText(), '1');
+    assert.equal(await p22.locator('#viewQuestionsBtn .count').innerText(), '1');
+    step('Archiv: Zurückholen Blatt für Blatt, alle archivierten Eltern kommen mit, Unternotiz bleibt');
+
+    // Schutz: archivierte Notizen lassen sich nicht ändern, Rechtsklick bietet nur Passendes
+    await p22.click('#mapArchiveBtn');
+    await p22.waitForFunction(() => document.querySelectorAll('.mm-node.mm-archived').length === 1);
+    await node22('Delta').click();
+    await p22.keyboard.press('F2');
+    await p22.waitForFunction(() => /schreibgeschützt/.test(document.querySelector('#status').textContent));
+    assert.equal(await p22.locator('#renameInput').isHidden(), true);
+    await p22.keyboard.press('Tab');
+    await p22.waitForFunction(() => /nichts anlegen/.test(document.querySelector('#status').textContent));
+    await node22('Delta').click({ button: 'right' });
+    await p22.waitForSelector('#contextMenu:not([hidden])');
+    const menu22 = await p22.locator('#contextMenu button').allInnerTexts().then(a => a.map(t => t.split('\n')[0].trim()));
+    assert.ok(menu22.some(t => t.startsWith('Zurückholen')) && menu22.some(t => t.startsWith('Öffnen')));
+    assert.ok(!menu22.some(t => /Unternotiz anlegen|Umbenennen|Archivieren|Nach oben/.test(t)), `Menü archivierter Notizen: ${menu22.join(', ')}`);
+    await p22.keyboard.press('Escape');
+    step('Archiv: archivierte Notizen sind geschützt, Kontextmenü passend');
+
+    // Archiv und Papierkorb sind unabhängig
+    await node22('Delta').click({ button: 'right' });
+    await p22.click('#contextMenu button:has-text("Löschen")');
+    await p22.waitForFunction(() => !document.querySelector('.mm-node.mm-archived'));
+    await p22.click('#viewListBtn');
+    await p22.waitForSelector('body.view-list');
+    await p22.selectOption('#listScope', 'trash');
+    await p22.waitForFunction(() => document.querySelectorAll('#list li').length === 1);
+    await p22.locator('#list li').first().click();
+    await p22.click('#restoreBtn');
+    await p22.waitForFunction(() => /weiterhin im Archiv/.test(document.querySelector('#status').textContent));
+    assert.equal(await p22.locator('#listScope').inputValue(), 'archive');
+    await p22.waitForFunction(() => document.querySelectorAll('#list li').length === 1);
+    assert.equal(await p22.locator('#archiveBar').isVisible(), true, 'wiederhergestellte Notiz liegt weiterhin im Archiv');
+    await p22.selectOption('#listScope', 'live');
+    await p22.click('#viewMapBtn');
+    await p22.waitForSelector('body.view-map');
+    step('Archiv: Papierkorb-Wiederherstellung behält den Archivstatus');
+
+    // Mehrere Notizen auf einmal (Archiv wieder ausblenden)
+    if ((await p22.locator('#mapArchiveBtn').getAttribute('aria-pressed')) === 'true') await p22.click('#mapArchiveBtn');
+    await p22.waitForFunction(() => document.querySelectorAll('.mm-node.mm-archived').length === 0);
+    await node22('Beta').click({ modifiers: ['Control'] });
+    await node22('Epsilon').click({ modifiers: ['Control'] });
+    await p22.waitForFunction(() => document.querySelector('#multiCount').textContent === '2 Notizen ausgewählt');
+    await p22.click('#multiArchiveBtn');
+    await p22.waitForFunction(() => document.querySelectorAll('.mm-node:not(.mm-root)').length === 1); // nur Alpha
+    assert.ok(dialogs22.at(-1).startsWith('2 Notizen archivieren (mit Unternotizen insgesamt 3)?'), dialogs22.at(-1));
+    assert.match(await p22.locator('#status').innerText(), /3 Notizen archiviert/);
+    assert.deepEqual(await visible22(), ['Alpha']);
+    step('Archiv: Mehrfachauswahl archivieren');
+
+    // Kalender sagt archivierte Termine ab, ohne zu duplizieren
+    const cal2 = await icsDownload22();
+    const gamma2 = cal2.events.find(e => e.props.SUMMARY === 'Entfernt: Gamma-Aufgabe');
+    assert.ok(gamma2, 'archivierter Termin wird als entfernt mitgeschrieben');
+    assert.equal(gamma2.props.UID, gamma1.props.UID, 'gleiche Kennung, kein Duplikat');
+    assert.equal(gamma2.props.STATUS, 'CANCELLED');
+    assert.ok(!cal2.events.some(e => e.props.SUMMARY === 'Aufgabe: Gamma-Aufgabe'));
+    await p22.keyboard.press('Escape');
+    await p22.evaluate(() => { const d = document.querySelector('#calDialog'); if (d.open) d.close(); });
+
+    // Druck und Export: Archivierte nur mit Kästchen
+    await p22.click('#mapPrintBtn');
+    await p22.waitForSelector('#printDialog[open]');
+    await p22.check('#printForm input[value="all"]');
+    assert.equal(await p22.locator('#printScopeAll').innerText(), 'Alle Notizen (1)');
+    await p22.click('#printGoBtn');
+    await p22.waitForFunction(() => window.__printed.length === 1);
+    const pr1 = await p22.evaluate(() => window.__printed[0]);
+    assert.ok(pr1.includes('Alpha') && !pr1.includes('Quokka') && !pr1.includes('Gamma'), 'ohne Kästchen kein Archiv im Druck');
+    await p22.click('#mapPrintBtn');
+    await p22.waitForSelector('#printDialog[open]');
+    await p22.check('#printForm input[value="all"]');
+    await p22.check('#printArchive');
+    assert.equal(await p22.locator('#printScopeAll').innerText(), 'Alle Notizen (5)');
+    await p22.click('#printGoBtn');
+    await p22.waitForFunction(() => window.__printed.length === 2);
+    const pr2 = await p22.evaluate(() => window.__printed[1]);
+    assert.ok(pr2.includes('Quokka') && pr2.includes('Archiviert '), 'mit Kästchen steht das Archiv im Druck');
+    const exportRun22 = async checked => {
+      await p22.click('#menuBtn');
+      await p22.click('#exportBtn');
+      await p22.waitForSelector('#exportDialog[open]');
+      if (checked) await p22.check('#exportArchive'); else await p22.uncheck('#exportArchive');
+      await p22.click('#exportDirBtn');
+      await p22.waitForFunction(() => /Export gespeichert/.test(document.querySelector('#status').textContent) && Object.keys(window.__exported).length > 0);
+      return p22.evaluate(() => window.__exported);
+    };
+    const ex1 = await exportRun22(false);
+    assert.deepEqual(Object.keys(ex1).sort(), ['index.md', 'mindmap.png', 'mindmap.svg', 'notes/alpha.md']);
+    await p22.evaluate(() => { window.__exported = {}; document.querySelector('#status').textContent = ''; });
+    const ex2 = await exportRun22(true);
+    assert.ok(Object.keys(ex2).includes('notes/gamma.md') && Object.keys(ex2).includes('notes/beta.md'), 'mit Kästchen sind Archivierte im Export');
+    const gammaMd = Buffer.from(ex2['notes/gamma.md']).toString('utf8');
+    assert.ok(gammaMd.includes('Archiviert ') && gammaMd.includes('Quokka'));
+    const idx2 = Buffer.from(ex2['index.md']).toString('utf8');
+    assert.ok(idx2.includes('*(archiviert)*') && idx2.includes('Gamma-Aufgabe'), 'Inhaltsverzeichnis und Aufgabenliste');
+    assert.ok(Buffer.from(ex2['mindmap.svg']).toString('utf8').includes('stroke-dasharray'), 'archivierte Knoten im Bild gestrichelt');
+    assert.ok(!Buffer.from(ex1['index.md']).toString('utf8').includes('Gamma'), 'ohne Kästchen nicht im Index');
+    step('Archiv: Kalender sagt ab, Druck und Export nur mit «Archivierte Notizen mit einbeziehen»');
+
+    // Datei: Spalte archived_at, Migration einer Schema-9-Datei
+    await p22.waitForTimeout(100);
+    await waitSaved(p22);
+    await p22.click('#menuBtn');
+    const [dl22] = await Promise.all([p22.waitForEvent('download'), p22.click('#downloadBtn')]);
+    const dl22Path = path.join(tmp, 'archiv.sqlite');
+    await dl22.saveAs(dl22Path);
+    const db22 = new SQL.Database(new Uint8Array(fs.readFileSync(dl22Path)));
+    assert.equal(db22.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], SCHEMA_VERSION);
+    assert.deepEqual(db22.exec('SELECT title, archived_at IS NOT NULL FROM notes ORDER BY id')[0].values,
+      [['Alpha', 0], ['Beta', 1], ['Gamma', 1], ['Delta', 1], ['Epsilon', 1]]);
+    db22.run("ALTER TABLE notes DROP COLUMN archived_at; UPDATE meta SET value = '9' WHERE key = 'schema_version';");
+    const v9Path = path.join(tmp, 'schema9.sqlite');
+    fs.writeFileSync(v9Path, Buffer.from(db22.export()));
+    db22.close();
+    const ctx22b = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
+    const { page: p22b, errors: errors22b } = await openApp(ctx22b, 'list');
+    await p22b.setInputFiles('#importInput', v9Path);
+    await p22b.waitForFunction(() => document.querySelectorAll('#list li').length === 5);
+    assert.equal(await p22b.locator('#count').innerText(), '5 Notizen');
+    await p22b.click('#menuBtn');
+    const [dl22b] = await Promise.all([p22b.waitForEvent('download'), p22b.click('#downloadBtn')]);
+    const dl22bPath = path.join(tmp, 'archiv-migriert.sqlite');
+    await dl22b.saveAs(dl22bPath);
+    const db22b = new SQL.Database(new Uint8Array(fs.readFileSync(dl22bPath)));
+    assert.equal(db22b.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], SCHEMA_VERSION);
+    assert.equal(db22b.exec('SELECT count(*) FROM notes WHERE archived_at IS NOT NULL')[0].values[0][0], 0);
+    db22b.close();
+    assert.deepEqual(errors22, [], 'keine Konsolenfehler beim Archiv');
+    assert.deepEqual(errors22b, [], 'keine Konsolenfehler bei der Migration auf Schema 10');
+    await ctx22.close();
+    await ctx22b.close();
+    step('Archiv: Spalte in der Datei, Migration einer Schema-9-Datei');
 
     console.log('\nSmoke-Test bestanden.');
   } finally {

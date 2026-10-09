@@ -3,7 +3,7 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 9;
+  const SCHEMA_VERSION = 10;
   const DEFAULT_MAP_TITLE = 'Meine Notizen';
 
   function nowIso() { return new Date().toISOString(); }
@@ -65,7 +65,8 @@
         parent_id  INTEGER,
         sort_order INTEGER NOT NULL DEFAULT 0,
         collapsed  INTEGER NOT NULL DEFAULT 0,
-        deleted_at TEXT
+        deleted_at TEXT,
+        archived_at TEXT
       );
       CREATE INDEX idx_notes_updated ON notes (updated_at DESC);
       CREATE INDEX idx_notes_parent ON notes (parent_id, sort_order);
@@ -245,6 +246,13 @@
       version = 9;
     }
 
+    if (version < 10) {
+      // Archiv: archivierte Notizen behalten ihren Platz im Baum und sind nur ausgeblendet.
+      const cols = selectAll(db, 'PRAGMA table_info(notes)').map(c => c.name);
+      if (!cols.includes('archived_at')) db.exec('ALTER TABLE notes ADD COLUMN archived_at TEXT');
+      version = 10;
+    }
+
     setMeta(db, 'schema_version', SCHEMA_VERSION);
   }
 
@@ -280,16 +288,19 @@
     return s.replace(/[\\%_]/g, ch => '\\' + ch);
   }
 
-  const LIST_COLUMNS = `n.id, n.title, n.body, n.created_at, n.updated_at, n.parent_id, n.deleted_at,
+  const LIST_COLUMNS = `n.id, n.title, n.body, n.created_at, n.updated_at, n.parent_id, n.deleted_at, n.archived_at,
     (SELECT group_concat(t.name, ',') FROM note_tags nt JOIN tags t ON t.id = nt.tag_id WHERE nt.note_id = n.id) AS tags`;
 
   /** Liste für die Seitenleiste, neueste zuerst. Optional gefiltert nach Text (Titel oder Inhalt),
-   *  Tag und Bereich ('live' = normale Notizen, 'trash' = Papierkorb). */
+   *  Tag und Bereich ('live' = normale Notizen, 'archive' = Archiv, 'trash' = Papierkorb).
+   *  Archivierte Notizen fehlen in 'live', ausser es wird nach Text gesucht: die Suche findet das Archiv immer. */
   function listNotes(db, query, options) {
     const q = (query || '').trim().toLowerCase();
     const tag = options && options.tag ? String(options.tag).trim() : '';
-    const scope = options && options.scope === 'trash' ? 'trash' : 'live';
+    const scope = options && options.scope === 'trash' ? 'trash' : options && options.scope === 'archive' ? 'archive' : 'live';
     const where = [scope === 'trash' ? 'n.deleted_at IS NOT NULL' : 'n.deleted_at IS NULL'];
+    if (scope === 'archive') where.push('n.archived_at IS NOT NULL');
+    else if (scope === 'live' && !q) where.push('n.archived_at IS NULL');
     const params = [];
     if (q) {
       const like = '%' + escapeLike(q) + '%';
@@ -300,7 +311,9 @@
       where.push('EXISTS (SELECT 1 FROM note_tags nt JOIN tags t ON t.id = nt.tag_id WHERE nt.note_id = n.id AND t.name = ? COLLATE NOCASE)');
       params.push(tag);
     }
-    const order = scope === 'trash' ? 'n.deleted_at DESC, n.id DESC' : 'n.updated_at DESC, n.id DESC';
+    const order = scope === 'trash' ? 'n.deleted_at DESC, n.id DESC'
+      : scope === 'archive' ? 'n.archived_at DESC, n.id DESC'
+      : 'n.updated_at DESC, n.id DESC';
     return selectAll(db, `SELECT ${LIST_COLUMNS} FROM notes n WHERE ${where.join(' AND ')} ORDER BY ${order}`, params);
   }
 
@@ -309,27 +322,43 @@
     const t = (title || '').trim();
     if (!t) return null;
     const row = selectOne(db,
-      'SELECT id FROM notes WHERE deleted_at IS NULL AND title = ? COLLATE NOCASE ORDER BY updated_at DESC LIMIT 1', [t]);
+      'SELECT id FROM notes WHERE deleted_at IS NULL AND title = ? COLLATE NOCASE ORDER BY (archived_at IS NOT NULL), updated_at DESC LIMIT 1', [t]);
     return row ? row.id : null;
   }
 
-  /** Alle Ziele für [[Titel]]-Verweise: Titel → id (lebende Notizen). */
+  /** Alle Ziele für [[Titel]]-Verweise: Titel → id (lebende Notizen, auch archivierte; bei gleichem Titel gewinnt die aktive). */
   function titleIndex(db) {
     const map = new Map();
-    for (const r of selectAll(db, "SELECT id, title FROM notes WHERE deleted_at IS NULL AND title <> '' ORDER BY updated_at")) {
+    for (const r of selectAll(db, "SELECT id, title FROM notes WHERE deleted_at IS NULL AND title <> '' ORDER BY (archived_at IS NOT NULL) DESC, updated_at")) {
       map.set(r.title.trim().toLowerCase(), r.id);
     }
     return map;
   }
 
-  /** Alle lebenden Notizen als flache Liste für den Baum. */
-  function getTree(db) {
-    return selectAll(db,
-      `SELECT id, title, parent_id, sort_order, collapsed,
-              (SELECT count(*) FROM questions q WHERE q.note_id = notes.id AND q.answer IS NULL) AS badge,
-              (SELECT count(*) FROM tasks t WHERE t.note_id = notes.id AND t.done = 0) AS tbadge
+  /** Alle lebenden Notizen als flache Liste für den Baum. Archivierte fehlen, ausser options.archive ist
+   *  true (alle) oder eine Liste von Notiz-IDs: dann erscheinen genau diese archivierten Notizen samt
+   *  ihren archivierten Vorfahren (für Suchtreffer im Archiv). Fragen und Aufgaben archivierter Notizen
+   *  zählen nicht in den Marken. */
+  function getTree(db, options) {
+    const archive = options && options.archive;
+    const rows = selectAll(db,
+      `SELECT id, title, parent_id, sort_order, collapsed, archived_at,
+              CASE WHEN archived_at IS NULL THEN (SELECT count(*) FROM questions q WHERE q.note_id = notes.id AND q.answer IS NULL) ELSE 0 END AS badge,
+              CASE WHEN archived_at IS NULL THEN (SELECT count(*) FROM tasks t WHERE t.note_id = notes.id AND t.done = 0) ELSE 0 END AS tbadge
          FROM notes
         WHERE deleted_at IS NULL ORDER BY parent_id, sort_order, id`);
+    if (archive === true) return rows;
+    if (!archive) return rows.filter(r => !r.archived_at);
+    const byId = new Map(rows.map(r => [r.id, r]));
+    const reveal = new Set();
+    for (const id of archive) {
+      let cur = byId.get(id);
+      while (cur && cur.archived_at && !reveal.has(cur.id)) {
+        reveal.add(cur.id);
+        cur = cur.parent_id != null ? byId.get(cur.parent_id) : null;
+      }
+    }
+    return rows.filter(r => !r.archived_at || reveal.has(r.id));
   }
 
   function getNote(db, id) {
@@ -361,6 +390,7 @@
   function createNote(db, parentId) {
     const ts = nowIso();
     const pid = parentId == null ? null : parentId;
+    if (pid != null && isArchived(db, pid)) throw new Error('Unter einer archivierten Notiz lässt sich nichts anlegen.');
     db.run(
       "INSERT INTO notes (title, body, created_at, updated_at, parent_id, sort_order) VALUES ('', '', ?, ?, ?, ?)",
       [ts, ts, pid, nextSortOrder(db, pid)]);
@@ -396,6 +426,7 @@
   /** Hängt eine Notiz samt Unterbaum an einen anderen Knoten (null = Wurzel). */
   function setParent(db, id, parentId) {
     const pid = parentId == null ? null : parentId;
+    if (isArchived(db, id) || (pid != null && isArchived(db, pid))) throw new Error('Archivierte Notizen lassen sich nicht umhängen.');
     if (pid != null && isDescendantOf(db, pid, id)) {
       throw new Error('Eine Notiz kann nicht unter sich selbst hängen.');
     }
@@ -409,6 +440,7 @@
     if (id === anchorId) return;
     const anchor = getNote(db, anchorId);
     if (!anchor || anchor.deleted_at) throw new Error('Zielnotiz nicht gefunden.');
+    if (isArchived(db, id) || anchor.archived_at) throw new Error('Archivierte Notizen lassen sich nicht umhängen.');
     const pid = anchor.parent_id == null ? null : anchor.parent_id;
     if (pid != null && isDescendantOf(db, pid, id)) {
       throw new Error('Eine Notiz kann nicht unter sich selbst hängen.');
@@ -428,14 +460,16 @@
   /** Verschiebt eine Notiz unter ihren Geschwistern nach oben (-1) oder unten (+1). */
   function moveAmongSiblings(db, id, direction) {
     const note = getNote(db, id);
-    if (!note) return false;
+    if (!note || note.archived_at) return false;
     const siblings = selectAll(db,
       note.parent_id == null
-        ? 'SELECT id FROM notes WHERE parent_id IS NULL AND deleted_at IS NULL ORDER BY sort_order, id'
-        : 'SELECT id FROM notes WHERE parent_id = ? AND deleted_at IS NULL ORDER BY sort_order, id',
+        ? 'SELECT id, archived_at FROM notes WHERE parent_id IS NULL AND deleted_at IS NULL ORDER BY sort_order, id'
+        : 'SELECT id, archived_at FROM notes WHERE parent_id = ? AND deleted_at IS NULL ORDER BY sort_order, id',
       note.parent_id == null ? undefined : [note.parent_id]);
     const idx = siblings.findIndex(s => s.id === id);
-    const swapIdx = idx + direction;
+    // Archivierte Geschwister sind ausgeblendet: der Nachbar ist der nächste sichtbare.
+    let swapIdx = idx + direction;
+    while (swapIdx >= 0 && swapIdx < siblings.length && siblings[swapIdx].archived_at) swapIdx += direction;
     if (idx < 0 || swapIdx < 0 || swapIdx >= siblings.length) return false;
     // Reihenfolge sauber neu durchnummerieren, damit Lücken und Dubletten verschwinden.
     const ids = siblings.map(s => s.id);
@@ -463,6 +497,76 @@
         [note.parent_id, nextSortOrder(db, note.parent_id), child.id]);
     }
     db.run('UPDATE notes SET deleted_at = ?, updated_at = ? WHERE id = ?', [ts, ts, id]);
+  }
+
+  // ---------- Archiv ----------
+
+  function isArchived(db, id) {
+    const n = getNote(db, id);
+    return !!(n && n.archived_at);
+  }
+
+  /** IDs der Notiz und aller ihrer Unternotizen (ohne gelöschte), Tiefensuche. */
+  function subtreeNoteIds(db, id) {
+    const out = [];
+    const seen = new Set();
+    const walk = nid => {
+      if (seen.has(nid)) return;
+      seen.add(nid);
+      out.push(nid);
+      for (const c of selectAll(db, 'SELECT id FROM notes WHERE parent_id = ? AND deleted_at IS NULL ORDER BY sort_order, id', [nid])) walk(c.id);
+    };
+    walk(id);
+    return out;
+  }
+
+  /** Wie viele noch nicht archivierte Notizen würde Archivieren dieser Notizen erfassen (Notiz samt Unternotizen)? */
+  function archiveCount(db, ids) {
+    const all = new Set();
+    for (const id of [].concat(ids)) {
+      const n = getNote(db, id);
+      if (!n || n.deleted_at) continue;
+      for (const sid of subtreeNoteIds(db, id)) all.add(sid);
+    }
+    let count = 0;
+    for (const sid of all) if (!isArchived(db, sid)) count++;
+    return count;
+  }
+
+  /** Archiviert die Notiz samt allen Unternotizen. Die Notiz behält ihren Platz im Baum; "Geändert" bleibt.
+   *  Gibt die IDs der dabei neu archivierten Notizen zurück. */
+  function archiveNote(db, id) {
+    const note = getNote(db, id);
+    if (!note || note.deleted_at) return [];
+    const ts = nowIso();
+    const done = [];
+    for (const sid of subtreeNoteIds(db, id)) {
+      if (isArchived(db, sid)) continue;
+      db.run('UPDATE notes SET archived_at = ? WHERE id = ?', [ts, sid]);
+      done.push(sid);
+    }
+    return done;
+  }
+
+  /** Holt genau diese Notiz aus dem Archiv, dazu alle archivierten Vorfahren (damit sie nicht in der Luft hängt).
+   *  Archivierte Unternotizen bleiben im Archiv. Gibt die IDs der zurückgeholten Notizen zurück (zuerst die Notiz). */
+  function unarchiveNote(db, id) {
+    const done = [];
+    const seen = new Set();
+    let current = getNote(db, id);
+    while (current && !seen.has(current.id)) {
+      seen.add(current.id);
+      if (current.archived_at) {
+        db.run('UPDATE notes SET archived_at = NULL WHERE id = ?', [current.id]);
+        done.push(current.id);
+      }
+      current = current.parent_id != null ? getNote(db, current.parent_id) : null;
+    }
+    return done;
+  }
+
+  function countArchived(db) {
+    return scalar(db, 'SELECT count(*) FROM notes WHERE deleted_at IS NULL AND archived_at IS NOT NULL');
   }
 
   /** Entfernt eine Notiz endgültig (z. B. eine gerade erst angelegte, leere). */
@@ -518,6 +622,7 @@
     const tag = options && options.tag ? String(options.tag).trim() : '';
     const sort = options && options.sort === 'note' ? 'note' : 'due';
     const where = ['n.deleted_at IS NULL'];
+    if (!(options && options.archived)) where.push('n.archived_at IS NULL'); // Archiv nur auf Wunsch (Export)
     const params = [];
     if (status === 'open') where.push('t.done = 0');
     else if (status === 'done') where.push('t.done = 1');
@@ -585,7 +690,7 @@
     const row = selectOne(db,
       `SELECT sum(t.done = 0) AS open, count(*) AS total,
               sum(t.done = 0 AND t.due IS NOT NULL AND ${overdueClause('t.due')}) AS overdue
-         FROM tasks t JOIN notes n ON n.id = t.note_id WHERE n.deleted_at IS NULL`, [today, now]);
+         FROM tasks t JOIN notes n ON n.id = t.note_id WHERE n.deleted_at IS NULL AND n.archived_at IS NULL`, [today, now]);
     return { open: Number(row && row.open || 0), total: Number(row && row.total || 0), overdue: Number(row && row.overdue || 0) };
   }
 
@@ -662,10 +767,11 @@
     db.run('DELETE FROM attachments WHERE id = ?', [id]);
   }
 
-  /** Alle Anhänge lebender Notizen (mit Daten), für den Export. */
-  function allAttachments(db) {
+  /** Alle Anhänge lebender Notizen (mit Daten), für den Export. Archivierte nur mit options.archived. */
+  function allAttachments(db, options) {
+    const archived = !!(options && options.archived);
     return selectAll(db,
-      `SELECT a.* FROM attachments a JOIN notes n ON n.id = a.note_id WHERE n.deleted_at IS NULL ORDER BY a.id`)
+      `SELECT a.* FROM attachments a JOIN notes n ON n.id = a.note_id WHERE n.deleted_at IS NULL${archived ? '' : ' AND n.archived_at IS NULL'} ORDER BY a.id`)
       .map(r => { if (!(r.data instanceof Uint8Array)) r.data = new Uint8Array(r.data || []); return r; });
   }
 
@@ -686,7 +792,7 @@
     let parentId = note.parent_id;
     if (parentId != null) {
       const parent = getNote(db, parentId);
-      if (!parent || parent.deleted_at) parentId = null;
+      if (!parent || parent.deleted_at || parent.archived_at) parentId = null;
     }
     db.run('UPDATE notes SET deleted_at = NULL, parent_id = ?, sort_order = ?, updated_at = ? WHERE id = ?',
       [parentId, nextSortOrder(db, parentId), nowIso(), id]);
@@ -781,6 +887,7 @@
     const tag = options && options.tag ? String(options.tag).trim() : '';
     const sort = options && options.sort === 'due' ? 'due' : 'note';
     const where = ['n.deleted_at IS NULL'];
+    if (!(options && options.archived)) where.push('n.archived_at IS NULL'); // Archiv nur auf Wunsch (Export)
     const params = [];
     if (tag) {
       where.push('EXISTS (SELECT 1 FROM note_tags nt JOIN tags t ON t.id = nt.tag_id WHERE nt.note_id = n.id AND t.name = ? COLLATE NOCASE)');
@@ -815,7 +922,7 @@
     const row = selectOne(db,
       `SELECT sum(q.answer IS NULL) AS open, count(*) AS total,
               sum(q.answer IS NULL AND q.due IS NOT NULL AND ${overdueClause('q.due')}) AS overdue
-         FROM questions q JOIN notes n ON n.id = q.note_id WHERE n.deleted_at IS NULL`, [today, now]);
+         FROM questions q JOIN notes n ON n.id = q.note_id WHERE n.deleted_at IS NULL AND n.archived_at IS NULL`, [today, now]);
     return { open: Number(row && row.open || 0), total: Number(row && row.total || 0), overdue: Number(row && row.overdue || 0) };
   }
 
@@ -837,8 +944,10 @@
     return note.id;
   }
 
-  function countNotes(db) {
-    return scalar(db, 'SELECT count(*) FROM notes WHERE deleted_at IS NULL');
+  /** Anzahl lebender Notizen; options.archived === false lässt archivierte weg. */
+  function countNotes(db, options) {
+    const live = options && options.archived === false ? ' AND archived_at IS NULL' : '';
+    return scalar(db, `SELECT count(*) FROM notes WHERE deleted_at IS NULL${live}`);
   }
 
   function getMapTitle(db) {
@@ -899,6 +1008,12 @@
     getTask,
     setTaskDone,
     toggleTaskTree,
+    isArchived,
+    subtreeNoteIds,
+    archiveCount,
+    archiveNote,
+    unarchiveNote,
+    countArchived,
     addAttachment,
     listAttachments,
     getAttachment,

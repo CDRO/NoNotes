@@ -30,9 +30,10 @@
     }
   }
 
-  /** Lebende Notizen in Baumreihenfolge (Tiefensuche), mit depth und children. */
-  function treeOrder(db) {
-    const rows = DB().getTree(db);
+  /** Lebende Notizen in Baumreihenfolge (Tiefensuche), mit depth und children.
+   *  options.archived: auch archivierte Notizen (sonst fehlen sie). */
+  function treeOrder(db, options) {
+    const rows = DB().getTree(db, { archive: !!(options && options.archived) });
     const byId = new Map(rows.map(r => [r.id, Object.assign({ children: [] }, r)]));
     const roots = [];
     for (const n of byId.values()) {
@@ -104,20 +105,20 @@
     const lines = [];
     const path = pathTitles(node);
     if (path.length) lines.push(`*Pfad: ${path.join(' › ')}*  `);
-    lines.push(`*Erstellt ${fmtDate(note.created_at)} · Geändert ${fmtDate(note.updated_at)}*  `);
+    lines.push(`*Erstellt ${fmtDate(note.created_at)} · Geändert ${fmtDate(note.updated_at)}${note.archived_at ? ' · Archiviert ' + fmtDate(note.archived_at) : ''}*  `);
     const tags = DB().getTags(db, node.id);
     if (tags.length) lines.push(`*Tags: ${tags.join(', ')}*  `);
     return lines;
   }
 
   function tocLines(nodes, hrefOf) {
-    return nodes.map(n => `${'  '.repeat(n.depth - 1)}- [${n.title.trim() || 'Ohne Titel'}](${hrefOf(n)})`);
+    return nodes.map(n => `${'  '.repeat(n.depth - 1)}- [${n.title.trim() || 'Ohne Titel'}](${hrefOf(n)})${n.archived_at ? ' *(archiviert)*' : ''}`);
   }
 
-  function openQuestionLines(db, nodes, hrefOf) {
+  function openQuestionLines(db, nodes, hrefOf, archived) {
     const D = global.NoNotesDates;
     const byId = new Map(nodes.map(n => [n.id, n]));
-    const rows = DB().listQuestions(db, { status: 'open', sort: 'due' });
+    const rows = DB().listQuestions(db, { status: 'open', sort: 'due', archived });
     if (!rows.length) return ['Keine offenen Fragen.'];
     return rows.map(r => {
       const n = byId.get(r.note_id);
@@ -126,10 +127,10 @@
     });
   }
 
-  function openTaskLines(db, nodes, hrefOf) {
+  function openTaskLines(db, nodes, hrefOf, archived) {
     const T = global.NoNotesTasks;
     const byId = new Map(nodes.map(n => [n.id, n]));
-    const rows = DB().listTasks(db, { status: 'open', sort: 'due' });
+    const rows = DB().listTasks(db, { status: 'open', sort: 'due', archived });
     if (!rows.length) return ['Keine offenen Aufgaben.'];
     return rows.map(r => {
       const n = byId.get(r.note_id);
@@ -150,10 +151,11 @@
     ];
   }
 
-  /** Erzeugt die Dateiliste. options: { mode: 'folder' | 'single', svg, png, version } */
+  /** Erzeugt die Dateiliste. options: { mode: 'folder' | 'single', svg, png, version, archived } */
   function buildFiles(db, options) {
     const mode = options.mode === 'single' ? 'single' : 'folder';
-    const nodes = treeOrder(db);
+    const archived = !!options.archived;
+    const nodes = treeOrder(db, { archived });
     uniqueSlugs(nodes);
     const byTitle = new Map();
     for (const n of nodes) {
@@ -163,7 +165,7 @@
     const files = [];
 
     // Anhänge: Dateiname aus Nummer und bereinigtem Namen, Pfad relativ zur jeweiligen Markdown-Datei.
-    const attachments = DB().allAttachments(db);
+    const attachments = DB().allAttachments(db, { archived });
     const attName = a => {
       const ext = (a.name.match(/\.[a-z0-9]{2,5}$/i) || [''])[0].toLowerCase();
       const base = slugify(a.name.replace(/\.[a-z0-9]{2,5}$/i, '')) || 'anhang';
@@ -179,8 +181,8 @@
       const index = header(db, options.version);
       index.push('## Inhalt', '');
       index.push(...(nodes.length ? tocLines(nodes, hrefFromIndex) : ['Noch keine Notizen.']));
-      index.push('', '## Offene Fragen', '', ...openQuestionLines(db, nodes, hrefFromIndex), '');
-      index.push('## Offene Aufgaben', '', ...openTaskLines(db, nodes, hrefFromIndex), '');
+      index.push('', '## Offene Fragen', '', ...openQuestionLines(db, nodes, hrefFromIndex, archived), '');
+      index.push('## Offene Aufgaben', '', ...openTaskLines(db, nodes, hrefFromIndex, archived), '');
       files.push({ path: 'index.md', data: index.join('\n') });
       for (const n of nodes) {
         const note = DB().getNote(db, n.id);
@@ -200,8 +202,8 @@
       const doc = header(db, options.version);
       doc.push('## Inhalt', '');
       doc.push(...(nodes.length ? tocLines(nodes, anchorOf) : ['Noch keine Notizen.']));
-      doc.push('', '## Offene Fragen', '', ...openQuestionLines(db, nodes, anchorOf), '');
-      doc.push('## Offene Aufgaben', '', ...openTaskLines(db, nodes, anchorOf), '');
+      doc.push('', '## Offene Fragen', '', ...openQuestionLines(db, nodes, anchorOf, archived), '');
+      doc.push('## Offene Aufgaben', '', ...openTaskLines(db, nodes, anchorOf, archived), '');
       for (const n of nodes) {
         const note = DB().getNote(db, n.id);
         const level = Math.min(6, n.depth + 1);
@@ -218,8 +220,8 @@
     return files;
   }
 
-  function renderSvg(db) {
-    return Mindmap().toSvgString(DB().getTree(db), { mapTitle: DB().getMapTitle(db), expandAll: true });
+  function renderSvg(db, options) {
+    return Mindmap().toSvgString(DB().getTree(db, { archive: !!(options && options.archived) }), { mapTitle: DB().getMapTitle(db), expandAll: true });
   }
 
   /** SVG-Zeichenkette → PNG-Bytes über ein Canvas. */
