@@ -335,7 +335,7 @@
             <tr><td>Durchgestrichen</td><td><code>~~alt~~</code></td><td><del>alt</del></td></tr>
             <tr><td>Code</td><td><code>`befehl`</code>, Block mit <code>```</code> davor und danach</td><td><code>befehl</code></td></tr>
             <tr><td>Liste</td><td><code>- Punkt</code> oder <code>1. Punkt</code>, eingerückt für Unterpunkte</td><td>• Punkt</td></tr>
-            <tr><td>Aufgabe</td><td><code>- [ ] offen</code>, <code>- [x] erledigt</code>, Termin am Ende: <code>- [ ] Offerte einholen @15.10.2026</code>, mit Uhrzeit <code>@15.10.2026 14:30</code></td><td>☐ offen · ☑ erledigt. Erscheint in der Ansicht «Aufgaben», abhaken dort, in der Vorschau oder im Text. Mit Uhrzeit gilt der Zeitpunkt, ohne der ganze Tag.</td></tr>
+            <tr><td>Aufgabe</td><td><code>- [ ] offen</code>, <code>- [x] erledigt</code>, Termin am Ende: <code>- [ ] Offerte einholen @15.10.2026</code>, mit Uhrzeit <code>@15.10.2026 14:30</code></td><td>☐ offen · ☑ erledigt. Erscheint in der Ansicht «Aufgaben», abhaken dort, in der Vorschau oder im Text. Mit Uhrzeit gilt der Zeitpunkt, ohne der ganze Tag. Tiefer eingerückte Aufgaben darunter sind <strong>Unteraufgaben</strong>.</td></tr>
             <tr><td>Zitat</td><td><code>&gt; Text</code></td><td><em>│ Text</em></td></tr>
             <tr><td>Link</td><td><code>[Google](https://google.com)</code>, Adressen wie <code>www.google.com</code> werden automatisch verlinkt</td><td><u>Google</u></td></tr>
             <tr><td>Bild aus dem Web</td><td><code>![Beschreibung](https://…/bild.png)</code></td><td>Bild</td></tr>
@@ -354,6 +354,7 @@
         <h3>Toolleiste und Schreiben</h3>
         <p>Die Knöpfe wirken auf den markierten Text oder die aktuelle Zeile. Ohne Markierung wird ein Platzhalter eingefügt und gleich markiert. Listen, Zitate, Fragen und Antworten lassen sich mit demselben Knopf wieder entfernen. Die Darstellung wechselt zwischen <strong>Bearbeiten</strong>, <strong>Geteilt</strong> und <strong>Vorschau</strong>. In der geteilten Ansicht scrollen Text und Vorschau gemeinsam; es führt jeweils die Seite, auf der die Maus liegt oder die den Fokus hat.</p>
         <p>Beim Schreiben führt <kbd>Enter</kbd> Listen, Aufgaben, Zitate und Antwortzeilen weiter, <kbd>Tab</kbd> und <kbd>Shift</kbd>+<kbd>Tab</kbd> rücken Listenelemente ein und aus. Termine von Fragen und Aufgaben erscheinen in der Vorschau als Abzeichen, im Text bleibt <code>@15.10.2026</code> stehen.</p>
+        <p><strong>Unteraufgaben:</strong> Eine Aufgabe, die tiefer eingerückt direkt unter einer anderen steht (<kbd>Tab</kbd>), gehört zu ihr, beliebig tief. Die Hauptaufgabe lässt sich erst abhaken, wenn alle Unteraufgaben erledigt sind; bis dahin bleibt das Kästchen offen und die Statuszeile nennt die Zahl der offenen. Ein <strong>Doppelklick auf den Aufgabentext</strong> (in der Vorschau oder in der Aufgabenliste) schliesst die Aufgabe und alle Unteraufgaben ab, bei einer vollständig erledigten Aufgabe öffnet er sie wieder. Öffnest du eine Unteraufgabe wieder, werden erledigte Hauptaufgaben darüber mit geöffnet. Ein Abzeichen wie <em>2/3</em> zeigt den Fortschritt. Tippst du <code>[x]</code> von Hand, lässt sich das nicht verhindern; die Liste zeigt dann den Hinweis «Unteraufgaben offen».</p>
       </section>
 
       <section class="help-panel" data-panel="keys" hidden>
@@ -368,6 +369,7 @@
               <dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd></dt><dd>Zeile als Antwort</dd>
               <dt><kbd>Ctrl</kbd>+<kbd>E</kbd></dt><dd>Darstellung wechseln</dd>
               <dt><kbd>Ctrl</kbd>+<kbd>V</kbd></dt><dd>Bild aus der Zwischenablage einfügen</dd>
+              <dt>Doppelklick auf eine Aufgabe</dt><dd>Schliesst die Aufgabe samt Unteraufgaben ab (in Vorschau und Aufgabenliste); ist schon alles erledigt, öffnet er die Aufgabe wieder</dd>
               <dt><kbd>Enter</kbd> in einer Liste</dt><dd>Nächstes Element mit gleichem Zeichen und gleicher Einrückung; leeres Element rückt aus bzw. beendet die Liste. Gilt auch für Aufgaben, Zitate und Antwortzeilen</dd>
               <dt><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd></dt><dd>Listenelement ein- bzw. ausrücken (auch mehrere markierte Zeilen); nummerierte Listen zählen neu</dd>
               <dt><kbd>Shift</kbd>+<kbd>Enter</kbd></dt><dd>Normale neue Zeile ohne Fortführung</dd>

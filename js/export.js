@@ -133,7 +133,7 @@
     if (!rows.length) return ['Keine offenen Aufgaben.'];
     return rows.map(r => {
       const n = byId.get(r.note_id);
-      const due = r.due ? ` (bis ${T.formatDue(r.due)})` : '';
+      const due = (r.due ? ` (bis ${T.formatDue(r.due)})` : '') + (r.parent_text ? ` · Teil von „${r.parent_text}“` : '');
       return n ? `- [ ] ${r.text}${due} — aus [${n.title.trim() || 'Ohne Titel'}](${hrefOf(n)})` : `- [ ] ${r.text}${due}`;
     });
   }

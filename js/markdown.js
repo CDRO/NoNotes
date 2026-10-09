@@ -287,6 +287,16 @@
       i++;
     }
 
+    // Fortschritt der Unteraufgaben: alle tiefer eingerückten Aufgaben direkt darunter
+    for (let k = 0; k < items.length; k++) {
+      if (items[k].task == null) continue;
+      let total = 0, done = 0;
+      for (let j = k + 1; j < items.length && items[j].indent > items[k].indent; j++) {
+        if (items[j].task != null) { total++; if (items[j].task) done++; }
+      }
+      items[k].sub = total ? { total, done } : null;
+    }
+
     // Verschachtelung über Einrückung
     let html = '';
     const stack = [];
@@ -305,7 +315,14 @@
         html += '</li>';
       }
       const box = item.task == null ? '' : `<input type="checkbox"${ctx.interactiveTasks ? '' : ' disabled'}${item.task ? ' checked' : ''} aria-label="${item.task ? 'erledigt' : 'offen'}"> `;
-      html += `<li${item.task == null ? (ctx.lineMap ? ` data-line="${item.line}"` : '') : ` class="task${item.task ? ' done' : ''}" data-line="${item.line}"`}>${box}${item.text}`;
+      let progress = '';
+      if (item.sub) {
+        const open = item.sub.total - item.sub.done;
+        const warn = item.task && open > 0;
+        progress = `<span class="md-progress${warn ? ' warn' : open === 0 ? ' complete' : ''}" title="${warn ? `Erledigt, aber ${open} von ${item.sub.total} Unteraufgaben offen` : `${item.sub.done} von ${item.sub.total} Unteraufgaben erledigt`}">${item.sub.done}/${item.sub.total}${warn ? ' · Unteraufgaben offen' : ''}</span>`;
+      }
+      const content = item.task == null ? `${item.text}${progress}` : `<span class="task-text">${box}${item.text}</span>${progress}`; // Durchstreichen nur am eigenen Text, nicht an Unteraufgaben
+      html += `<li${item.task == null ? (ctx.lineMap ? ` data-line="${item.line}"` : '') : ` class="task${item.task ? ' done' : ''}" data-line="${item.line}"`}>${content}`;
     }
     while (stack.length) { html += '</li>'; close(); }
     out.push(html);

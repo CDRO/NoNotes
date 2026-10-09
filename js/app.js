@@ -1237,14 +1237,41 @@
     if (state.editorMode === 'split' && state.scrollSync) state.scrollSync.afterRender();
   }
 
-  /** Kästchen in der Vorschau angeklickt: Zeile im Text umschalten. */
+  /** Hinweis in der Statuszeile, ohne den Speicherstand falsch darzustellen. */
+  function hint(text) {
+    setStatus(text, state.editSeq !== state.savedSeq ? 'dirty' : 'saved');
+  }
+
+  /** Kästchen in der Vorschau angeklickt: Zeile im Text umschalten. Abhaken geht erst, wenn alle
+   *  Unteraufgaben erledigt sind; Öffnen einer Unteraufgabe öffnet erledigte Hauptaufgaben mit. */
   function onPreviewChange(e) {
     const input = e.target.closest('li.task[data-line] input[type="checkbox"]');
     if (!input || state.currentId == null || el.body.readOnly) return;
     const line = Number(input.closest('li').dataset.line);
-    el.body.value = T.setDone(el.body.value, line, input.checked);
+    if (input.checked) {
+      const open = T.openSubtasks(el.body.value, line);
+      if (open > 0) { input.checked = false; hint(T.openMessage(open)); return; }
+      el.body.value = T.setDone(el.body.value, line, true);
+    } else {
+      el.body.value = T.reopen(el.body.value, line);
+    }
     onEdit();
     renderPreview();
+  }
+
+  /** Doppelklick auf den Text einer Aufgabe in der Vorschau: Aufgabe samt Unteraufgaben abschliessen. */
+  function onPreviewDblClick(e) {
+    if (state.currentId == null || el.body.readOnly) return;
+    if (e.target.closest('a, input, button')) return;
+    const li = e.target.closest('li');
+    if (!li || !li.classList.contains('task') || li.dataset.line == null) return;
+    const r = T.doubleClick(el.body.value, Number(li.dataset.line));
+    if (!r.action) return;
+    window.getSelection().removeAllRanges();
+    el.body.value = r.body;
+    onEdit();
+    renderPreview();
+    hint(r.action === 'completed' ? 'Aufgabe mit allen Unteraufgaben erledigt' : 'Aufgabe wieder geöffnet');
   }
 
   function schedulePreview() {
@@ -1798,8 +1825,9 @@
   function renderTaskItem(r, today, resolve) {
     resolve = resolve || wikiResolver();
     const item = document.createElement('article');
-    item.className = 'q-item t-item ' + (r.done ? 'done' : 'open');
+    item.className = 'q-item t-item ' + (r.done ? 'done' : 'open') + (r.depth ? ' sub' : '');
     item.dataset.id = String(r.id);
+    if (r.depth && state.tSort === 'note') item.style.marginLeft = Math.min(r.depth, 4) * 24 + 'px'; // eingerückt unter der Hauptaufgabe
 
     const head = document.createElement('div');
     head.className = 'q-head';
@@ -1812,7 +1840,21 @@
     const text = document.createElement('div');
     text.className = 'q-text';
     text.innerHTML = M.inline(r.text, { highlight: state.tQuery.trim() || null, resolveTitle: resolve });
+    text.title = 'Doppelklick: Aufgabe samt Unteraufgaben abschliessen';
+    text.addEventListener('dblclick', e => {
+      if (e.target.closest('a')) return;
+      window.getSelection().removeAllRanges();
+      toggleTaskTreeInList(r.id);
+    });
     head.append(box, text);
+    if (r.sub_total) {
+      const warn = r.done && r.sub_open > 0;
+      const prog = document.createElement('span');
+      prog.className = 't-progress' + (warn ? ' warn' : r.sub_open === 0 ? ' complete' : '');
+      prog.textContent = `${r.sub_done}/${r.sub_total}` + (warn ? ' · Unteraufgaben offen' : '');
+      prog.title = warn ? `Erledigt, aber ${r.sub_open} von ${r.sub_total} Unteraufgaben offen` : `${r.sub_done} von ${r.sub_total} Unteraufgaben erledigt`;
+      head.appendChild(prog);
+    }
     if (r.due) {
       const due = document.createElement('span');
       const u = r.done ? 'none' : T.urgency(r.due, today);
@@ -1824,6 +1866,12 @@
 
     const actions = document.createElement('div');
     actions.className = 'q-actions';
+    if (r.parent_text && state.tSort !== 'note') {
+      const part = document.createElement('span');
+      part.className = 't-note t-part';
+      part.textContent = `Teil von „${r.parent_text}“`;
+      actions.appendChild(part);
+    }
     if (state.tSort !== 'note') {
       const from = document.createElement('span');
       from.className = 't-note';
@@ -1857,6 +1905,22 @@
       renderTasks();
       if (state.currentId === noteId) { renderEditor(); if (state.editorMode !== 'edit') renderPreview(); }
       setStatus(done ? 'Aufgabe erledigt' : 'Aufgabe wieder geöffnet', 'dirty');
+    } catch (e) {
+      if (e.code === 'SUBTASKS_OPEN') hint(e.message);
+      else setStatus('Aufgabe konnte nicht geändert werden: ' + e.message, 'error');
+      renderTasks();
+    }
+  }
+
+  /** Doppelklick in der Aufgabenliste: Aufgabe samt Unteraufgaben abschliessen bzw. wieder öffnen. */
+  function toggleTaskTreeInList(taskId) {
+    try {
+      const r = DB.toggleTaskTree(state.db, taskId);
+      markEdited();
+      renderTaskCounts();
+      renderTasks();
+      if (state.currentId === r.noteId) { renderEditor(); if (state.editorMode !== 'edit') renderPreview(); }
+      setStatus(r.action === 'completed' ? 'Aufgabe mit allen Unteraufgaben erledigt' : 'Aufgabe wieder geöffnet', 'dirty');
     } catch (e) {
       setStatus('Aufgabe konnte nicht geändert werden: ' + e.message, 'error');
       renderTasks();
@@ -2366,6 +2430,7 @@
       if (b) setEditorMode(b.dataset.mode);
     });
     el.preview.addEventListener('click', onPreviewClick);
+    el.preview.addEventListener('dblclick', onPreviewDblClick);
     state.scrollSync = window.NoNotesScrollSync.create({
       textarea: el.body, preview: el.preview, mirror: el.bodyMirror,
       isActive: () => state.editorMode === 'split' && !el.editorPane.hidden,

@@ -720,6 +720,13 @@ body:not(.view-tasks) .tasks-view { display: none; }
 .due.today { background: color-mix(in srgb, var(--warn) 18%, var(--panel)); border-color: var(--warn); color: var(--warn); font-weight: 600; }
 .due.week { border-color: var(--accent); color: var(--accent); }
 .t-note { font-size: 12px; color: var(--muted); }
+.t-part { font-style: italic; }
+.t-item.sub { border-left: 3px solid var(--border); }
+.t-progress, .md-progress { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--bg); border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+.t-progress.complete, .md-progress.complete { border-color: var(--ok); color: var(--ok); }
+.t-progress.warn, .md-progress.warn { border-color: var(--warn); color: var(--warn); font-weight: 600; }
+.md-progress { margin-left: 8px; font-weight: 500; vertical-align: middle; }
+.t-item .q-text { cursor: default; }
 .t-note button { border: 0; background: none; padding: 0 2px; color: var(--muted); font-size: 12px; text-decoration: underline dotted; }
 .t-note button:hover { color: var(--text); }
 .q-group.urgency-overdue > .q-note { color: var(--danger); }
@@ -727,7 +734,7 @@ body:not(.view-tasks) .tasks-view { display: none; }
 
 /* Klickbare Kästchen in der Vorschau */
 .md li.task input:not(:disabled) { cursor: pointer; accent-color: var(--accent); }
-.md li.task.done { color: var(--muted); text-decoration: line-through; }
+.md li.task.done > .task-text { color: var(--muted); text-decoration: line-through; }
 
 @media print {
   #printArea .print-task { display: flex; gap: 8pt; align-items: flex-start; padding: 4pt 0; border-top: 1px solid #ddd; break-inside: avoid; }
@@ -736,6 +743,7 @@ body:not(.view-tasks) .tasks-view { display: none; }
   #printArea .print-task.done .print-task-text { text-decoration: line-through; color: #555; }
   #printArea .print-task-text { flex: 1; }
   #printArea .print-task-meta { color: #666; font-size: 8.5pt; white-space: nowrap; }
+  #printArea .md-progress { font-size: 8.5pt; border: 1px solid #999; border-radius: 999px; padding: 1pt 5pt; margin-left: 6pt; color: #333; background: none; }
   #printArea .print-task-meta.overdue { color: #b00; font-weight: 600; }
 }
 

@@ -203,8 +203,15 @@
     const resolveTitle = titleResolver(db);
     const item = r => {
       const u = r.done ? 'none' : T.urgency(r.due, today);
-      const meta = [r.due ? `bis ${T.formatDue(r.due)}` : null, options.groupBy === 'note' ? null : (r.note_title.trim() || 'Ohne Titel'), r.done && r.done_at ? `erledigt ${fmtDate(r.done_at)}` : null].filter(Boolean).join(' · ');
-      return `<div class="print-task ${r.done ? 'done' : 'open'}"><span class="print-box" aria-hidden="true"></span>` +
+      const meta = [
+        r.due ? `bis ${T.formatDue(r.due)}` : null,
+        r.sub_total ? `${r.sub_done}/${r.sub_total} Unteraufgaben` : null,
+        options.groupBy === 'note' ? null : (r.parent_text ? `Teil von „${r.parent_text}“` : null),
+        options.groupBy === 'note' ? null : (r.note_title.trim() || 'Ohne Titel'),
+        r.done && r.done_at ? `erledigt ${fmtDate(r.done_at)}` : null,
+      ].filter(Boolean).join(' · ');
+      const indent = options.groupBy === 'note' && r.depth ? ` style="margin-left:${Math.min(r.depth, 4) * 16}pt"` : '';
+      return `<div class="print-task ${r.done ? 'done' : 'open'}"${indent}><span class="print-box" aria-hidden="true"></span>` +
         `<span class="print-task-text">${M().inline(r.text, { resolveTitle })}</span>` +
         (meta ? `<span class="print-task-meta${u === 'overdue' ? ' overdue' : ''}">${esc(meta)}</span>` : '') + '</div>';
     };

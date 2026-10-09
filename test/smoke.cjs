@@ -23,7 +23,7 @@ const { chromium } = loadPlaywright();
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '8'; // muss zu js/db.js passen
+const SCHEMA_VERSION = '9'; // muss zu js/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 function watchErrors(page) {
@@ -1625,6 +1625,220 @@ async function main() {
     assert.deepEqual(errors20, [], 'keine Konsolenfehler beim synchronen Scrollen');
     await ctx20.close();
     step('Geteilt: Vorschau scrollt, Editor folgt; Ende an Ende; umbrochene Zeilen; nach Änderung ausgerichtet');
+
+    // ---------- 21. Unteraufgaben ----------
+    const ctx21 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
+    await ctx21.addInitScript(() => {
+      window.__printed = [];
+      window.print = () => { window.__printed.push(document.getElementById('printArea').innerHTML); };
+      window.__exported = {};
+      const concat = chunks => { const n = chunks.reduce((s, c) => s + c.length, 0); const out = new Uint8Array(n); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; } return out; };
+      const makeDir = prefix => ({ kind: 'directory', name: 'Export', getDirectoryHandle: async n => makeDir(prefix + n + '/'), getFileHandle: async n => ({ kind: 'file', name: n, createWritable: async () => { const chunks = []; return { write: async d => { chunks.push(new Uint8Array(d)); }, close: async () => { window.__exported[prefix + n] = Array.from(concat(chunks)); }, abort: async () => {} }; } }) });
+      window.showDirectoryPicker = async () => makeDir('');
+    });
+    const { page: page21, errors: errors21 } = await openApp(ctx21, 'list');
+
+    // Reine Textlogik
+    const logic21 = await page21.evaluate(() => {
+      const T = window.NoNotesTasks;
+      const body = ['- [ ] Haupt', '  - [ ] A', '    - [x] Enkel', '  - [x] B', 'Zwischentext', '- [ ] Zweite', '\t- [ ] Tab-Unter', '', '- Bullet', '  - [ ] Kind eines Bullets'].join('\n');
+      const p = T.parse(body);
+      const all = T.completeTree(body, 0);
+      return {
+        tree: p.map(t => `${t.text}:${t.depth}:${t.parent}`),
+        open: [T.openSubtasks(body, 0), T.openSubtasks(body, 1), T.openSubtasks(body, 2)],
+        all: all.split('\n').slice(0, 4),
+        reopened: T.reopen(all, 2).split('\n').slice(0, 4),
+        dbl: [T.doubleClick(body, 0).action, T.doubleClick(all, 0).action, T.doubleClick(body, 7 - 1).action],
+        text: T.openMessage(1) + ' / ' + T.openMessage(3),
+      };
+    });
+    assert.deepEqual(logic21.tree, ['Haupt:0:-1', 'A:1:0', 'Enkel:2:1', 'B:1:0', 'Zweite:0:-1', 'Tab-Unter:1:4', 'Kind eines Bullets:0:-1'], 'Hierarchie über die Einrückung, Text ohne Kästchen beendet den Teilbaum');
+    assert.deepEqual(logic21.open, [1, 0, 0]);
+    assert.deepEqual(logic21.all, ['- [x] Haupt', '  - [x] A', '    - [x] Enkel', '  - [x] B']);
+    assert.deepEqual(logic21.reopened, ['- [ ] Haupt', '  - [ ] A', '    - [ ] Enkel', '  - [x] B'], 'Öffnen einer Unteraufgabe öffnet die Hauptaufgaben darüber');
+    assert.deepEqual(logic21.dbl, ['completed', 'reopened', 'completed']);
+    assert.equal(logic21.text, '1 Unteraufgabe ist noch offen / 3 Unteraufgaben sind noch offen');
+    step('Unteraufgaben: Hierarchie, Abschluss- und Öffnen-Regeln als Textfunktionen');
+
+    await page21.click('#newBtn');
+    await page21.fill('#title', 'Projekt');
+    await page21.fill('#body', ['- [ ] Haupt @15.10.2026', '  - [ ] Unter A @12.10.2026', '    - [ ] Enkel', '  - [ ] Unter B', '- [ ] Einzel'].join('\n'));
+    await waitSaved(page21);
+    await page21.click('#viewTasksBtn');
+    await page21.waitForSelector('body.view-tasks');
+    await page21.waitForFunction(() => document.querySelectorAll('.t-item').length === 5);
+    const row21 = text => page21.locator('.t-item').filter({ has: page21.locator('.q-text', { hasText: new RegExp('^' + text + '$') }) });
+    const progress21 = async text => (await row21(text).locator('.t-progress').allInnerTexts())[0] || null;
+    assert.equal(await progress21('Haupt'), '0/3', 'Fortschritt der Hauptaufgabe zählt alle Unteraufgaben');
+    assert.equal(await progress21('Unter A'), '0/1');
+    assert.equal(await progress21('Unter B'), null);
+    assert.equal(await progress21('Einzel'), null);
+    assert.equal(await row21('Unter A').locator('.t-part').innerText(), 'Teil von „Haupt“');
+    assert.equal(await row21('Enkel').locator('.t-part').innerText(), 'Teil von „Unter A“');
+    assert.equal(await row21('Haupt').locator('.t-part').count(), 0);
+    step('Aufgabenliste: Fortschritt «0/3» und «Teil von …»');
+
+    // Abhaken mit offenen Unteraufgaben wird verweigert
+    await row21('Haupt').locator('.t-check').click();
+    await page21.waitForFunction(() => /3 Unteraufgaben sind noch offen/.test(document.querySelector('#status').textContent));
+    assert.equal(await page21.locator('.t-item.done').count(), 0, 'Kästchen bleibt offen');
+    assert.equal(await row21('Haupt').locator('.t-check').isChecked(), false);
+    await row21('Unter A').locator('.t-check').click();
+    await page21.waitForFunction(() => /1 Unteraufgabe ist noch offen/.test(document.querySelector('#status').textContent));
+    // Von unten nach oben abhaken
+    await row21('Enkel').locator('.t-check').click();
+    await page21.waitForFunction(() => document.querySelectorAll('.t-item').length === 4);
+    assert.equal(await progress21('Haupt'), '1/3');
+    await row21('Unter A').locator('.t-check').click();
+    await page21.waitForFunction(() => document.querySelectorAll('.t-item').length === 3);
+    assert.equal(await progress21('Haupt'), '2/3');
+    await row21('Haupt').locator('.t-check').click();
+    await page21.waitForFunction(() => /1 Unteraufgabe ist noch offen/.test(document.querySelector('#status').textContent));
+    await row21('Unter B').locator('.t-check').click();
+    await page21.waitForFunction(() => document.querySelectorAll('.t-item').length === 2);
+    await row21('Haupt').locator('.t-check').click();
+    await page21.waitForFunction(() => document.querySelectorAll('.t-item').length === 1);
+    assert.equal(await row21('Einzel').count(), 1);
+    step('Aufgabenliste: Abhaken erst nach den Unteraufgaben');
+
+    // Doppelklick: alles erledigt → öffnet nur die Hauptaufgabe; ist etwas offen → schliesst die ganze Gruppe ab
+    await page21.click('#tFilter button[data-status="all"]');
+    await page21.waitForFunction(() => document.querySelectorAll('.t-item').length === 5);
+    assert.equal(await page21.locator('.t-item.done').count(), 4, 'Haupt samt Unteraufgaben ist erledigt');
+    await row21('Haupt').locator('.q-text').dblclick();
+    await page21.waitForFunction(() => document.querySelectorAll('.t-item.done').length === 3 && document.querySelectorAll('.t-item.open').length === 2);
+    assert.equal(await row21('Haupt').evaluate(e => e.classList.contains('open')), true, 'Doppelklick auf eine vollständig erledigte Aufgabe öffnet nur sie');
+    assert.equal(await progress21('Haupt'), '3/3');
+    assert.match(await page21.locator('#status').innerText(), /Aufgabe wieder geöffnet/);
+    await row21('Haupt').locator('.q-text').dblclick();
+    await page21.waitForFunction(() => document.querySelectorAll('.t-item.done').length === 4);
+    assert.match(await page21.locator('#status').innerText(), /Aufgabe mit allen Unteraufgaben erledigt/);
+    // Teilweise offen: Doppelklick auf eine Unteraufgabe schliesst deren Gruppe ab, die Hauptaufgabe bleibt
+    await row21('Enkel').locator('.t-check').click();
+    await page21.waitForFunction(() => document.querySelectorAll('.t-item.done').length === 1); // nur Unter B bleibt erledigt
+    await row21('Unter A').locator('.q-text').dblclick();
+    await page21.waitForFunction(() => document.querySelectorAll('.t-item.done').length === 3);
+    assert.equal(await row21('Enkel').evaluate(e => e.classList.contains('done')), true);
+    assert.equal(await row21('Haupt').evaluate(e => e.classList.contains('open')), true, 'Hauptaufgabe bleibt offen, bis sie selbst abgeschlossen wird');
+    await row21('Haupt').locator('.q-text').dblclick();
+    await page21.waitForFunction(() => document.querySelectorAll('.t-item.done').length === 4);
+    // Unteraufgabe öffnen: erledigte Hauptaufgaben darüber werden mit geöffnet
+    await row21('Enkel').locator('.t-check').click();
+    await page21.waitForFunction(() => document.querySelectorAll('.t-item.done').length === 1);
+    for (const t of ['Haupt', 'Unter A', 'Enkel']) assert.equal(await row21(t).evaluate(e => e.classList.contains('open')), true, `${t} ist offen`);
+    assert.equal(await row21('Unter B').evaluate(e => e.classList.contains('done')), true, 'Geschwister bleibt erledigt');
+    step('Aufgabenliste: Doppelklick schliesst alles ab bzw. öffnet nur die Aufgabe, Öffnen wirkt nach oben');
+
+    // Sortierung nach Notiz: eingerückt; von Hand getipptes [x] zeigt den Hinweis
+    await page21.selectOption('#tSort', 'note');
+    await page21.waitForFunction(() => document.querySelectorAll('.t-item .t-part').length === 0);
+    assert.deepEqual(await Promise.all(['Haupt', 'Unter A', 'Enkel'].map(t => row21(t).evaluate(e => e.style.marginLeft))), ['', '24px', '48px']);
+    await page21.selectOption('#tSort', 'due');
+    await row21('Haupt').locator('button:has-text("Zur Notiz")').click();
+    await page21.waitForSelector('body.editor-open');
+    await page21.fill('#body', ['- [x] Haupt @15.10.2026', '  - [ ] Unter A @12.10.2026', '    - [ ] Enkel', '  - [x] Unter B', '- [ ] Einzel'].join('\n'));
+    await waitSaved(page21);
+    await page21.keyboard.press('Escape');
+    await page21.waitForSelector('body:not(.editor-open)');
+    const hint21 = await row21('Haupt').locator('.t-progress.warn').innerText();
+    assert.equal(hint21, '1/3 · Unteraufgaben offen', 'Haupt ist von Hand erledigt, Unteraufgaben sind offen');
+    assert.equal(await row21('Haupt').evaluate(e => e.classList.contains('done')), true);
+    step('Aufgabenliste: Einrückung nach Notiz, Hinweis bei von Hand erledigter Hauptaufgabe');
+
+    // Vorschau: Kästchen verweigert, Fortschritt als Abzeichen, Doppelklick, Öffnen nach oben
+    await page21.click('#viewListBtn');
+    await page21.waitForSelector('body.view-list');
+    await page21.locator('#list li').first().click();
+    await page21.waitForFunction(() => document.querySelector('#title').value === 'Projekt');
+    await page21.fill('#body', ['- [ ] Haupt @15.10.2026', '  - [ ] Unter A @12.10.2026', '    - [ ] Enkel', '  - [ ] Unter B', '- [ ] Einzel'].join('\n'));
+    await waitSaved(page21);
+    await page21.click('#modeSwitch button[data-mode="preview"]');
+    await page21.waitForSelector('#preview li.task');
+    assert.deepEqual(await page21.locator('#preview .md-progress').allInnerTexts(), ['0/3', '0/1']);
+    await page21.locator('#preview li.task input').first().click();
+    await page21.waitForFunction(() => /3 Unteraufgaben sind noch offen/.test(document.querySelector('#status').textContent));
+    assert.equal(await page21.locator('#preview li.task input').first().isChecked(), false, 'Kästchen der Hauptaufgabe bleibt offen');
+    assert.ok(!(await page21.inputValue('#body')).includes('[x]'), 'Text unverändert');
+    await page21.locator('#preview li.task').first().dblclick({ position: { x: 70, y: 10 } });
+    await page21.waitForFunction(() => document.querySelector('#body').value.split('\n').filter(l => l.includes('[x]')).length === 4);
+    assert.equal(await page21.inputValue('#body'), ['- [x] Haupt @15.10.2026', '  - [x] Unter A @12.10.2026', '    - [x] Enkel', '  - [x] Unter B', '- [ ] Einzel'].join('\n'), 'Doppelklick schliesst die ganze Gruppe ab');
+    assert.deepEqual(await page21.locator('#preview .md-progress').allInnerTexts(), ['3/3', '1/1']);
+    assert.equal(await page21.locator('#preview .md-progress.complete').count(), 2);
+    const deco21 = await page21.evaluate(() => { const li = document.querySelector('#preview li.task.done'); return [getComputedStyle(li).textDecorationLine, getComputedStyle(li.querySelector(':scope > .task-text')).textDecorationLine]; });
+    assert.deepEqual(deco21, ['none', 'line-through'], 'Durchstreichen nur am Text der Aufgabe, nicht an ihren Unteraufgaben');
+    await page21.locator('#preview li.task input').nth(2).click(); // Enkel wieder öffnen
+    await page21.waitForFunction(() => document.querySelector('#body').value.split('\n').filter(l => l.includes('[ ]')).length === 4);
+    assert.equal(await page21.inputValue('#body'), ['- [ ] Haupt @15.10.2026', '  - [ ] Unter A @12.10.2026', '    - [ ] Enkel', '  - [x] Unter B', '- [ ] Einzel'].join('\n'), 'Hauptaufgaben darüber geöffnet');
+    await page21.locator('#preview li.task').nth(2).dblclick({ position: { x: 60, y: 8 } }); // Enkel ohne Unteraufgaben
+    await page21.waitForFunction(() => document.querySelector('#body').value.includes('[x] Enkel'));
+    await page21.click('#modeSwitch button[data-mode="edit"]');
+    await waitSaved(page21);
+    step('Vorschau: Abzeichen, Kästchen verweigert, Doppelklick, Öffnen nach oben');
+
+    // Druck als Checkliste nach Notiz und Export
+    await page21.fill('#body', ['- [ ] Haupt', '  - [x] Unter A', '- [ ] Einzel'].join('\n'));
+    await waitSaved(page21);
+    await page21.click('#viewTasksBtn');
+    await page21.waitForSelector('body.view-tasks');
+    await page21.click('#tPrintBtn');
+    await page21.waitForSelector('#taskPrintDialog[open]');
+    await page21.check('#taskPrintForm input[name="taskScope"][value="all"]');
+    await page21.check('#taskPrintForm input[name="taskGroup"][value="note"]');
+    await page21.click('#taskPrintGoBtn');
+    await page21.waitForFunction(() => window.__printed.length === 1);
+    const tdoc21 = await page21.evaluate(() => window.__printed[0]);
+    assert.ok(/class="print-task done" style="margin-left:16pt"><span class="print-box"/.test(tdoc21), 'Unteraufgabe eingerückt im Druck');
+    assert.ok(tdoc21.includes('1/1 Unteraufgaben'), 'Fortschritt im Druck');
+    await page21.click('#menuBtn');
+    await page21.click('#exportBtn');
+    await page21.waitForSelector('#exportDialog[open]');
+    await page21.click('#exportDirBtn');
+    await page21.waitForFunction(() => /Export gespeichert/.test(document.querySelector('#status').textContent));
+    const idx21 = await page21.evaluate(() => new TextDecoder().decode(new Uint8Array(window.__exported['index.md'])));
+    assert.ok(idx21.includes('- [ ] Haupt — aus [Projekt]') && idx21.includes('- [ ] Einzel — aus [Projekt]'));
+    step('Unteraufgaben: Druck eingerückt, Export');
+
+    // Datenbank: Spalten, und eine Schema-8-Datei wird beim Öffnen migriert
+    await page21.click('#viewListBtn');
+    await page21.waitForSelector('body.view-list');
+    await page21.locator('#list li').first().click();
+    await page21.waitForFunction(() => document.querySelector('#title').value === 'Projekt');
+    await page21.fill('#body', ['- [ ] Haupt', '  - [ ] Unter A', '    - [ ] Enkel', '- [ ] Einzel'].join('\n'));
+    await waitSaved(page21);
+    await page21.click('#menuBtn');
+    const [dl21] = await Promise.all([page21.waitForEvent('download'), page21.click('#downloadBtn')]);
+    const dl21Path = path.join(tmp, 'unter.sqlite');
+    await dl21.saveAs(dl21Path);
+    const db21 = new SQL.Database(new Uint8Array(fs.readFileSync(dl21Path)));
+    assert.equal(db21.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], SCHEMA_VERSION);
+    const rows21 = db21.exec('SELECT t.text, t.depth, p.text FROM tasks t LEFT JOIN tasks p ON p.id = t.parent_id ORDER BY t.line_no')[0].values;
+    assert.deepEqual(rows21, [['Haupt', 0, null], ['Unter A', 1, 'Haupt'], ['Enkel', 2, 'Unter A'], ['Einzel', 0, null]]);
+    db21.run("ALTER TABLE tasks DROP COLUMN parent_id; ALTER TABLE tasks DROP COLUMN depth; UPDATE meta SET value = '8' WHERE key = 'schema_version';");
+    const v8Path = path.join(tmp, 'schema8.sqlite');
+    fs.writeFileSync(v8Path, Buffer.from(db21.export()));
+    db21.close();
+    const ctx21b = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
+    const { page: page21b, errors: errors21b } = await openApp(ctx21b, 'list');
+    await page21b.setInputFiles('#importInput', v8Path);
+    await page21b.waitForFunction(() => document.querySelectorAll('#list li').length === 1);
+    await page21b.click('#viewTasksBtn');
+    await page21b.waitForSelector('body.view-tasks');
+    await page21b.waitForFunction(() => document.querySelectorAll('.t-item').length === 4);
+    assert.equal(await page21b.locator('.t-item .t-part').count(), 2, 'Unteraufgaben nach der Migration erkannt');
+    await page21b.click('#menuBtn');
+    const [dl21b] = await Promise.all([page21b.waitForEvent('download'), page21b.click('#downloadBtn')]);
+    const dl21bPath = path.join(tmp, 'migriert.sqlite');
+    await dl21b.saveAs(dl21bPath);
+    const db21b = new SQL.Database(new Uint8Array(fs.readFileSync(dl21bPath)));
+    assert.equal(db21b.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], SCHEMA_VERSION);
+    assert.deepEqual(db21b.exec('SELECT depth FROM tasks ORDER BY line_no')[0].values.map(r => r[0]), [0, 1, 2, 0]);
+    db21b.close();
+    assert.deepEqual(errors21, [], 'keine Konsolenfehler bei Unteraufgaben');
+    assert.deepEqual(errors21b, [], 'keine Konsolenfehler bei der Migration auf Schema 9');
+    await ctx21.close();
+    await ctx21b.close();
+    step('Unteraufgaben: Schema 9 in der Datei, Migration einer Schema-8-Datei');
 
     console.log('\nSmoke-Test bestanden.');
   } finally {

@@ -3,7 +3,7 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 8;
+  const SCHEMA_VERSION = 9;
   const DEFAULT_MAP_TITLE = 'Meine Notizen';
 
   function nowIso() { return new Date().toISOString(); }
@@ -113,13 +113,23 @@
         due        TEXT,
         line_no    INTEGER NOT NULL,
         created_at TEXT NOT NULL,
-        done_at    TEXT
+        done_at    TEXT,
+        parent_id  INTEGER,
+        depth      INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX idx_tasks_note ON tasks (note_id);
     `);
     setMeta(db, 'schema_version', SCHEMA_VERSION);
     setMeta(db, 'created_at', nowIso());
     setMeta(db, 'map_title', DEFAULT_MAP_TITLE);
+  }
+
+  /** Fügt der Aufgabentabelle die Spalten für Unteraufgaben hinzu, falls sie fehlen (ältere Datenbanken). */
+  function ensureTaskTreeColumns(db) {
+    if (!hasTable(db, 'tasks')) return;
+    const cols = selectAll(db, 'PRAGMA table_info(tasks)').map(c => c.name);
+    if (!cols.includes('parent_id')) db.exec('ALTER TABLE tasks ADD COLUMN parent_id INTEGER');
+    if (!cols.includes('depth')) db.exec('ALTER TABLE tasks ADD COLUMN depth INTEGER NOT NULL DEFAULT 0');
   }
 
   /** Hebt eine bestehende Datenbank Schritt für Schritt auf das aktuelle Schema. */
@@ -205,7 +215,9 @@
           due        TEXT,
           line_no    INTEGER NOT NULL,
           created_at TEXT NOT NULL,
-          done_at    TEXT
+          done_at    TEXT,
+          parent_id  INTEGER,
+          depth      INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS idx_tasks_note ON tasks (note_id);
       `);
@@ -221,8 +233,16 @@
 
     if (version < 8) {
       // Uhrzeiten in Terminen: alle Notizen neu indexieren, damit "@Datum Zeit" erkannt wird.
+      ensureTaskTreeColumns(db);
       for (const row of selectAll(db, 'SELECT id, body FROM notes')) { syncQuestions(db, row.id, row.body); syncTasks(db, row.id, row.body); }
       version = 8;
+    }
+
+    if (version < 9) {
+      // Unteraufgaben: Verweis auf die Hauptaufgabe und Tiefe, alle Notizen neu indexieren.
+      ensureTaskTreeColumns(db);
+      for (const row of selectAll(db, 'SELECT id, body FROM notes')) syncTasks(db, row.id, row.body);
+      version = 9;
     }
 
     setMeta(db, 'schema_version', SCHEMA_VERSION);
@@ -466,21 +486,26 @@
     const existing = selectAll(db, 'SELECT * FROM tasks WHERE note_id = ? ORDER BY line_no, id', [noteId]);
     const unused = existing.slice();
     const ts = nowIso();
+    const ids = []; // Zeilen-ID je Aufgabe; Hauptaufgaben stehen im Text vor ihren Unteraufgaben
     for (const t of parsed) {
       const idx = unused.findIndex(e => e.norm === t.norm);
       const done = t.done ? 1 : 0;
+      const parentId = t.parent >= 0 ? ids[t.parent] : null;
       if (idx >= 0) {
         const e = unused.splice(idx, 1)[0];
         let doneAt = e.done_at;
         if (done && !e.done) doneAt = ts;
         if (!done) doneAt = null;
-        if (e.text !== t.text || e.done !== done || e.due !== t.due || e.line_no !== t.lineIndex || e.done_at !== doneAt) {
-          db.run('UPDATE tasks SET text = ?, done = ?, due = ?, line_no = ?, done_at = ? WHERE id = ?',
-            [t.text, done, t.due, t.lineIndex, doneAt, e.id]);
+        if (e.text !== t.text || e.done !== done || e.due !== t.due || e.line_no !== t.lineIndex || e.done_at !== doneAt
+            || (e.parent_id == null ? null : e.parent_id) !== parentId || (e.depth || 0) !== t.depth) {
+          db.run('UPDATE tasks SET text = ?, done = ?, due = ?, line_no = ?, done_at = ?, parent_id = ?, depth = ? WHERE id = ?',
+            [t.text, done, t.due, t.lineIndex, doneAt, parentId, t.depth, e.id]);
         }
+        ids.push(e.id);
       } else {
-        db.run('INSERT INTO tasks (note_id, text, norm, done, due, line_no, created_at, done_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-          [noteId, t.text, t.norm, done, t.due, t.lineIndex, ts, done ? ts : null]);
+        db.run('INSERT INTO tasks (note_id, text, norm, done, due, line_no, created_at, done_at, parent_id, depth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [noteId, t.text, t.norm, done, t.due, t.lineIndex, ts, done ? ts : null, parentId, t.depth]);
+        ids.push(scalar(db, 'SELECT last_insert_rowid()'));
       }
     }
     for (const e of unused) db.run('DELETE FROM tasks WHERE id = ?', [e.id]);
@@ -508,12 +533,50 @@
     const order = sort === 'note'
       ? 't.done, n.updated_at DESC, n.id, t.line_no'
       : 't.done, (t.due IS NULL), t.due, n.updated_at DESC, n.id, t.line_no';
-    return selectAll(db,
-      `SELECT t.id, t.note_id, t.text, t.norm, t.done, t.due, t.line_no, t.created_at, t.done_at,
+    const rows = selectAll(db,
+      `SELECT t.id, t.note_id, t.text, t.norm, t.done, t.due, t.line_no, t.created_at, t.done_at, t.parent_id, t.depth,
               n.title AS note_title, n.updated_at AS note_updated_at
          FROM tasks t JOIN notes n ON n.id = t.note_id
         WHERE ${where.join(' AND ')}
         ORDER BY ${order}`, params);
+    return withSubtaskInfo(db, rows);
+  }
+
+  /** Ergänzt jede Aufgabe um parent_text sowie sub_total / sub_done / sub_open (alle Unteraufgaben, jeder Tiefe),
+   *  gezählt über alle lebenden Aufgaben, unabhängig von Filtern der Liste. */
+  function withSubtaskInfo(db, rows) {
+    if (!rows.length) return rows;
+    const all = selectAll(db, 'SELECT t.id, t.parent_id, t.done, t.text FROM tasks t JOIN notes n ON n.id = t.note_id WHERE n.deleted_at IS NULL');
+    const byId = new Map(all.map(t => [t.id, t]));
+    const kids = new Map();
+    for (const t of all) {
+      if (t.parent_id != null && byId.has(t.parent_id)) {
+        if (!kids.has(t.parent_id)) kids.set(t.parent_id, []);
+        kids.get(t.parent_id).push(t);
+      }
+    }
+    const memo = new Map();
+    const count = id => {
+      if (memo.has(id)) return memo.get(id);
+      let total = 0, done = 0;
+      for (const k of kids.get(id) || []) {
+        const c = count(k.id);
+        total += 1 + c.total;
+        done += (k.done ? 1 : 0) + c.done;
+      }
+      const r = { total, done };
+      memo.set(id, r);
+      return r;
+    };
+    for (const r of rows) {
+      const c = count(r.id);
+      r.sub_total = c.total;
+      r.sub_done = c.done;
+      r.sub_open = c.total - c.done;
+      const parent = r.parent_id != null ? byId.get(r.parent_id) : null;
+      r.parent_text = parent ? parent.text : null;
+    }
+    return rows;
   }
 
   function countTasks(db, nowIso) {
@@ -530,8 +593,7 @@
     return selectOne(db, 'SELECT * FROM tasks WHERE id = ?', [id]);
   }
 
-  /** Hakt eine Aufgabe im Notiztext ab bzw. öffnet sie wieder. Gibt die Notiz-ID zurück. */
-  function setTaskDone(db, taskId, done) {
+  function locateTask(db, taskId) {
     const T = global.NoNotesTasks;
     const row = getTask(db, taskId);
     if (!row) throw new Error('Aufgabe nicht gefunden.');
@@ -539,8 +601,43 @@
     if (!note) throw new Error('Notiz nicht gefunden.');
     const t = T.locate(note.body, row);
     if (!t) throw new Error('Die Aufgabe steht nicht mehr so im Text.');
-    updateNote(db, note.id, note.title, T.setDone(note.body, t.lineIndex, done));
+    return { note, line: t.lineIndex };
+  }
+
+  /** Meldung für eine Aufgabe, die wegen offener Unteraufgaben nicht abgeschlossen werden kann. */
+  function subtasksOpenError(n) {
+    const err = new Error(global.NoNotesTasks.openMessage(n));
+    err.code = 'SUBTASKS_OPEN';
+    err.open = n;
+    return err;
+  }
+
+  /** Hakt eine Aufgabe im Notiztext ab bzw. öffnet sie wieder. Gibt die Notiz-ID zurück.
+   *  Abhaken ist erst möglich, wenn alle Unteraufgaben erledigt sind (sonst Fehler mit code SUBTASKS_OPEN).
+   *  Öffnen einer Unteraufgabe öffnet erledigte übergeordnete Aufgaben mit. */
+  function setTaskDone(db, taskId, done) {
+    const T = global.NoNotesTasks;
+    const { note, line } = locateTask(db, taskId);
+    let body;
+    if (done) {
+      const open = T.openSubtasks(note.body, line);
+      if (open > 0) throw subtasksOpenError(open);
+      body = T.setDone(note.body, line, true);
+    } else {
+      body = T.reopen(note.body, line);
+    }
+    updateNote(db, note.id, note.title, body);
     return note.id;
+  }
+
+  /** Doppelklick auf eine Aufgabe: schliesst sie samt Unteraufgaben ab, sonst öffnet sie wieder.
+   *  Gibt { noteId, action: 'completed' | 'reopened' } zurück. */
+  function toggleTaskTree(db, taskId) {
+    const T = global.NoNotesTasks;
+    const { note, line } = locateTask(db, taskId);
+    const r = T.doubleClick(note.body, line);
+    updateNote(db, note.id, note.title, r.body);
+    return { noteId: note.id, action: r.action };
   }
 
   // ---------- Anhänge ----------
@@ -801,6 +898,7 @@
     countTasks,
     getTask,
     setTaskDone,
+    toggleTaskTree,
     addAttachment,
     listAttachments,
     getAttachment,

@@ -185,6 +185,22 @@ Dasselbe gilt für Fragen.
   und Tag-Filter. Der Reiter zeigt die Zahl der offenen Aufgaben, rot wenn etwas überfällig ist.
 - **Abhaken** geht an drei Orten: Kästchen in der Aufgabenliste, Kästchen in der Vorschau
   des Editors, oder direkt im Text. Alles schreibt in dieselbe Zeile der Notiz.
+- **Unteraufgaben:** Eine Aufgabe, die tiefer eingerückt direkt unter einer anderen steht,
+  gehört zu ihr (beliebig tief; `Tab` rückt ein). Eine Zeile ohne Kästchen auf gleicher oder
+  geringerer Einrückung beendet die Gruppe, Leerzeilen nicht.
+  - Eine Aufgabe lässt sich erst abhaken, wenn alle Unteraufgaben erledigt sind. Bis dahin
+    bleibt das Kästchen offen und die Statuszeile nennt die Zahl der offenen Unteraufgaben
+    (Aufgabenliste und Vorschau). Von Hand `[x]` im Text zu tippen lässt sich nicht verhindern;
+    die Liste zeigt die Aufgabe dann trotzdem als erledigt, mit dem Hinweis «Unteraufgaben offen».
+  - **Doppelklick auf den Aufgabentext** (Vorschau und Aufgabenliste) schliesst die Aufgabe und
+    alle Unteraufgaben ab. Ist schon alles erledigt, öffnet er die Aufgabe wieder.
+  - Eine Hauptaufgabe wieder zu öffnen lässt die Unteraufgaben erledigt. Eine Unteraufgabe
+    wieder zu öffnen öffnet erledigte Hauptaufgaben darüber mit.
+  - In der Aufgabenliste bleibt jede Unteraufgabe ein eigener Eintrag mit eigenem Termin. Die
+    Hauptaufgabe zeigt den Fortschritt (`2/3`), die Unteraufgabe «Teil von …». Bei Sortierung
+    nach Notiz stehen Unteraufgaben eingerückt unter der Hauptaufgabe. Die Vorschau zeigt den
+    Fortschritt als Abzeichen. Zähler, Mindmap-Marker und Kalenderexport behandeln jede Aufgabe
+    einzeln; die gedruckte Checkliste rückt Unteraufgaben ein.
 - Der Aufgabentext wird in der Liste und im Druck wie in der Vorschau formatiert: fett, Code,
   Links und `[[Verweise]]` funktionieren. Ein Klick auf einen Verweis öffnet die Notiz, ein Klick
   auf einen Link öffnet ihn im neuen Tab.
@@ -242,7 +258,7 @@ Dasselbe gilt für Fragen.
 | Oberfläche | `index.html`, `css/app.css`, `js/app.js` – reines HTML/CSS/JS, keine Frameworks, kein Build |
 | Mindmap | `js/mindmap.js`: eigenes Layout (links/rechts ausbalanciert), SVG, Zoom, Ziehen, Tastatur |
 | Fragen | `js/questions.js`: Parser für `?`/`!`-Zeilen; Index in der Tabelle `questions`, bei jeder Änderung abgeglichen |
-| Aufgaben | `js/tasks.js`: Parser für `- [ ]`-Zeilen mit `@Datum`; Index in der Tabelle `tasks`, gleiches Prinzip |
+| Aufgaben | `js/tasks.js`: Parser für `- [ ]`-Zeilen mit `@Datum`, Unteraufgaben über die Einrückung, Abschluss-Regeln als reine Textfunktionen; Index in der Tabelle `tasks`, gleiches Prinzip |
 | Termine | `js/dates.js`: gemeinsame Logik für `@TT.MM.JJJJ` bzw. `@JJJJ-MM-TT`, Dringlichkeit, Anzeige |
 | Markdown | `js/markdown.js`: eigener Renderer, escaped allen Text, erlaubt nur sichere Link-Schemata |
 | Toolleiste | `js/editing.js`: reine Textfunktionen (umschliessen, Zeilenpräfixe, Überschriften, Links), in Node prüfbar |
@@ -260,7 +276,7 @@ Language Mode zur Verfügung. Dort sind weder `HttpListener` noch der Zugriff au
 File System Access API alles mit, um direkt in die Datenbankdatei zu schreiben, und
 sql.js liefert SQLite als reines JavaScript.
 
-Schema (Version 8). Ältere Datenbanken werden beim Öffnen automatisch migriert.
+Schema (Version 9). Ältere Datenbanken werden beim Öffnen automatisch migriert.
 
 ```sql
 CREATE TABLE notes (
@@ -291,7 +307,9 @@ CREATE TABLE tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQ
 CREATE TABLE note_tags (note_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMARY KEY (note_id, tag_id));
 CREATE TABLE tasks (                -- Index über die "- [ ]"-Zeilen, aus dem Text abgeleitet
   id INTEGER PRIMARY KEY AUTOINCREMENT, note_id INTEGER NOT NULL, text TEXT NOT NULL, norm TEXT NOT NULL,
-  done INTEGER NOT NULL DEFAULT 0, due TEXT, line_no INTEGER NOT NULL, created_at TEXT NOT NULL, done_at TEXT
+  done INTEGER NOT NULL DEFAULT 0, due TEXT, line_no INTEGER NOT NULL, created_at TEXT NOT NULL, done_at TEXT,
+  parent_id INTEGER,                -- Hauptaufgabe (tasks.id) bei Unteraufgaben, sonst NULL
+  depth INTEGER NOT NULL DEFAULT 0  -- Anzahl übergeordneter Aufgaben
 );
 CREATE TABLE attachments (          -- Bilder, im Text als ![Name](att:ID) referenziert
   id INTEGER PRIMARY KEY AUTOINCREMENT, note_id INTEGER NOT NULL, name TEXT NOT NULL,
@@ -308,7 +326,7 @@ prüft Anlegen, Suchen, Speichern, Neuladen, Herunterladen, Importieren, Lösche
 Schreiben in die Datenbankdatei, die Mindmap-Bedienung, die Fragen, Markdown-Vorschau, Tags,
 Papierkorb, Suche, Umsortieren per Drag & Drop, Bild-Anhänge, den Export (Ordner und ZIP),
 das Drucken (mit gestubbtem `window.print`), Toolleiste und Hilfe, Aufgaben, Termine mit Uhrzeit,
-den Kalenderexport, das synchrone Scrollen der geteilten Ansicht und die Migration alter Datenbanken:
+den Kalenderexport, das synchrone Scrollen der geteilten Ansicht, Unteraufgaben und die Migration alter Datenbanken:
 
 ```bash
 npm install
