@@ -7,7 +7,7 @@
   <meta name="description" content="NoNotes – lokale Notizen als Mindmap, gespeichert in einer SQLite-Datei. Läuft ohne Server direkt im Browser.">
   <title>NoNotes</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Ctext x='16' y='22' font-family='system-ui,sans-serif' font-size='18' font-weight='700' fill='white' text-anchor='middle'%3EN%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="../../packages/ui/app.css">
+  <link rel="stylesheet" href="app.css">
 </head>
 <body data-ready="false" class="view-map">
 
@@ -338,6 +338,22 @@
     </form>
   </dialog>
 
+  <dialog id="conflictDialog" class="dialog dialog-wide conflict-dialog" aria-labelledby="conflictTitle">
+    <form method="dialog" id="conflictForm">
+      <h2 id="conflictTitle">Konflikt: Die Notiz wurde inzwischen geändert</h2>
+      <p class="dialog-lead" id="conflictLead"></p>
+      <div id="conflictText" class="history-text conflict-text" tabindex="0" aria-label="Unterschiede"></div>
+      <p class="hint" id="conflictLegend"></p>
+      <div class="row">
+        <button type="button" id="conflictMineBtn" class="primary">Meine Fassung behalten</button>
+        <button type="button" id="conflictTheirsBtn">Neue Fassung übernehmen</button>
+        <button type="button" id="conflictMarkersBtn">Beide untereinander mit Markierungen</button>
+        <button type="submit" value="later" class="ghost">Später entscheiden</button>
+      </div>
+      <p class="hint">Was sich zusammenführen liess, ist schon zusammengeführt; hier stehen nur die Stellen, die beide geändert haben. Bis zur Entscheidung wird diese Notiz nicht gespeichert, dein Text bleibt im Editor.</p>
+    </form>
+  </dialog>
+
   <dialog id="pluginsDialog" class="dialog dialog-wide" aria-labelledby="pluginsTitle">
     <form method="dialog" id="pluginsForm">
       <h2 id="pluginsTitle">Erweiterungen</h2>
@@ -469,21 +485,7 @@
       </section>
 
       <section class="help-panel" data-panel="storage" hidden>
-        <h3>Wo liegen meine Notizen?</h3>
-        <p>NoNotes läuft ohne Server. Alles, was du schreibst, liegt in einer <strong>SQLite-Datenbank</strong>, die die App im Browser führt und zweistufig sichert:</p>
-        <ol class="help-list">
-          <li><strong>Browser-Speicher (automatisch).</strong> Nach jeder Änderung schreibt die App die ganze Datenbank nach kurzer Pause in den Speicher dieses Browserprofils (IndexedDB). Du kannst sofort loslegen. Achtung: «Browserdaten löschen» entfernt auch diese Kopie, und ein anderer Browser oder ein anderes Profil sieht sie nicht.</li>
-          <li><strong>Datenbankdatei (empfohlen).</strong> Mit <em>Datenbank → Datenbankdatei anlegen…</em> legst du eine <code>.sqlite</code>-Datei an einem Ort deiner Wahl an. Ab dann schreibt die App jede Änderung zusätzlich direkt in diese Datei. Sie ist eine normale SQLite-Datei, die du sichern, kopieren, mitnehmen oder mit anderen Werkzeugen öffnen kannst.</li>
-        </ol>
-        <h3>Nach dem Neustart</h3>
-        <p>Die App merkt sich die Datei. Der Browser verlangt für lokal geöffnete Seiten bei jedem Start eine Freigabe, deshalb erscheint oben eine Leiste mit <strong>Mit Datei verbinden</strong>. Bis zum Klick arbeitest du auf der Browser-Kopie; beim Verbinden gleicht die App beide Stände ab und fragt nur nach, wenn die Datei zwischenzeitlich von aussen verändert wurde.</p>
-        <h3>Kopien, Umzug, Export</h3>
-        <ul class="help-list">
-          <li><strong>Kopie herunterladen</strong> legt den aktuellen Stand als <code>NoNotes-Datum.sqlite</code> in den Download-Ordner, <strong>Aus Datei importieren…</strong> liest eine solche Kopie wieder ein.</li>
-          <li><strong>Datenbankdatei öffnen…</strong> wechselt zu einer anderen NoNotes-Datei, zum Beispiel auf einem anderen Rechner oder USB-Stick.</li>
-          <li><strong>Als Markdown exportieren…</strong> schreibt alle Notizen samt Mindmap-Bild und Bildern als lesbare Textdateien, unabhängig von NoNotes.</li>
-          <li>Bilder in Notizen liegen in derselben Datenbank. Grosse Bilder werden beim Einfügen verkleinert, damit die Datei handlich bleibt.</li>
-        </ul>
+        <!-- EDITION-HELP-STORAGE -->
         <h3>Termine in den Kalender (.ics)</h3>
         <p>Unter <em>Datenbank → Termine in Kalender exportieren…</em> schreibt NoNotes alle Aufgaben und Fragen mit Termin als Kalenderdatei. Jeder Termin hat eine feste Kennung (UID) und eine mit jedem Export steigende Versionsnummer. Erledigte und beantwortete Einträge werden als abgesagt mitgeschrieben, ebenso früher exportierte Einträge, die es nicht mehr gibt (umformuliert, gelöscht oder Notiz im Papierkorb). Mit Uhrzeit dauert ein Termin 30 Minuten, ohne Uhrzeit ist er ganztägig. Erinnerung 30 Minuten vorher bzw. am Vortag um 9 Uhr.</p>
         <ul class="help-list">
@@ -529,30 +531,27 @@
   <input type="file" id="attachInput" accept="image/*" multiple hidden>
 
   <script src="version.js"></script>
-  <script src="../../vendor/sql.js/sql-asm.js"></script>
-  <script src="../../packages/core/i18n.js"></script>
+  <script src="../core/i18n.js"></script>
   <!-- LANG-PACKS -->
-  <script src="../../packages/core/palette.js"></script>
-  <script src="../../packages/core/plugins.js"></script>
-  <script src="../../packages/core/history.js"></script>
-  <script src="../../packages/core/dates.js"></script>
-  <script src="../../packages/core/questions.js"></script>
-  <script src="../../packages/core/tasks.js"></script>
-  <script src="../../packages/core/markdown.js"></script>
-  <script src="../../packages/core/editing.js"></script>
-  <script src="../../packages/core/backend.js"></script>
-  <script src="../../packages/data/db.js"></script>
-  <script src="../../packages/store-local/storage.js"></script>
-  <script src="../../packages/store-local/backend-local.js"></script>
-  <script src="../../packages/store-local/local-shell.js"></script>
-  <script src="edition.js"></script>
-  <script src="../../packages/ui/mindmap.js"></script>
-  <script src="../../packages/core/zip.js"></script>
-  <script src="../../packages/core/export.js"></script>
-  <script src="../../packages/core/ical.js"></script>
-  <script src="../../packages/ui/print.js"></script>
-  <script src="../../packages/ui/scrollsync.js"></script>
+  <script src="../core/palette.js"></script>
+  <script src="../core/plugins.js"></script>
+  <script src="../core/history.js"></script>
+  <script src="../core/merge.js"></script>
+  <script src="../core/dates.js"></script>
+  <script src="../core/questions.js"></script>
+  <script src="../core/tasks.js"></script>
+  <script src="../core/markdown.js"></script>
+  <script src="../core/editing.js"></script>
+  <script src="../core/backend.js"></script>
+  <script src="../store-local/storage.js"></script>
+  <!-- EDITION-SCRIPTS -->
+  <script src="mindmap.js"></script>
+  <script src="../core/zip.js"></script>
+  <script src="../core/export.js"></script>
+  <script src="../core/ical.js"></script>
+  <script src="print.js"></script>
+  <script src="scrollsync.js"></script>
   <script src="../../plugins/plugins.js"></script>
-  <script src="../../packages/ui/app.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>

@@ -34,17 +34,33 @@ Die Argumente entsprechen den Funktionen in `packages/data/db.js` ohne das erste
 | --- | --- |
 | Einstellungen | `getMeta(key)`, `setMeta(key, value)`, `getMapTitle()`, `setMapTitle(title)` |
 | Notizen lesen | `getTree({ archive })`, `getNote(id)`, `getPath(id)`, `listNotes(query, { tag, scope })`, `countNotes({ archived })`, `findNoteByTitle(title)`, `titleIndex()` |
-| Notizen ändern | `createNote(parentId)`, `updateNote(id, title, body)`, `renameNote(id, title)`, `setParent(id, parentId)`, `moveNote(id, anchorId, 'before' \| 'after')`, `moveAmongSiblings(id, direction)`, `setCollapsed(id, collapsed)`, `setAllCollapsed(collapsed)` |
+| Notizen ändern | `createNote(parentId)`, `updateNote(id, title, body, options)`, `renameNote(id, title, options)`, `setParent(id, parentId)`, `moveNote(id, anchorId, 'before' \| 'after')`, `moveAmongSiblings(id, direction)`, `setCollapsed(id, collapsed)`, `setAllCollapsed(collapsed)` |
 | Papierkorb | `deleteNote(id)`, `restoreNote(id)`, `purgeNote(id)`, `emptyTrash()`, `countTrash()` |
 | Archiv | `isArchived(id)`, `archiveCount(ids)`, `archiveNote(id)`, `unarchiveNote(id)`, `countArchived()` |
 | Tags | `getTags(noteId)`, `setTags(noteId, names)`, `listAllTags()` |
 | Fragen | `listQuestions(options)`, `countQuestions(nowIso)`, `getQuestion(id)`, `answerQuestion(id, text)` |
 | Aufgaben | `listTasks(options)`, `countTasks(nowIso)`, `getTask(id)`, `setTaskDone(id, done)`, `toggleTaskTree(id)` |
-| Verlauf | `listHistory(noteId)`, `getHistoryVersion(noteId, historyId)`, `restoreHistoryVersion(noteId, historyId)`, `clearHistory(noteId)` |
+| Verlauf | `listHistory(noteId)`, `getHistoryVersion(noteId, historyId)`, `restoreHistoryVersion(noteId, historyId, options)`, `clearHistory(noteId)` |
 | Bilder | `addAttachment(noteId, { name, mime, bytes })`, `listAttachments(noteId)`, `getAttachment(id)`, `deleteAttachment(id)`, `allAttachments({ archived })`, `attachmentsSize()` |
 
 Reine Hilfsfunktionen ohne Datenzugriff liegen direkt auf `NoNotesBackend`: `normalizeTag(name)`,
-`errorText(e)`, `missing(backend)`, `titleMap(pairs)`.
+`errorText(e)`, `missing(backend)`, `titleMap(pairs)`, `registerErrors({ KENNUNG: N_('Text') })` (eigene Fehlerkennungen anmelden).
+
+## Gleichzeitiges Schreiben und Autor
+
+`updateNote(id, title, body, options)` liefert den neuen Zeitstempel (`updated_at`) der Notiz. Mit `options.baseUpdatedAt` sagt der Aufrufer,
+auf welchem Stand sein Text aufbaut. Hat die Notiz inzwischen einen anderen Zeitstempel, wirft die Methode `NOTE_CONFLICT` und schreibt nichts;
+die Oberfläche liest dann die neuere Fassung (`getNote`), führt zeilenweise zusammen (`NoNotesMerge.merge3`) oder legt die strittigen Stellen
+der Person vor. Ohne `baseUpdatedAt` gilt wie bisher der letzte Stand.
+
+`options.author` (auch bei `renameNote` und `restoreHistoryVersion`) ist der Anzeigename des Schreibenden. Er landet in `notes.updated_by` und
+in der Fassung im Verlauf (`listHistory` und `getHistoryVersion` liefern `author`). Wechselt der Autor, beginnt eine neue Fassung, auch ohne Pause.
+Ein Backend, das Namen kennt, setzt `author` selbst und vertraut nicht auf den Aufrufer. Die lokale Ausprägung setzt keinen Autor.
+
+## Fähigkeiten
+
+Ein Backend darf ein Feld `capabilities` tragen. Heute ausgewertet: `files: false` blendet die Menüeinträge für Datenbankdateien aus
+(Standard: `true`, wie das lokale Backend).
 
 ## Fehlerkennungen
 
@@ -60,6 +76,7 @@ Reine Hilfsfunktionen ohne Datenzugriff liegen direkt auf `NoNotesBackend`: `nor
 | `HISTORY_NOT_FOUND` | Die Fassung gibt es nicht mehr (zum Beispiel gekürzt) |
 | `ARCHIVED_READONLY` | Archivierte Notizen sind schreibgeschützt (Wiederherstellen einer Fassung) |
 | `SUBTASKS_OPEN` | Eine Aufgabe lässt sich nicht abschliessen, solange Unteraufgaben offen sind (`open` = Anzahl) |
+| `NOTE_CONFLICT` | Die Notiz wurde inzwischen von jemand anderem geändert (`params.updated_at` = aktueller Stand); nichts wurde geschrieben |
 
 Neue Kennungen gehören mit ihrem deutschen Text in `NoNotesBackend.ERRORS` (mit `N_()` markiert),
 damit sie übersetzt werden.

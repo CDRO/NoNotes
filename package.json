@@ -1,12 +1,12 @@
 {
   "name": "nonotes",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "description": "Lokale Notiz-App: läuft als Datei im Browser, speichert in SQLite (sql.js). Kein Server, keine Installation.",
   "license": "UNLICENSED",
   "scripts": {
     "build": "node tools/build.cjs",
-    "test": "node tools/build.cjs && node tools/i18n.cjs lint && node tools/i18n.cjs check && node test/backend.cjs && node test/smoke.cjs && node test/palette.cjs && node test/plugins.cjs && node test/history.cjs && node test/i18n.cjs",
+    "test": "node tools/build.cjs && node tools/i18n.cjs lint && node tools/i18n.cjs check && node test/merge.cjs && node test/db.cjs && node test/build.cjs && node test/backend.cjs && node test/smoke.cjs && node test/palette.cjs && node test/plugins.cjs && node test/history.cjs && node test/conflict.cjs && node test/external.cjs && node test/i18n.cjs",
     "i18n": "node tools/i18n.cjs"
   },
   "devDependencies": {

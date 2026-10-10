@@ -14,7 +14,7 @@ packages/
                 (Speichern, Datei, Browser-Speicher), Persistenz (IndexedDB, File System Access)
   ui/           Oberfläche: app.js (Ablauf), Mindmap, Druck, Scroll-Sync, app.css
 editions/
-  local/        index.html, edition.js, Startskripte: setzt die lokale Version zusammen
+  local/        edition.json (Skripte, Hilfeabschnitt, Dateien), edition.js, Startskripte: setzt die lokale Version zusammen
 lang/           Sprachpakete (de.js ist die Quellsprache)
 plugins/        Liste der Erweiterungen (plugins.js), Anleitung und Beispiele; ausgeliefert neben der App
 tools/          build.cjs (Bau), i18n.cjs (Sprachwerkzeug)
@@ -73,7 +73,9 @@ index.html  css/  js/  lang/  vendor/  plugins/  docs/  start.ps1  start.cmd  RE
 
 Es wird nichts übersetzt oder gebündelt. Der Build schreibt `js/version.js`, bindet alle Dateien aus `lang/` ein
 und prüft, dass jeder Verweis auf eine Datei im Ergebnis trifft. Das ZIP enthält genau diesen Ordner.
-Entwickeln geht auch ohne Build: `editions/local/index.html` direkt im Browser öffnen (dann nur Deutsch).
+Die Seite ist eine Vorlage (`packages/ui/index.html`) mit zwei Platzhaltern für die Ausprägung (`<!-- EDITION-SCRIPTS -->`, `<!-- EDITION-HELP-STORAGE -->`).
+Eine Ausprägung ist ein Ordner mit `edition.json`; er darf auch ausserhalb dieses Projekts liegen (`node tools/build.cjs --edition-dir <Ordner>`),
+zum Beispiel in einem anderen Projekt, das NoNotes einbindet. Zum Entwickeln bauen und `dist/NoNotes/index.html` öffnen.
 
 ## Tests
 

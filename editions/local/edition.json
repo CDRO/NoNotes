@@ -1,0 +1,14 @@
+{
+  "id": "local",
+  "description": "Alles im Browser, eine SQLite-Datei auf dem eigenen Gerät.",
+  "scripts": [
+    "@core/vendor/sql.js/sql-asm.js",
+    "@core/packages/data/db.js",
+    "@core/packages/store-local/backend-local.js",
+    "@core/packages/store-local/local-shell.js",
+    "edition.js"
+  ],
+  "helpStorage": "help-storage.html",
+  "files": ["start.ps1", "start.cmd"],
+  "include": ["README.md", "NOTICE", "docs", "plugins", "vendor/sql.js"]
+}

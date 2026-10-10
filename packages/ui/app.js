@@ -19,6 +19,7 @@
   const T = window.NoNotesTasks;
   const Dates = window.NoNotesDates;
   const Cal = window.NoNotesCalendar;
+  const Merge = window.NoNotesMerge;
   const joinParts = (...parts) => parts.filter(Boolean).join(', ');
   const errorText = e => Backend.errorText(e);
   const THEME_KEY = 'nonotes.theme';   // Zwischenspeicher des Designs; massgebend ist meta 'theme' der Datenbank
@@ -89,6 +90,8 @@
     historyBtn: $('#historyBtn'), historyDialog: $('#historyDialog'), historyLead: $('#historyLead'), historyList: $('#historyList'),
     historyMeta: $('#historyMeta'), historyText: $('#historyText'), historyDiff: $('#historyDiff'), historyLegend: $('#historyLegend'),
     historyRestoreBtn: $('#historyRestoreBtn'), historyClearBtn: $('#historyClearBtn'),
+    conflictDialog: $('#conflictDialog'), conflictLead: $('#conflictLead'), conflictText: $('#conflictText'), conflictLegend: $('#conflictLegend'),
+    conflictMineBtn: $('#conflictMineBtn'), conflictTheirsBtn: $('#conflictTheirsBtn'), conflictMarkersBtn: $('#conflictMarkersBtn'),
     viewTasksBtn: $('#viewTasksBtn'), tasksView: $('#tasksView'), tFilter: $('#tFilter'), tSort: $('#tSort'),
     tSearch: $('#tSearch'), tTagFilter: $('#tTagFilter'), tPrintBtn: $('#tPrintBtn'), tCount: $('#tCount'),
     tList: $('#tList'), tEmpty: $('#tEmpty'),
@@ -143,6 +146,7 @@
     scrollSync: null,         // synchrones Scrollen in der geteilten Ansicht
     showArchive: false,       // archivierte Notizen in der Mindmap zeigen
     renderTokens: {},         // je Ansicht der neueste Zeichenauftrag; ältere, spät fertige werden verworfen
+    sync: null,               // Stand der offenen Notiz (siehe newSync): worauf der Editor aufbaut, Speichervorgang, Konflikt
     searchTimer: null,
   };
 
@@ -220,6 +224,8 @@
   function onDatabaseReplaced() {
     for (const id of [...state.attachmentUrls.keys()]) forgetAttachmentUrl(id);
     state.currentId = null;
+    state.sync = newSync(null);
+    hideBanner();
     state.query = '';
     state.mapSelection = null;
     state.mapDirty = true;
@@ -257,6 +263,9 @@
     await Plugins.loadAll(); // Skripte aus dem Ordner plugins/, bevor etwas gezeichnet wird (Designs)
     try { applyTheme(localStorage.getItem(THEME_KEY) || ''); } catch (e) { /* ohne Zwischenspeicher: Standard */ }
     B = await shell.start();
+    if (B.capabilities && B.capabilities.files === false) { // Backend ohne Dateien auf dem Gerät: kein Datei-Menü
+      for (const b of [el.createFileBtn, el.openFileBtn, el.disconnectBtn]) { b.hidden = true; b.disabled = true; }
+    }
     await loadAccent();
     await loadTheme();
     if (Store.fileAccess.supported) state.calHandle = await Store.browserStore.loadHandleKey(CAL_HANDLE_KEY);
@@ -495,13 +504,8 @@
   async function renderAll() {
     const replaced = state.accentStale;
     if (state.accentStale) { await loadAccent(); await loadTheme(); }
-    await renderTagFilters();
-    await renderList();
-    await renderEditor();
-    await renderCount();
-    await renderMap();
-    await renderQuestionCounts();
-    await renderTaskCounts();
+    // Unabhängige Abfragen gleichzeitig stellen: bei einem Backend über das Netz zählt jede Laufzeit nur einmal.
+    await Promise.all([renderTagFilters(), renderList(), renderEditor(), renderCount(), renderMap(), renderQuestionCounts(), renderTaskCounts()]);
     if (state.view === 'questions') await renderQuestions();
     if (state.view === 'tasks') await renderTasks();
     if (replaced) emitPlugins('database:replaced', {});
@@ -648,6 +652,7 @@
       const info = document.createElement('span');
       info.className = 'h-info';
       const parts = [item.title.trim() || t('Ohne Titel')];
+      if (item.author) parts.push(t('von {name}', { name: item.author }));
       if (item.titleChanged) parts.push(t('Titel danach geändert'));
       if (item.added || item.removed) parts.push(t('danach +{plus} −{minus} Zeichen', { plus: item.added, minus: item.removed }));
       info.textContent = parts.join(' · ');
@@ -670,7 +675,9 @@
     h.version = version;
     h.currentBody = note ? note.body : '';
     for (const b of el.historyList.querySelectorAll('button')) b.setAttribute('aria-current', String(b.dataset.id === String(id)));
-    el.historyMeta.textContent = t('Fassung vom {datum}: «{titel}»', { datum: fmtDate(version.at), titel: version.title.trim() || t('Ohne Titel') });
+    el.historyMeta.textContent = version.author
+      ? t('Fassung vom {datum} von {name}: «{titel}»', { datum: fmtDate(version.at), name: version.author, titel: version.title.trim() || t('Ohne Titel') })
+      : t('Fassung vom {datum}: «{titel}»', { datum: fmtDate(version.at), titel: version.title.trim() || t('Ohne Titel') });
     el.historyRestoreBtn.disabled = !!h.locked;
     el.historyRestoreBtn.title = h.locked ? t('Archivierte Notizen sind schreibgeschützt. Erst zurückholen.') : '';
     renderHistoryText();
@@ -1188,19 +1195,18 @@
     if (!isLatest()) return;
     if (!note) {
       state.currentId = null;
+      state.sync = newSync(null);
       el.editorPane.hidden = true;
       el.editorEmpty.hidden = false;
       return;
     }
     el.editorEmpty.hidden = true;
     el.editorPane.hidden = false;
-    // Während des Tippens nicht überschreiben, sonst springt der Cursor.
-    if (document.activeElement !== el.title) el.title.value = note.title;
-    if (document.activeElement !== el.body) el.body.value = note.body;
-    renderMeta(note.created_at, note.updated_at);
+    syncEditorWith(note);
+    renderMeta(note.created_at, note.updated_at, note.updated_by);
     await renderCrumbs(note);
     if (!isLatest()) return;
-    renderNoteQuestions(note.body);
+    renderNoteQuestions(el.body.value);
     const tags = await B.getTags(note.id);
     if (!isLatest()) return;
     renderTags(tags);
@@ -1546,8 +1552,10 @@
       : tn('{n} offene Frage von {gesamt}', '{n} offene Fragen von {gesamt}', open, { gesamt: parsed.length });
   }
 
-  function renderMeta(createdAt, updatedAt) {
-    el.noteMeta.textContent = t('Erstellt {erstellt} · Geändert {geaendert}', { erstellt: fmtDate(createdAt), geaendert: fmtDate(updatedAt) });
+  function renderMeta(createdAt, updatedAt, by) {
+    el.noteMeta.textContent = by
+      ? t('Erstellt {erstellt} · Geändert {geaendert} von {name}', { erstellt: fmtDate(createdAt), geaendert: fmtDate(updatedAt), name: by })
+      : t('Erstellt {erstellt} · Geändert {geaendert}', { erstellt: fmtDate(createdAt), geaendert: fmtDate(updatedAt) });
   }
 
   async function renderCrumbs(note) {
@@ -1607,6 +1615,7 @@
   // ---------- Notiz-Aktionen ----------
 
   async function selectNote(id, focusEditor) {
+    if (state.currentId !== id && !(await ensureSaved())) return;
     state.currentId = id;
     setActiveItem(id);
     await renderEditor();
@@ -1617,6 +1626,7 @@
   /** Öffnet eine Notiz im Editor: in der Liste rechts, aus der Mindmap als Vollbild. */
   async function openNote(id, opts) {
     hideContextMenu();
+    if (state.currentId !== id && !(await ensureSaved())) return;
     state.currentId = id;
     if (state.view !== 'list') {
       if (state.view === 'map') state.mapSelection = id;
@@ -1644,6 +1654,8 @@
 
   async function closeEditor() {
     if (!isEditorOpen()) { showEditorView(false); return; }
+    if (!(await ensureSaved())) return;
+    state.sync = newSync(null);
     document.body.classList.remove('editor-open');
     if (state.currentId != null) emitPlugins('note:close', { id: state.currentId });
     if (state.view === 'map') {
@@ -1706,17 +1718,279 @@
     el.title.focus();
   }
 
+  // ---------- Speichern der offenen Notiz, Konflikte ----------
+  // Jede Notiz im Editor baut auf einem Stand auf (sync.base: Titel, Text und Zeitstempel, wie der Server sie zuletzt hatte).
+  // Gespeichert wird immer mit diesem Stand: Hat inzwischen jemand anders gespeichert, meldet das Backend NOTE_CONFLICT. Dann
+  // wird zeilenweise zusammengeführt (Merge.merge3); was sich nicht zusammenführen lässt, entscheidet die Person im Dialog.
+  // Mehrere Eingaben kurz hintereinander teilen sich einen Speichervorgang (der letzte Text zählt).
+
+  const SAVE_RETRY_MS = 4000;
+  const MAX_MERGE_ROUNDS = 5;
+
+  function newSync(note) {
+    return {
+      id: note ? note.id : null,
+      createdAt: note ? note.created_at : null,
+      base: note ? { title: note.title, body: note.body, updatedAt: note.updated_at } : null,
+      saving: null,        // laufender Speichervorgang (Promise)
+      again: false,        // während des Speicherns kam Neues dazu
+      conflict: null,      // ungelöster Konflikt: { theirs, mt, mb }
+      rounds: 0,
+      retryTimer: null,
+    };
+  }
+  state.sync = newSync(null);
+
+  const meName = () => (shell && shell.userName) || null;
+
+  /** Setzt den Inhalt eines Felds; ein Cursor im Feld wandert mit (Zeile wird im neuen Text wiedergefunden). */
+  function setFieldKeepingCaret(field, value) {
+    if (field.value === value) return;
+    const focused = document.activeElement === field;
+    const old = field.value;
+    const start = field.selectionStart || 0;
+    const end = field.selectionEnd || 0;
+    const scroll = field.scrollTop;
+    field.value = value;
+    if (focused) field.setSelectionRange(Merge.mapCaret(old, value, start), Merge.mapCaret(old, value, end));
+    field.scrollTop = scroll;
+  }
+
+  function noteUnsaved() {
+    const sync = state.sync;
+    return !!sync.base && state.currentId === sync.id && (el.title.value !== sync.base.title || el.body.value !== sync.base.body);
+  }
+
+  /** Eingabe im Editor: sofort anzeigen, was sich aus dem Text ergibt, dann sichern. */
   async function onEdit() {
     if (state.currentId == null) return;
-    const ts = await B.updateNote(state.currentId, el.title.value, el.body.value);
-    renderMeta((await B.getNote(state.currentId)).created_at, ts);
-    await updateListItem(state.currentId, el.title.value, el.body.value, ts);
     renderNoteQuestions(el.body.value);
-    await renderQuestionCounts();
-    await renderTaskCounts();
     schedulePreview();
     markEdited();
-    scheduleSavedEvent(state.currentId);
+    await saveNote();
+  }
+
+  /** Sichert die offene Notiz. Mehrere Aufrufe teilen sich einen Vorgang; die Antwort kommt, wenn alles gesichert ist. */
+  function saveNote() {
+    const sync = state.sync;
+    if (sync.id == null || sync.conflict) return Promise.resolve();
+    sync.again = true;
+    if (!sync.saving) {
+      sync.saving = (async () => {
+        try {
+          while (sync.again && !sync.conflict) {
+            sync.again = false;
+            await saveNoteOnce(sync);
+          }
+        } finally {
+          sync.saving = null;
+        }
+      })();
+    }
+    return sync.saving;
+  }
+
+  async function saveNoteOnce(sync) {
+    if (state.currentId !== sync.id) return; // inzwischen eine andere Notiz: beim Wechsel wurde gesichert
+    const title = el.title.value;
+    const body = el.body.value;
+    if (title === sync.base.title && body === sync.base.body) return;
+    let ts;
+    try {
+      ts = await B.updateNote(sync.id, title, body, { baseUpdatedAt: sync.base.updatedAt });
+    } catch (e) {
+      if (e && e.code === 'NOTE_CONFLICT') { await onNoteConflict(sync, title, body); return; }
+      setStatus(errorText(e), 'error');
+      scheduleSaveRetry(sync);
+      return;
+    }
+    clearTimeout(sync.retryTimer);
+    sync.base = { title, body, updatedAt: ts };
+    sync.rounds = 0;
+    renderMeta(sync.createdAt, ts, meName());
+    await updateListItem(sync.id, title, body, ts);
+    await renderQuestionCounts();
+    await renderTaskCounts();
+    scheduleSavedEvent(sync.id);
+  }
+
+  /** Ein Speichern ist fehlgeschlagen (zum Beispiel keine Verbindung): später noch einmal, der Text bleibt im Editor. */
+  function scheduleSaveRetry(sync) {
+    clearTimeout(sync.retryTimer);
+    sync.retryTimer = setTimeout(() => { if (state.sync === sync) saveNote(); }, SAVE_RETRY_MS);
+  }
+
+  /** Bevor eine andere Notiz geöffnet oder der Editor geschlossen wird: alles sichern. false = bitte nicht wechseln. */
+  async function ensureSaved() {
+    const sync = state.sync;
+    if (sync.id == null) return true;
+    await saveNote();
+    if (sync.conflict) { openConflictDialog(); return false; }
+    if (noteUnsaved()) {
+      return confirm(t('Die letzten Änderungen an dieser Notiz konnten nicht gespeichert werden. Trotzdem wechseln? Sie gehen dann verloren.'));
+    }
+    return true;
+  }
+
+  /** Eine Änderung von aussen ist da (Neuzeichnen, Wiederverbinden): in den Editor übernehmen oder zusammenführen. */
+  function syncEditorWith(note) {
+    const sync = state.sync;
+    if (sync.id !== note.id) { // eine andere Notiz: Felder setzen, neuen Stand merken
+      el.title.value = note.title;
+      el.body.value = note.body;
+      state.sync = newSync(note);
+      return;
+    }
+    // Nur Neueres zählt: ein verspätet eingetroffener älterer Stand darf nichts überschreiben.
+    if (!sync.base || !(note.updated_at > sync.base.updatedAt)) return;
+    if (sync.saving || sync.conflict) return; // der eigene Speichervorgang meldet einen Konflikt selbst
+    const mineTitle = el.title.value;
+    const mineBody = el.body.value;
+    if (mineTitle === sync.base.title && mineBody === sync.base.body) { // nichts Eigenes im Weg: Neues übernehmen
+      setFieldKeepingCaret(el.title, note.title);
+      setFieldKeepingCaret(el.body, note.body);
+      sync.base = { title: note.title, body: note.body, updatedAt: note.updated_at };
+      return;
+    }
+    mergeWithTheirs(sync, note, mineTitle, mineBody);
+  }
+
+  /** Eigene, noch nicht gesicherte Änderungen treffen auf eine neuere Fassung. */
+  function mergeWithTheirs(sync, theirs, mineTitle, mineBody) {
+    const mt = Merge.merge3(sync.base.title, mineTitle, theirs.title);
+    const mb = Merge.merge3(sync.base.body, mineBody, theirs.body);
+    if (mt.clean && mb.clean) { applyMerged(sync, theirs, mt.text, mb.text, true); return; }
+    sync.conflict = { theirs, mt, mb };
+    openConflictDialog();
+  }
+
+  /** Setzt den zusammengeführten Text in den Editor, macht die neuere Fassung zur Grundlage und sichert das Ergebnis. */
+  function applyMerged(sync, theirs, title, body, announce) {
+    setFieldKeepingCaret(el.title, title);
+    setFieldKeepingCaret(el.body, body);
+    sync.base = { title: theirs.title, body: theirs.body, updatedAt: theirs.updated_at };
+    renderNoteQuestions(el.body.value);
+    schedulePreview();
+    renderMeta(sync.createdAt, theirs.updated_at, theirs.updated_by);
+    if (announce) {
+      hint(theirs.updated_by
+        ? t('Änderungen von {name} wurden mit deinen zusammengeführt', { name: theirs.updated_by })
+        : t('Änderungen von jemand anderem wurden mit deinen zusammengeführt'));
+    }
+    if (title !== theirs.title || body !== theirs.body) {
+      sync.rounds++;
+      if (sync.rounds > MAX_MERGE_ROUNDS) {
+        setStatus(t('Zu viele gleichzeitige Änderungen. Es wird gleich erneut versucht.'), 'error');
+        scheduleSaveRetry(sync);
+      } else {
+        sync.again = true;
+        if (!sync.saving) saveNote();
+      }
+    }
+  }
+
+  /** Beim Speichern hat sich gezeigt, dass jemand anders die Notiz geändert hat. */
+  async function onNoteConflict(sync, mineTitle, mineBody) {
+    const theirs = await B.getNote(sync.id);
+    if (!theirs || theirs.deleted_at) {
+      setStatus(t('Die Notiz wurde inzwischen gelöscht. Dein Text bleibt im Editor.'), 'error');
+      return;
+    }
+    mergeWithTheirs(sync, theirs, mineTitle, mineBody);
+  }
+
+  // ---------- Konfliktdialog ----------
+
+  function openConflictDialog() {
+    const c = state.sync.conflict;
+    if (!c) return;
+    hideBanner();
+    renderConflict(c);
+    if (typeof el.conflictDialog.showModal === 'function') { if (!el.conflictDialog.open) el.conflictDialog.showModal(); }
+    else el.conflictDialog.setAttribute('open', '');
+  }
+
+  function closeConflictDialog() {
+    if (el.conflictDialog.open) el.conflictDialog.close();
+  }
+
+  /** Zeigt die strittigen Stellen: Kontext, dann «Meine Fassung» und «Neue Fassung» untereinander. */
+  function renderConflict(c) {
+    const who = c.theirs.updated_by;
+    const name = c.theirs.title.trim() || t('Ohne Titel');
+    el.conflictLead.textContent = who
+      ? t('«{titel}» wurde von {name} geändert, während du daran gearbeitet hast. Beide haben dieselbe Stelle verschieden geändert:', { titel: name, name: who })
+      : t('«{titel}» wurde von jemand anderem geändert, während du daran gearbeitet hast. Beide haben dieselbe Stelle verschieden geändert:', { titel: name });
+    el.conflictLegend.textContent = t('Grün: deine Fassung. Blau: die neue Fassung der anderen. Die Stellen davor und danach sind schon zusammengeführt.');
+    const frag = document.createDocumentFragment();
+    const line = (cls, text) => {
+      const div = document.createElement('div');
+      div.className = 'hl ' + cls;
+      div.textContent = text === '' ? ' ' : text;
+      frag.appendChild(div);
+    };
+    const head = text => {
+      const div = document.createElement('div');
+      div.className = 'cf-head';
+      div.textContent = text;
+      frag.appendChild(div);
+    };
+    const gap = () => {
+      const div = document.createElement('div');
+      div.className = 'cf-gap';
+      div.textContent = '…';
+      frag.appendChild(div);
+    };
+    let n = 0;
+    const show = (parts, isTitle) => {
+      parts.forEach((part, i) => {
+        if (part.type === 'same') {
+          const lines = part.lines;
+          const prevConflict = i > 0 && parts[i - 1].type === 'conflict';
+          const nextConflict = i < parts.length - 1 && parts[i + 1].type === 'conflict';
+          if (!prevConflict && !nextConflict) return;
+          const before = prevConflict ? lines.slice(0, 2) : [];
+          const after = nextConflict ? lines.slice(Math.max(before.length, lines.length - 2)) : [];
+          before.forEach(l => line('same', l));
+          if (before.length + after.length < lines.length) gap();
+          after.forEach(l => line('same', l));
+        } else {
+          n++;
+          head(isTitle ? t('Titel: strittige Stelle {nummer}', { nummer: n }) : t('Text: strittige Stelle {nummer}', { nummer: n }));
+          part.mine.forEach(l => line('cf-mine', l));
+          if (!part.mine.length) line('cf-mine', t('(nichts)'));
+          part.theirs.forEach(l => line('cf-theirs', l));
+          if (!part.theirs.length) line('cf-theirs', t('(nichts)'));
+        }
+      });
+    };
+    if (!c.mt.clean) show(c.mt.parts, true);
+    if (!c.mb.clean) show(c.mb.parts, false);
+    el.conflictText.replaceChildren(frag);
+  }
+
+  /** Entscheidung der Person: 'mine' | 'theirs' | 'markers'. Gilt für die strittigen Stellen; der Rest ist schon zusammengeführt. */
+  async function resolveConflict(choice) {
+    const sync = state.sync;
+    const c = sync.conflict;
+    if (!c) return;
+    const labels = { mine: t('Meine Fassung'), theirs: t('Neue Fassung') };
+    const title = Merge.resolve(c.mt.parts, choice === 'markers' ? 'mine' : choice, labels); // ein Titel hat nur eine Zeile: keine Markierungen
+    const body = Merge.resolve(c.mb.parts, choice, labels);
+    sync.conflict = null;
+    closeConflictDialog();
+    hideBanner();
+    applyMerged(sync, c.theirs, title, body, false);
+    await saveNote();
+    hint(choice === 'theirs' ? t('Neue Fassung übernommen') : choice === 'markers' ? t('Beide Fassungen mit Markierungen gespeichert') : t('Deine Fassung behalten'));
+  }
+
+  /** «Später entscheiden»: der Text bleibt im Editor, gespeichert wird erst nach der Entscheidung. */
+  function postponeConflict() {
+    if (!state.sync.conflict) return;
+    showBanner(t('Diese Notiz wurde von jemand anderem geändert. Gespeichert wird erst nach deiner Entscheidung.'), [
+      { label: t('Konflikt anzeigen'), primary: true, onClick: openConflictDialog },
+    ]);
   }
 
   /** Markiert die Zeile(n) unter dem Cursor als Frage ("?") oder Antwort ("!") bzw. hebt es auf. */
@@ -2215,7 +2489,7 @@
   }
 
   function anyDialogOpen() {
-    return [el.exportDialog, el.printDialog, el.qaPrintDialog, el.taskPrintDialog, el.helpDialog, el.calDialog, el.pluginsDialog, el.historyDialog].some(d => d.open);
+    return [el.exportDialog, el.printDialog, el.qaPrintDialog, el.taskPrintDialog, el.helpDialog, el.calDialog, el.pluginsDialog, el.historyDialog, el.conflictDialog].some(d => d.open);
   }
 
   function onQuestionSearchInput() {
@@ -2730,6 +3004,19 @@
     el.historyDiff.addEventListener('change', () => renderHistoryText());
     el.historyRestoreBtn.addEventListener('click', restoreHistoryVersion);
     el.historyClearBtn.addEventListener('click', clearHistory);
+    el.conflictMineBtn.addEventListener('click', () => resolveConflict('mine'));
+    el.conflictTheirsBtn.addEventListener('click', () => resolveConflict('theirs'));
+    el.conflictMarkersBtn.addEventListener('click', () => resolveConflict('markers'));
+    el.conflictDialog.addEventListener('close', postponeConflict); // Esc oder «Später entscheiden»
+    window.addEventListener('beforeunload', e => { if (noteUnsaved() || state.sync.conflict) { e.preventDefault(); e.returnValue = ''; } });
+    // Nicht abgewartete Aufrufe, deren Backend scheitert (keine Verbindung ...): als Meldung zeigen statt als Programmfehler
+    window.addEventListener('unhandledrejection', e => {
+      const r = e.reason;
+      if (r && typeof r.code === 'string' && Object.prototype.hasOwnProperty.call(Backend.ERRORS, r.code)) {
+        e.preventDefault();
+        setStatus(errorText(r), 'error');
+      }
+    });
     el.backBtn.addEventListener('click', closeEditor);
     el.title.addEventListener('input', onEdit);
     el.body.addEventListener('input', onEdit);

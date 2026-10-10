@@ -10,7 +10,9 @@
    - Rückgabewerte sind einfache Daten (Zahlen, Texte, Listen, Objekte, Uint8Array für Bilder), keine
      Funktionen und keine Map. titleIndex liefert Paare [Titel in Kleinschreibung, id].
    - Die Methoden entsprechen den Funktionen in packages/data/db.js ohne das erste Argument (die Datenbank).
-     Beschreibung der einzelnen Methoden: docs/BACKEND.md. */
+     Beschreibung der einzelnen Methoden: docs/BACKEND.md.
+   - Ein Backend darf ein Feld capabilities tragen, zum Beispiel { files: false } für ein Backend ohne Dateien auf dem Gerät.
+     Fehlt es oder fehlt ein Eintrag, gilt der Standard der lokalen Ausprägung (files: true). */
 (function (global) {
   'use strict';
 
@@ -76,7 +78,17 @@
     QUESTION_STALE: N_('Die Frage steht nicht mehr so im Text.'),
     HISTORY_NOT_FOUND: N_('Diese Fassung gibt es nicht mehr.'),
     ARCHIVED_READONLY: N_('Archivierte Notizen sind schreibgeschützt. Erst zurückholen.'),
+    NOTE_CONFLICT: N_('Die Notiz wurde inzwischen von jemand anderem geändert.'),
   };
+
+  /** Ergänzt Fehlerkennungen und ihre (deutschen) Meldungen, zum Beispiel für ein Backend über das Netz. Bestehende Kennungen
+   *  lassen sich nicht überschreiben. Die Texte mit N_() markieren, damit sie übersetzt werden. */
+  function registerErrors(more) {
+    for (const [code, text] of Object.entries(more || {})) {
+      if (Object.prototype.hasOwnProperty.call(ERRORS, code)) throw new Error(`Fehlerkennung ${code} gibt es schon`); // i18n-ignore
+      ERRORS[code] = text;
+    }
+  }
 
   /** Text eines Fehlers in der Sprache der Oberfläche. Kennt ein Backend die Kennung nicht, bleibt seine Meldung. */
   function errorText(e) {
@@ -92,5 +104,5 @@
     return String(name || '').replace(/\s+/g, ' ').replace(/^#/, '').trim();
   }
 
-  global.NoNotesBackend = { METHODS, MUTATING, ERRORS, missing, titleMap, normalizeTag, errorText };
+  global.NoNotesBackend = { METHODS, MUTATING, ERRORS, registerErrors, missing, titleMap, normalizeTag, errorText };
 })(window);

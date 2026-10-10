@@ -18,6 +18,8 @@ sind Dateien im Ordner `lang/` und lassen sich mit jedem Release ergänzen. Ausg
   `data-i18n-skip` lässt ein Element aus, `data-i18n` erzwingt ein Element, dessen Text nur aus
   Tastenkürzeln besteht (zum Beispiel `<kbd data-i18n>Entf</kbd>`).
 - Texte in Tabellen und Konstanten werden mit `N_('…')` markiert und später mit `t()` übersetzt.
+- Eine Ausprägung oder Erweiterung ergänzt ein Sprachpaket mit `NoNotesI18n.extend('en', { 'Deutscher Text': 'English text' })`, auch wenn das
+  Paket erst danach geladen wird. Texte, die das Paket schon hat, werden nicht ersetzt.
 - Die Sprache wählt der Benutzer im Menü **Datenbank** (nur sichtbar, wenn mehr als eine Sprache da ist).
   Gemerkt wird sie im Browser (`localStorage`, Schlüssel `nonotes.lang`); sonst gilt die Browsersprache,
   sonst Deutsch. Ein Wechsel lädt die Seite neu.

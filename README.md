@@ -55,6 +55,10 @@ die sich bei lokal geöffneten Seiten nicht dauerhaft wegklicken lässt. Bis zur
 arbeitest du auf der Browser-Kopie; beim Verbinden gleicht die App beide Stände ab und
 fragt nur nach, wenn die Datei zwischenzeitlich von aussen verändert wurde.
 
+**Änderungen von aussen.** Beschreibt ein anderes Programm oder ein anderer Tab dieselbe Datei (oder den Browser-Speicher), meldet die App
+das beim Zurückkehren in den Tab und kurz vor dem Speichern. Ohne ungesicherte Änderungen lädt sie den neuen Stand still. Sonst fragt sie:
+**Datei laden** verwirft die eigenen Änderungen, **Meine Fassung behalten** überschreibt die Datei. Bis zur Entscheidung wird nichts geschrieben.
+
 Weitere Funktionen im Menü **Datenbank**:
 
 - **Datenbankdatei öffnen…**: eine bestehende `.sqlite` von NoNotes laden und ab dann darin arbeiten.
@@ -337,7 +341,8 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | Druck | `packages/ui/print.js` baut das Druckdokument in `#printArea`; `@media print` blendet den Rest der App aus |
 | Scroll-Sync | `packages/ui/scrollsync.js`: Spiegel des Textes misst Zeilenhöhen, Vorschau-Blöcke tragen `data-line`, lineare Interpolation dazwischen |
 | Erweiterungen | `packages/core/plugins.js` (Verzeichnis, Lader, Ereignisse) und die Anbindung in `packages/ui/app.js`; Ordner `plugins/` mit Liste, Anleitung und Beispielen (siehe [docs/PLUGINS.md](docs/PLUGINS.md)) |
-| Verlauf | `packages/core/history.js` (Patches und Zeilenvergleich als reine Textfunktionen); Fassungen und Aufbewahrung in `packages/data/db.js`, Dialog in `packages/ui/app.js` |
+| Verlauf | `packages/core/history.js` (Patches und Zeilenvergleich als reine Textfunktionen); Fassungen und Aufbewahrung in `packages/data/db.js`, Dialog in `packages/ui/app.js`; wer eine Fassung geschrieben hat, steht in `author` (nur wenn ein Backend einen Namen liefert) |
+| Zusammenführen | `packages/core/merge.js`: zeilenweiser Dreiwege-Vergleich (Myers) für gleichzeitige Änderungen derselben Notiz; Speichern mit `baseUpdatedAt`, Konfliktdialog in `packages/ui/app.js` |
 | Hauptfarbe | `packages/core/palette.js`: acht Farben mit heller und dunkler Fassung (Fläche, Schrift auf der Fläche, Farbe als Schrift, Tönung); die Seite setzt sie über CSS-Variablen, Export und Druck über `toSvgString` |
 | Kalender | `packages/core/ical.js`: iCalendar nach RFC 5545 mit festen UIDs, SEQUENCE, VALARM, Zeilenfaltung; gemerkte Kennungen in `meta` |
 | Backend | `packages/core/backend.js`: asynchrone Schnittstelle für alle Datenzugriffe; `packages/store-local/backend-local.js` setzt sie über SQLite um |
@@ -405,8 +410,9 @@ CREATE TABLE attachments (          -- Bilder, im Text als ![Name](att:ID) refer
 
 ## Entwicklung
 
-Für die Entwicklung genügt es, `editions/local/index.html` im Browser zu öffnen und nach einer
-Änderung neu zu laden (dann nur Deutsch, ohne Versionsnummer). Die auslieferbare Form entsteht mit
+Die Seite ist eine Vorlage (`packages/ui/index.html`); die Ausprägung (`editions/local/`) liefert ihre Skripte und einen Hilfeabschnitt
+über `edition.json`. Zum Entwickeln bauen und `dist/NoNotes/index.html` im Browser öffnen, nach einer Änderung neu bauen und neu laden. Die
+auslieferbare Form entsteht mit
 
 ```bash
 npm run build        # schreibt dist/NoNotes
@@ -418,7 +424,7 @@ in die Datenbankdatei, die Mindmap-Bedienung, Fragen, Markdown-Vorschau, Tags, P
 Umsortieren per Drag & Drop, Bild-Anhänge, den Export (Ordner und ZIP), das Drucken (mit gestubbtem
 `window.print`), Toolleiste und Hilfe, Aufgaben, Termine mit Uhrzeit, den Kalenderexport, das synchrone
 Scrollen der geteilten Ansicht, Unteraufgaben, das Archiv und die Migration alter Datenbanken. Dazu
-kommen der Vertrag der Backend-Schnittstelle (`test/backend.cjs`), die Hauptfarbe (`test/palette.cjs`), die Erweiterungs-Schnittstelle (`test/plugins.cjs`), den Verlauf (`test/history.cjs`) und die
+kommen der Vertrag der Backend-Schnittstelle (`test/backend.cjs`), die Datenbankschicht mit Schema 12, Konflikterkennung und Autor (`test/db.cjs`), das Zusammenführen (`test/merge.cjs`), gleichzeitiges Arbeiten und Änderungen von aussen (`test/conflict.cjs`, `test/external.cjs`), der Build fremder Ausprägungen (`test/build.cjs`), die Hauptfarbe (`test/palette.cjs`), die Erweiterungs-Schnittstelle (`test/plugins.cjs`), den Verlauf (`test/history.cjs`) und die
 Sprachprüfungen (`test/i18n.cjs`, `tools/i18n.cjs lint` und `check`):
 
 ```bash

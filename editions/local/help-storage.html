@@ -1,0 +1,17 @@
+        <h3>Wo liegen meine Notizen?</h3>
+        <p>NoNotes läuft ohne Server. Alles, was du schreibst, liegt in einer <strong>SQLite-Datenbank</strong>, die die App im Browser führt und zweistufig sichert:</p>
+        <ol class="help-list">
+          <li><strong>Browser-Speicher (automatisch).</strong> Nach jeder Änderung schreibt die App die ganze Datenbank nach kurzer Pause in den Speicher dieses Browserprofils (IndexedDB). Du kannst sofort loslegen. Achtung: «Browserdaten löschen» entfernt auch diese Kopie, und ein anderer Browser oder ein anderes Profil sieht sie nicht.</li>
+          <li><strong>Datenbankdatei (empfohlen).</strong> Mit <em>Datenbank → Datenbankdatei anlegen…</em> legst du eine <code>.sqlite</code>-Datei an einem Ort deiner Wahl an. Ab dann schreibt die App jede Änderung zusätzlich direkt in diese Datei. Sie ist eine normale SQLite-Datei, die du sichern, kopieren, mitnehmen oder mit anderen Werkzeugen öffnen kannst.</li>
+        </ol>
+        <h3>Nach dem Neustart</h3>
+        <p>Die App merkt sich die Datei. Der Browser verlangt für lokal geöffnete Seiten bei jedem Start eine Freigabe, deshalb erscheint oben eine Leiste mit <strong>Mit Datei verbinden</strong>. Bis zum Klick arbeitest du auf der Browser-Kopie; beim Verbinden gleicht die App beide Stände ab und fragt nur nach, wenn die Datei zwischenzeitlich von aussen verändert wurde.</p>
+        <h3>Wenn die Datei sich von aussen ändert</h3>
+        <p>Beschreibt ein anderes Programm oder ein anderer Tab die verbundene Datei (oder den Browser-Speicher), merkt die App es beim Zurückkehren in den Tab und kurz vor dem Speichern. Hast du nichts Ungesichertes, wird der neue Stand still geladen. Sonst fragt die App: <strong>Datei laden</strong> verwirft deine ungesicherten Änderungen, <strong>Meine Fassung behalten</strong> überschreibt die Datei. Bis zur Entscheidung wird nichts geschrieben.</p>
+        <h3>Kopien, Umzug, Export</h3>
+        <ul class="help-list">
+          <li><strong>Kopie herunterladen</strong> legt den aktuellen Stand als <code>NoNotes-Datum.sqlite</code> in den Download-Ordner, <strong>Aus Datei importieren…</strong> liest eine solche Kopie wieder ein.</li>
+          <li><strong>Datenbankdatei öffnen…</strong> wechselt zu einer anderen NoNotes-Datei, zum Beispiel auf einem anderen Rechner oder USB-Stick.</li>
+          <li><strong>Als Markdown exportieren…</strong> schreibt alle Notizen samt Mindmap-Bild und Bildern als lesbare Textdateien, unabhängig von NoNotes.</li>
+          <li>Bilder in Notizen liegen in derselben Datenbank. Grosse Bilder werden beim Einfügen verkleinert, damit die Datei handlich bleibt.</li>
+        </ul>

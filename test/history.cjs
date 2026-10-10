@@ -329,14 +329,14 @@ async function main() {
     await page.selectOption('#listScope', 'live');
     step('Dialog: archivierte Notiz nur ansehen');
 
-    // Datei: Tabelle note_history, Schema 11; Migration einer Schema-10-Datei
+    // Datei: Tabelle note_history, Schema 12; Migration einer Schema-10-Datei
     await page.waitForFunction(SAVED);
     await page.click('#menuBtn');
     const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#downloadBtn')]);
     const dlPath = path.join(tmp, 'verlauf.sqlite');
     await dl.saveAs(dlPath);
     const db = new SQL.Database(new Uint8Array(fs.readFileSync(dlPath)));
-    assert.equal(db.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], '11');
+    assert.equal(db.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], '12');
     assert.ok(db.exec('SELECT count(*) FROM note_history')[0].values[0][0] >= 1);
     db.run('DROP TABLE note_history; UPDATE meta SET value = \'10\' WHERE key = \'schema_version\';');
     const v10 = path.join(tmp, 'schema10.sqlite');
@@ -356,12 +356,12 @@ async function main() {
     const migPath = path.join(tmp, 'migriert.sqlite');
     await dl2.saveAs(migPath);
     const db2 = new SQL.Database(new Uint8Array(fs.readFileSync(migPath)));
-    assert.equal(db2.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], '11');
+    assert.equal(db2.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], '12');
     assert.equal(db2.exec("SELECT count(*) FROM sqlite_master WHERE name='note_history'")[0].values[0][0], 1);
     db2.close();
     assert.deepEqual(errors2, []);
     await ctx2.close();
-    step('Datei: Schema 11 mit Tabelle note_history, Migration einer Schema-10-Datei');
+    step('Datei: Schema 12 mit Tabelle note_history, Migration einer Schema-10-Datei');
 
     assert.deepEqual(errors, [], 'keine Fehler im Browser');
     await ctx.close();

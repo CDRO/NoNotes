@@ -8,7 +8,7 @@
     const C = global.NoNotesBackend;
     const getDb = options.getDb;
     const onChange = options.onChange;
-    const backend = { id: 'local' };
+    const backend = { id: 'local', capabilities: { files: true } };
     for (const name of C.METHODS) {
       const fn = DB[name];
       if (typeof fn !== 'function') throw new Error(`Backend-Methode ohne Entsprechung in db.js: ${name}`); // i18n-ignore

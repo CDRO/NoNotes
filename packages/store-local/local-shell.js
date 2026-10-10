@@ -31,6 +31,15 @@
 
   function isAbort(e) { return e && e.name === 'AbortError'; }
 
+  /** Kurzer Prüfwert eines Inhalts (FNV-1a), nur um zu merken, ob sich eine Datei verändert hat. Kein Schutz gegen Absicht. */
+  function hashBytes(bytes) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < bytes.length; i++) { h ^= bytes[i]; h = Math.imul(h, 0x01000193); }
+    return (h >>> 0).toString(16) + ':' + bytes.length;
+  }
+
+  const FILE_CHECK_MS = 30000; // wie oft nachgesehen wird, ob die Datei von aussen geändert wurde
+
   function create(host) {
     const el = host.el;
     const s = {
@@ -45,6 +54,11 @@
       filePermission: null,   // 'granted' | 'prompt' | 'denied' | null
       handleRemembered: false,
       mirrorAtStart: null,    // Browser-Kopie beim Start (für den Abgleich beim Verbinden)
+      fileHash: null,         // Prüfwert der Datei, wie wir sie zuletzt gelesen oder geschrieben haben
+      fileStamp: null,        // { size, modified } der Datei dabei: gleich geblieben = nichts zu prüfen
+      tabId: Math.random().toString(36).slice(2),
+      channel: null,          // Benachrichtigung zwischen Tabs desselben Browsers
+      external: null,         // 'file' | 'mirror': von aussen geändert, die Person hat noch nicht entschieden (Speichern ruht)
       editedSinceStart: false, // Inhalt könnte von der gemerkten Datei abweichen
       openedFromFile: false,
       storageKind: null,
@@ -84,6 +98,7 @@
               const bytes = await Store.fileAccess.read(handle);
               s.db = DB.open(s.SQL, bytes);
               s.openedFromFile = true;
+              await rememberFile(bytes);
             } catch (e) {
               console.warn('Datei nicht lesbar, verwende Browser-Kopie', e);
               s.filePermission = 'prompt';
@@ -135,15 +150,18 @@
       clearTimeout(s.saveTimer);
       if (s.saving) return; // läuft bereits; am Ende wird bei Bedarf nachgezogen
       if (s.editSeq === s.savedSeq) return;
+      if (s.external) return; // die Datei oder der Browser-Speicher wurde von aussen geändert: erst entscheiden lassen
 
       s.saving = true;
       const seq = s.editSeq;
       setStatus(t('Speichern…'), 'saving');
       let ok = true;
+      let foreign = null; // Inhalt der Datei, falls sie inzwischen von jemand anderem geändert wurde
       try {
         const bytes = DB.exportBytes(s.db);
         try {
           await Store.browserStore.saveDb(bytes);
+          if (s.channel) { try { s.channel.postMessage({ tab: s.tabId }); } catch (e) { /* egal */ } }
         } catch (e) {
           ok = false;
           console.warn('Browser-Speicher', e);
@@ -151,7 +169,14 @@
         }
         if (s.fileHandle && s.filePermission === 'granted') {
           try {
-            await Store.fileAccess.write(s.fileHandle, bytes);
+            // Kurz vor dem Schreiben noch einmal nachsehen: Wurde die Datei inzwischen von aussen geändert, nicht blind überschreiben.
+            foreign = s.overwrite ? null : await foreignFileBytes();
+            if (foreign) {
+              ok = false;
+            } else {
+              await Store.fileAccess.write(s.fileHandle, bytes);
+              await rememberFile(bytes);
+            }
           } catch (e) {
             ok = false;
             console.warn('Dateischreiben', e);
@@ -170,6 +195,11 @@
         s.saving = false;
         if (ok && s.editSeq !== seq) persistNow(); // zwischenzeitlich kam Neues
       }
+      if (foreign) {
+        s.pendingFileBytes = foreign;
+        setStatus(t('Ungespeicherte Änderungen'), 'dirty');
+        await onExternalChange('file');
+      }
     }
 
     // ---------- Datenbank austauschen ----------
@@ -178,6 +208,96 @@
       host.onDatabaseReplaced(); // zuerst: die Oberfläche gibt ihre Bezüge auf die alte Datenbank frei
       if (s.db) { try { s.db.close(); } catch (e) { /* egal */ } }
       s.db = newDb;
+    }
+
+    // ---------- Änderungen von aussen erkennen (nur melden, die Person entscheidet) ----------
+
+    /** Merkt sich den Stand der Datei, den wir gerade gelesen oder geschrieben haben. */
+    async function rememberFile(bytes) {
+      s.fileHash = hashBytes(bytes);
+      s.fileStamp = null;
+      try {
+        const f = await s.fileHandle.getFile();
+        s.fileStamp = { size: f.size, modified: f.lastModified };
+      } catch (e) { /* ohne Zeitstempel prüfen wir jedes Mal den Inhalt */ }
+    }
+
+    /** Hat jemand anders die verbundene Datei verändert? Dann ihr Inhalt, sonst null. Billig, solange Grösse und Zeitstempel gleich bleiben. */
+    async function foreignFileBytes() {
+      if (!s.fileHandle || s.filePermission !== 'granted' || s.fileHash == null) return null;
+      try {
+        const f = await s.fileHandle.getFile();
+        if (s.fileStamp && f.size === s.fileStamp.size && f.lastModified === s.fileStamp.modified) return null;
+        const bytes = new Uint8Array(await f.arrayBuffer());
+        if (hashBytes(bytes) === s.fileHash) { s.fileStamp = { size: f.size, modified: f.lastModified }; return null; } // nur der Zeitstempel, nicht der Inhalt
+        return bytes;
+      } catch (e) {
+        return null; // Datei gerade nicht lesbar: beim nächsten Mal wieder
+      }
+    }
+
+    async function checkFile() {
+      if (s.external || s.saving) return;
+      const bytes = await foreignFileBytes();
+      if (!bytes || s.saving || s.external) return;
+      s.pendingFileBytes = bytes;
+      await onExternalChange('file');
+    }
+
+    /** Der Browser-Speicher wurde von einem anderen Tab beschrieben. */
+    async function onOtherTab() {
+      if (s.external) return;
+      if (s.fileHandle && s.filePermission === 'granted') { await checkFile(); return; } // beide schreiben dieselbe Datei: dort nachsehen
+      await onExternalChange('mirror');
+    }
+
+    async function onExternalChange(kind) {
+      if (s.external) return;
+      if (!isDirty()) { await loadExternal(kind, true); return; } // nichts Ungesichertes zu verlieren: still übernehmen (die Statuszeile meldet es)
+      s.external = kind;
+      clearTimeout(s.saveTimer);
+      const name = s.fileHandle ? s.fileHandle.name : '';
+      host.showBanner(
+        kind === 'file'
+          ? t('Die Datei „{name}“ wurde ausserhalb dieser Sitzung geändert. Gespeichert wird erst nach deiner Entscheidung.', { name })
+          : t('In einem anderen Tab dieses Browsers wurde inzwischen gespeichert. Gespeichert wird erst nach deiner Entscheidung.'),
+        [
+          { label: kind === 'file' ? t('Datei laden (meine Änderungen verwerfen)') : t('Stand dort laden (meine Änderungen verwerfen)'), onClick: () => loadExternal(kind, false) },
+          { label: kind === 'file' ? t('Meine Fassung behalten (Datei überschreiben)') : t('Meine Fassung behalten (dort überschreiben)'), primary: true, onClick: keepMine },
+        ]
+      );
+    }
+
+    async function loadExternal(kind, silent) {
+      try {
+        let bytes;
+        if (kind === 'file') bytes = s.pendingFileBytes || await Store.fileAccess.read(s.fileHandle);
+        else bytes = await Store.browserStore.loadDb();
+        s.pendingFileBytes = null;
+        if (!bytes || !bytes.length) { s.external = null; host.hideBanner(); return; }
+        replaceDb(DB.open(s.SQL, bytes));
+        if (kind === 'file') await rememberFile(bytes);
+        s.external = null;
+        s.editedSinceStart = false;
+        s.savedSeq = s.editSeq;
+        host.hideBanner();
+        await host.renderAll();
+        setStatus(kind === 'file' ? t('Datei „{name}“ neu geladen', { name: s.fileHandle.name }) : t('Aus dem anderen Tab übernommen'), 'saved');
+        if (!silent && kind === 'file') { s.editSeq++; await persistNow(); } // Browser-Kopie nachführen
+      } catch (e) {
+        s.external = null;
+        console.error(e);
+        setStatus(t('Laden fehlgeschlagen: {fehler}', { fehler: errorText(e) }), 'error');
+      }
+    }
+
+    async function keepMine() {
+      s.external = null;
+      s.pendingFileBytes = null;
+      host.hideBanner();
+      s.overwrite = true; // die Person hat entschieden: diesmal nicht noch einmal nachsehen
+      s.editSeq++; // eigenen Stand schreiben, der Datei bzw. dem Browser-Speicher zum Trotz
+      try { await persistNow(); } finally { s.overwrite = false; }
     }
 
     // ---------- Datei-Anbindung ----------
@@ -232,6 +352,7 @@
 
         const fileBytes = await Store.fileAccess.read(handle);
         const fileUnchanged = s.mirrorAtStart && Store.bytesEqual(fileBytes, s.mirrorAtStart);
+        await rememberFile(fileBytes);
 
         if (!fileBytes.length) {
           // Leere Datei: aktueller Stand wird hineingeschrieben.
@@ -409,6 +530,16 @@
       });
       document.addEventListener('visibilitychange', () => { if (document.hidden) persistNow(); });
       global.addEventListener('pagehide', () => persistNow());
+      // Änderungen von aussen: beim Zurückkehren in den Tab, beim Fokus und in Abständen nachsehen; andere Tabs melden sich selbst
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) checkFile(); });
+      global.addEventListener('focus', () => checkFile());
+      setInterval(() => checkFile(), FILE_CHECK_MS);
+      if (typeof global.BroadcastChannel === 'function') {
+        try {
+          s.channel = new global.BroadcastChannel('nonotes-mirror');
+          s.channel.onmessage = e => { if (e.data && e.data.tab !== s.tabId) onOtherTab(); };
+        } catch (e) { s.channel = null; }
+      }
     }
 
     return {

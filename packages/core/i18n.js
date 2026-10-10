@@ -1,6 +1,7 @@
 /* NoNotes – Sprachen.
    Der deutsche Text im Quelltext ist der Schlüssel (wie bei gettext). Ohne Sprachpaket bleibt es deutsch.
-   Weitere Sprachen liegen als Dateien in lang/ und werden mit register() angemeldet.
+   Weitere Sprachen liegen als Dateien in lang/ und werden mit register() angemeldet; extend() ergänzt ein Paket um Texte
+   einer Ausprägung oder Erweiterung (auch wenn es erst später geladen wird).
 
    Im Code:   t('Neue Notiz')                               einfacher Text
               t('{n} Treffer in {ort}', { n: 3, ort: 'X' })  mit Platzhaltern
@@ -26,9 +27,25 @@
   const SKIP = new Set(['SCRIPT', 'STYLE', 'SVG', 'TEXTAREA', 'INPUT']);
   const ATTRS = ['title', 'placeholder', 'aria-label', 'alt'];
 
+  const extras = new Map(); // code → Map(Text → Übersetzung): Ergänzungen von Ausprägungen und Erweiterungen
+
   function register(code, name, messages, options) {
     const map = new Map(Object.entries(messages || {}));
+    // Ergänzungen, die vor dem Paket angemeldet wurden, kommen hinzu; Texte des Pakets selbst bleiben unverändert.
+    for (const [k, v] of extras.get(code) || []) if (!map.has(k)) map.set(k, v);
     packs.set(code, { code, name, locale: (options && options.locale) || code, messages: map, source: !!(options && options.source) });
+  }
+
+  /** Ergänzt die Texte einer Sprache um weitere (zum Beispiel einer Ausprägung oder Erweiterung), egal ob das Paket schon
+   *  geladen ist oder erst danach kommt. Texte, die das Paket schon hat, werden nicht ersetzt. */
+  function extend(code, messages) {
+    let more = extras.get(code);
+    if (!more) extras.set(code, more = new Map());
+    const pack = packs.get(code);
+    for (const [k, v] of Object.entries(messages || {})) {
+      more.set(k, v);
+      if (pack && !pack.messages.has(k)) pack.messages.set(k, v);
+    }
   }
 
   function available() {
@@ -185,5 +202,5 @@
 
   function collect(root) { return walk(root || global.document.body, false); }
 
-  global.NoNotesI18n = { SOURCE, PSEUDO, N_, register, available, init, setLanguage, language, locale, t, tn, translateDom, collect, format };
+  global.NoNotesI18n = { SOURCE, PSEUDO, N_, register, extend, available, init, setLanguage, language, locale, t, tn, translateDom, collect, format };
 })(window);

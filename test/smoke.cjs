@@ -24,7 +24,7 @@ const { chromium } = loadPlaywright();
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '11'; // muss zu js/db.js passen
+const SCHEMA_VERSION = '12'; // muss zu js/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 function watchErrors(page) {

@@ -3,7 +3,7 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 11;
+  const SCHEMA_VERSION = 12;
 
   // Verlauf pro Notiz: eine «Arbeitsphase» endet nach so langer Pause oder so langer Dauer; danach beginnt eine neue Fassung.
   // Aufbewahrt werden höchstens so viele Fassungen und Tage; meta history_max_versions / history_max_days / history_enabled ('0') ändern das.
@@ -82,7 +82,9 @@
         sort_order INTEGER NOT NULL DEFAULT 0,
         collapsed  INTEGER NOT NULL DEFAULT 0,
         deleted_at TEXT,
-        archived_at TEXT
+        archived_at TEXT,
+        -- updated_by: wer den heutigen Stand geschrieben hat (Anzeigename, leer = unbekannt)
+        updated_by TEXT
       );
       CREATE INDEX idx_notes_updated ON notes (updated_at DESC);
       CREATE INDEX idx_notes_parent ON notes (parent_id, sort_order);
@@ -154,7 +156,9 @@
         title      TEXT NOT NULL,       -- Titel dieser Fassung
         p          INTEGER NOT NULL,    -- gemeinsamer Anfang mit der nächstneueren Fassung
         s          INTEGER NOT NULL,    -- gemeinsames Ende
-        r          TEXT NOT NULL        -- der Teil dazwischen, wie er in dieser Fassung steht
+        r          TEXT NOT NULL,       -- der Teil dazwischen, wie er in dieser Fassung steht
+        -- author: wer diese Fassung geschrieben hat (Anzeigename, leer = unbekannt)
+        author     TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_history_note ON note_history (note_id, id);
     `);
@@ -292,6 +296,15 @@
       // Verlauf pro Notiz
       createHistoryTable(db);
       version = 11;
+    }
+
+    if (version < 12) {
+      // Wer hat geschrieben: Spalte an der Notiz (heutiger Stand) und im Verlauf (jede Fassung)
+      const noteCols = selectAll(db, 'PRAGMA table_info(notes)').map(c => c.name);
+      if (!noteCols.includes('updated_by')) db.exec('ALTER TABLE notes ADD COLUMN updated_by TEXT');
+      const histCols = selectAll(db, 'PRAGMA table_info(note_history)').map(c => c.name);
+      if (!histCols.includes('author')) db.exec('ALTER TABLE note_history ADD COLUMN author TEXT');
+      version = 12;
     }
 
     setMeta(db, 'schema_version', SCHEMA_VERSION);
@@ -438,21 +451,38 @@
     return scalar(db, 'SELECT last_insert_rowid()');
   }
 
+  /** Anzeigename des Schreibenden aus den Optionen (leer = unbekannt). */
+  function authorOf(options) {
+    const a = options && options.author;
+    return a == null || String(a).trim() === '' ? null : String(a).trim().slice(0, 80);
+  }
+
+  /** Speichert Titel und Text einer Notiz und gibt den neuen Zeitstempel (updated_at) zurück.
+   *  options.baseUpdatedAt: der Zeitstempel, auf dem der neue Text aufbaut. Hat die Notiz inzwischen einen anderen,
+   *  hat jemand anders sie geändert: Fehler NOTE_CONFLICT (params.updated_at nennt den aktuellen Stand), nichts wird geschrieben.
+   *  options.author: Anzeigename des Schreibenden; wechselt er, beginnt eine neue Fassung im Verlauf.
+   *  options.newVersion: erzwingt eine neue Fassung im Verlauf. */
   function updateNote(db, id, title, body, options) {
     const ts = nowIso();
-    const old = selectOne(db, 'SELECT title, body, updated_at, created_at FROM notes WHERE id = ?', [id]);
-    if (old) recordHistory(db, id, old, title, body, ts, !!(options && options.newVersion));
-    db.run('UPDATE notes SET title = ?, body = ?, updated_at = ? WHERE id = ?', [title, body, ts, id]);
+    const old = selectOne(db, 'SELECT title, body, updated_at, created_at, updated_by FROM notes WHERE id = ?', [id]);
+    const base = options && options.baseUpdatedAt;
+    if (old && base != null && old.updated_at !== base) {
+      throw fail('NOTE_CONFLICT', 'Die Notiz wurde inzwischen von jemand anderem geändert.', { updated_at: old.updated_at });
+    }
+    const author = authorOf(options);
+    if (old) recordHistory(db, id, old, title, body, ts, !!(options && options.newVersion) || (old.updated_by || null) !== author);
+    db.run('UPDATE notes SET title = ?, body = ?, updated_at = ?, updated_by = ? WHERE id = ?', [title, body, ts, author, id]);
     syncQuestions(db, id, body);
     syncTasks(db, id, body);
     return ts;
   }
 
-  function renameNote(db, id, title) {
+  function renameNote(db, id, title, options) {
     const ts = nowIso();
-    const old = selectOne(db, 'SELECT title, body, updated_at, created_at FROM notes WHERE id = ?', [id]);
-    if (old) recordHistory(db, id, old, title, old.body, ts, false);
-    db.run('UPDATE notes SET title = ?, updated_at = ? WHERE id = ?', [title, ts, id]);
+    const old = selectOne(db, 'SELECT title, body, updated_at, created_at, updated_by FROM notes WHERE id = ?', [id]);
+    const author = authorOf(options);
+    if (old) recordHistory(db, id, old, title, old.body, ts, (old.updated_by || null) !== author);
+    db.run('UPDATE notes SET title = ?, updated_at = ?, updated_by = ? WHERE id = ?', [title, ts, author, id]);
     return ts;
   }
 
@@ -493,8 +523,8 @@
     }
     if (!old.title && !old.body) return; // nichts zu sichern
     const patch = H.diff(newBody, old.body);
-    db.run('INSERT INTO note_history (note_id, at, started_at, open, title, p, s, r) VALUES (?, ?, ?, 1, ?, ?, ?, ?)',
-      [id, old.updated_at, ts, old.title, patch.p, patch.s, patch.r]);
+    db.run('INSERT INTO note_history (note_id, at, started_at, open, title, p, s, r, author) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)',
+      [id, old.updated_at, ts, old.title, patch.p, patch.s, patch.r, old.updated_by || null]);
     pruneHistory(db, id, ts);
   }
 
@@ -521,7 +551,7 @@
       const newLen = len - added + r.r.length;
       // eine Fassung ohne Unterschied zur neueren (Rückkehr zum Stand von vorher) zeigt nur dasselbe noch einmal
       if (added || r.r.length || titleChanged) {
-        out.push({ id: r.id, at: r.at, title: r.title, added, removed: r.r.length, titleChanged, length: newLen });
+        out.push({ id: r.id, at: r.at, title: r.title, author: r.author || null, added, removed: r.r.length, titleChanged, length: newLen });
       }
       len = newLen;
       newerTitle = r.title;
@@ -537,18 +567,18 @@
     let text = note.body;
     for (const r of selectAll(db, 'SELECT * FROM note_history WHERE note_id = ? ORDER BY id DESC', [noteId])) {
       text = H.apply(text, r);
-      if (r.id === historyId) return { id: r.id, at: r.at, title: r.title, body: text };
+      if (r.id === historyId) return { id: r.id, at: r.at, title: r.title, author: r.author || null, body: text };
     }
     throw fail('HISTORY_NOT_FOUND', 'Diese Fassung gibt es nicht mehr.');
   }
 
   /** Macht eine frühere Fassung wieder zum Text der Notiz. Der Stand davor bleibt als Fassung erhalten. */
-  function restoreHistoryVersion(db, noteId, historyId) {
+  function restoreHistoryVersion(db, noteId, historyId, options) {
     const note = selectOne(db, 'SELECT archived_at, deleted_at FROM notes WHERE id = ?', [noteId]);
     if (!note || note.deleted_at) throw fail('NOTE_NOT_FOUND', 'Notiz nicht gefunden.');
     if (note.archived_at) throw fail('ARCHIVED_READONLY', 'Archivierte Notizen sind schreibgeschützt. Erst zurückholen.');
     const v = getHistoryVersion(db, noteId, historyId);
-    const ts = updateNote(db, noteId, v.title, v.body, { newVersion: true });
+    const ts = updateNote(db, noteId, v.title, v.body, { newVersion: true, author: options && options.author });
     return { ts, title: v.title, body: v.body };
   }
 
