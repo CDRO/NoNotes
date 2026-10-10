@@ -3,7 +3,7 @@
 NoNotes besteht aus Paketen mit klaren Abhängigkeiten und aus **Ausprägungen**, die daraus eine
 auslieferbare Version zusammensetzen. Heute gibt es eine Ausprägung, die **lokale** (alles im Browser,
 eine SQLite-Datei auf dem eigenen Gerät). Die Struktur ist so angelegt, dass weitere Ausprägungen
-(selbst gehostet, Dienst) dieselbe Oberfläche und denselben Kern benutzen.
+dieselbe Oberfläche und denselben Kern benutzen können.
 
 ```
 packages/

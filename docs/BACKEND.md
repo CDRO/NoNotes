@@ -3,8 +3,8 @@
 Alles, was Oberfläche, Export, Kalender und Druck mit Daten tun, läuft über ein **Backend**
 (`NoNotesBackend`, `packages/core/backend.js`). Die Oberfläche kennt keine Datenbank. Heute
 gibt es ein Backend: das lokale (`packages/store-local/backend-local.js`, SQLite im Browser über
-`packages/data/db.js`). Ein selbst gehosteter Server oder ein Dienst bietet dieselben Methoden
-über das Netz an; die Oberfläche merkt den Unterschied nicht.
+`packages/data/db.js`). Ein Backend über das Netz kann dieselben Methoden anbieten; die Oberfläche merkt
+den Unterschied nicht.
 
 ## Regeln
 

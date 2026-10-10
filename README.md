@@ -10,6 +10,12 @@ Gebaut für Rechner mit stark eingeschränkten Rechten: Es wird kein Dienst gest
 kein Port geöffnet, kein Programm installiert. PowerShell ist optional und auch im
 Constrained Language Mode kein Hindernis, weil sie nur den Browser öffnet.
 
+## Nutzung
+
+NoNotes darf **kostenlos für den eigenen Gebrauch** genutzt werden. Alle Rechte bleiben vorbehalten: Eine Lizenz, die
+darüber hinausgeht (Weitergabe, Veränderung und Weitergabe, Verkauf, Betrieb als Dienst für andere), gibt es noch nicht.
+Der Quelltext ist einsehbar. Fehler und Wünsche gern als Issue; Pull Requests werden vorerst nicht angenommen.
+
 ## Voraussetzungen
 
 - Windows 10/11 (oder ein anderes System) mit einem Chromium-Browser, z. B. **Microsoft Edge**.
