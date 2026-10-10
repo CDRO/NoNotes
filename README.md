@@ -429,9 +429,10 @@ npm test
 
 ## Sprachen
 
-Ausgeliefert wird Deutsch. Weitere Sprachen sind Dateien in `lang/` und kommen mit einem Release dazu:
-`npm run i18n -- init en English en` legt ein Paket mit allen Texten an, `check` prüft es. Ist mehr als eine
-Sprache vorhanden, erscheint die Auswahl im Menü **Datenbank**. Einzelheiten in
+Ausgeliefert werden **Deutsch** und **English** (ab v1.4.0). Beim ersten Start gilt die Sprache des Browsers,
+sonst Deutsch; umgestellt wird im Menü **Datenbank → Sprache** (die Auswahl wird im Browser gemerkt, die Seite
+lädt neu, die Daten bleiben). Weitere Sprachen sind Dateien in `lang/` und kommen mit einem Release dazu:
+`npm run i18n -- init fr French fr-CH` legt ein Paket mit allen Texten an, `check` prüft es. Einzelheiten in
 [docs/LANGUAGES.md](docs/LANGUAGES.md).
 
 ## Release
