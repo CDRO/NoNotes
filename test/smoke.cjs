@@ -1854,6 +1854,9 @@ async function main() {
     const { page: p22, errors: errors22 } = await openApp(ctx22);
     const dialogs22 = [];
     p22.on('dialog', d => { dialogs22.push(d.message()); d.accept(); });
+    const consoleLog22 = [];
+    p22.on('console', m => { if (m.type() === 'warning' || m.type() === 'error') consoleLog22.push(m.type() + ': ' + m.text()); });
+    p22.on('pageerror', e => consoleLog22.push('pageerror: ' + e.message));
     const addChild22 = async (parentId, title) => {
       await p22.click(`.mm-node[data-id="${parentId}"]`);
       await p22.keyboard.press('Tab');
@@ -2064,7 +2067,14 @@ async function main() {
       await p22.waitForSelector('#exportDialog[open]');
       if (checked) await p22.check('#exportArchive'); else await p22.uncheck('#exportArchive');
       await p22.click('#exportDirBtn');
-      await p22.waitForFunction(() => /Export gespeichert/.test(document.querySelector('#status').textContent) && Object.keys(window.__exported).length > 0);
+      try {
+        // Abschluss am Zustand erkennen (Dialog zu, Knopf frei, Dateien da), nicht am Text der Statuszeile: den kann ein spätes «Gespeichert …» überschreiben
+        await p22.waitForFunction(() => !document.querySelector('#exportDialog').open && !document.querySelector('#exportDirBtn').disabled && Object.keys(window.__exported).length > 0);
+      } catch (e) {
+        // Befund mitliefern, damit ein seltener Ausfall in der CI erklärbar bleibt
+        const info = await p22.evaluate(() => ({ status: document.querySelector('#status').textContent, hint: document.querySelector('#exportHint').textContent, dialogOffen: document.querySelector('#exportDialog').open, dateien: Object.keys(window.__exported) }));
+        throw new Error('Export (Archiv ' + (checked ? 'mit' : 'ohne') + ') nicht abgeschlossen: ' + JSON.stringify(info) + '; Konsole: ' + JSON.stringify(consoleLog22.slice(-8)));
+      }
       return p22.evaluate(() => window.__exported);
     };
     const ex1 = await exportRun22(false);
