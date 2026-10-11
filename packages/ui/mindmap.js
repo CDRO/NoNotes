@@ -242,9 +242,12 @@
       const cx = dir > 0 ? child.x : child.x + child.w;
       const cy = child.y + child.h / 2;
       const mx = (px + cx) / 2;
+      // data-*: für Erweiterungen (Verbindung Eltern → Kind samt Endpunkten); 'root' ist die Wurzel
       svgEl('path', {
         class: 'mm-edge',
         d: `M ${px} ${py} C ${mx} ${py}, ${mx} ${cy}, ${cx} ${cy}`,
+        'data-from': String(parent.id), 'data-to': String(child.id),
+        'data-x1': px, 'data-y1': py, 'data-x2': cx, 'data-y2': cy,
       }, edgesG);
     }
 

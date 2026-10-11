@@ -179,7 +179,7 @@ async function main() {
     for (const k of ['id', 'api', 'appVersion', 'backend', 'language', 'on', 'openNote', 'refresh', 'ui', 'editor']) assert.ok(surface.top.includes(k), `ctx.${k}`);
     for (const k of ['setStatus', 'addMenuItem', 'addToolbarButton']) assert.ok(surface.ui.includes(k), `ctx.ui.${k}`);
     for (const k of ['noteId', 'isWritable', 'selection', 'replaceSelection']) assert.ok(surface.editor.includes(k), `ctx.editor.${k}`);
-    for (const k of ['ready', 'database:replaced', 'note:open', 'note:close', 'note:saved']) assert.ok(surface.events.includes(k), `Ereignis ${k}`);
+    for (const k of ['ready', 'database:replaced', 'note:open', 'note:close', 'note:saved', 'mindmap:rendered']) assert.ok(surface.events.includes(k), `Ereignis ${k}`);
     for (const k of ['bg', 'panel', 'text', 'muted', 'border', 'hover', 'danger', 'ok', 'warn', 'radius', 'shadow']) assert.ok(surface.themeVars.includes(k), `Theme-Variable ${k}`);
     assert.equal(surface.api, 1);
     assert.equal(surface.frozen, true, 'die Schnittstelle ist eingefroren');
@@ -213,6 +213,11 @@ async function main() {
     await page.waitForFunction(() => window.__events.some(e => e[0] === 'note:saved'));
     const evs = await page.evaluate(() => window.__events.map(e => e[0]));
     assert.ok(evs.includes('note:open'), 'note:open');
+    assert.ok(evs.includes('mindmap:rendered'), 'mindmap:rendered nach dem Zeichnen der Mindmap');
+    const edge = await page.evaluate(() => { const e = document.querySelector('path.mm-edge'); return e && { ...e.dataset }; });
+    assert.equal(edge.from, 'root', 'Linie: data-from');
+    assert.match(edge.to, /^\d+$/, 'Linie: data-to');
+    for (const k of ['x1', 'y1', 'x2', 'y2']) assert.ok(Number.isFinite(parseFloat(edge[k])), 'Linie: data-' + k);
     step('Toolleistenknopf: Editor-Schnittstelle liest die Markierung und ersetzt sie; Ereignisse note:open, note:saved');
 
     // Fehler im Ereignis einer anderen Erweiterung stört nicht

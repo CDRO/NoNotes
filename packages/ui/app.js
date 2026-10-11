@@ -992,6 +992,7 @@
     state.map.setSelected(state.mapSelection);
     state.map.setMulti(state.multi);
     state.mapDirty = false;
+    emitPlugins('mindmap:rendered', {});
   }
 
   // ---------- Mehrfachauswahl ----------
