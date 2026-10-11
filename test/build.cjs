@@ -24,13 +24,16 @@ try {
   fs.writeFileSync(path.join(ed, 'extra.txt'), 'extra');
   fs.mkdirSync(path.join(ed, 'daten'));
   fs.writeFileSync(path.join(ed, 'daten', 'x.json'), '{}');
+  fs.mkdirSync(path.join(ed, 'erw')); // Erweiterungen der Ausprägung, die nach plugins/fremd/ kommen
+  fs.writeFileSync(path.join(ed, 'erw', 'x.js'), "NoNotesPlugins.register({ id: 'fremd-x', name: 'Fremd X', version: '0.1', api: 1, description: 'Aus der Ausprägung', theme: { light: { bg: '#fff' } } });");
+  fs.writeFileSync(path.join(ed, 'erw', 'kaputt.js'), "document.body.appendChild(1); NoNotesPlugins.register({ id: 'kaputt', api: 1 });"); // läuft nur im Browser
   fs.writeFileSync(path.join(ed, 'edition.json'), JSON.stringify({
     id: 'fremd',
     scripts: ['a.js', '@core/packages/core/zip.js', 'sub/b.js'],
     helpStorage: 'hilfe.html',
     files: ['extra.txt'],
     include: ['NOTICE', 'plugins'],
-    copy: { daten: 'daten' },
+    copy: { daten: 'daten', 'plugins/fremd': 'erw' },
   }));
   const out = path.join(tmp, 'out');
 
@@ -52,6 +55,19 @@ try {
   assert.match(fs.readFileSync(path.join(out, 'js', 'version.js'), 'utf8'), /v9\.9\.9/);
   step('Fremde Ausprägung: Skripte in Reihenfolge, eigener Hilfeabschnitt, nur eingeschlossene Teile, Version gesetzt');
 
+  // Verzeichnis der Erweiterungen: alle .js im Zielordner plugins/, auch die der Ausprägung, mit ihren Angaben; die Liste bleibt
+  const listJs = fs.readFileSync(path.join(out, 'plugins', 'plugins.js'), 'utf8');
+  const cat = JSON.parse(/NoNotesPlugins\.catalog\((\[[\s\S]*?\])\);/.exec(listJs)[1]);
+  assert.deepEqual(cat.map(e => e.file), ['beispiele/datum-einfuegen.js', 'beispiele/sepia.js', 'fremd/kaputt.js', 'fremd/x.js']);
+  assert.deepEqual(cat.find(e => e.file === 'fremd/x.js'), { file: 'fremd/x.js', id: 'fremd-x', name: 'Fremd X', version: '0.1', api: 1, description: 'Aus der Ausprägung', theme: true });
+  assert.deepEqual(cat.find(e => e.file === 'fremd/kaputt.js'), { file: 'fremd/kaputt.js' }, 'eine Datei, die nur im Browser läuft, steht mit ihrem Namen drin');
+  assert.equal(cat.find(e => e.file === 'beispiele/sepia.js').theme, true);
+  assert.equal(cat.find(e => e.file === 'beispiele/datum-einfuegen.js').name, 'Datum einfügen');
+  assert.ok(listJs.indexOf('NoNotesPlugins.catalog(') < listJs.indexOf('NoNotesPlugins.list('), 'das Verzeichnis steht vor der Liste des Projekts');
+  assert.ok(fs.existsSync(path.join(out, 'plugins', 'fremd', 'x.js')));
+  assert.match(r.stdout, /4 Erweiterungen im Verzeichnis/);
+  step('Verzeichnis der Erweiterungen: aus dem Zielordner plugins/ erzeugt, mit Angaben aus register(), vor der Liste');
+
   // Fehler sind verständlich
   r = run(['--edition-dir', path.join(tmp, 'gibt-es-nicht'), '--out', out]);
   assert.notEqual(r.status, 0);
@@ -69,7 +85,9 @@ try {
   for (const f of ['index.html', 'start.ps1', 'start.cmd', 'README.md', 'NOTICE', 'js/db.js', 'js/local-shell.js', 'js/edition.js', 'vendor/sql.js/sql-asm.js', 'docs/BACKEND.md', 'plugins/plugins.js']) {
     assert.ok(fs.existsSync(path.join(lokal, f)), `lokal: ${f}`);
   }
-  step('Lokale Ausprägung: alle Dateien wie bisher');
+  const lokalCat = JSON.parse(/NoNotesPlugins\.catalog\((\[[\s\S]*?\])\);/.exec(fs.readFileSync(path.join(lokal, 'plugins', 'plugins.js'), 'utf8'))[1]);
+  assert.deepEqual(lokalCat.map(e => e.id), ['datum-einfuegen', 'sepia'], 'die Beispiele stehen im Verzeichnis der lokalen Ausprägung');
+  step('Lokale Ausprägung: alle Dateien wie bisher, Beispiele im Verzeichnis');
 
   console.log('\nBuild-Test bestanden.');
 } finally {

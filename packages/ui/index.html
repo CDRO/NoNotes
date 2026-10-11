@@ -357,9 +357,14 @@
   <dialog id="pluginsDialog" class="dialog dialog-wide" aria-labelledby="pluginsTitle">
     <form method="dialog" id="pluginsForm">
       <h2 id="pluginsTitle">Erweiterungen</h2>
-      <p class="dialog-lead">Erweiterungen sind Skriptdateien im Ordner <code>plugins/</code> neben der App. Welche geladen werden, steht in <code>plugins/plugins.js</code>. Die Datenbankdatei lädt nie Programmcode.</p>
-      <p class="dialog-lead plugin-warning"><strong>Achtung:</strong> Eine Erweiterung läuft mit allen Rechten dieser Seite. Sie kann alle Notizen lesen und ändern. Lade nur Erweiterungen, denen du vertraust.</p>
+      <p class="dialog-lead">Erweiterungen sind Skriptdateien im Ordner <code>plugins/</code> neben der App. Hier schaltest du sie ein und aus; die Wahl merkt sich dieser Browser. Die Datenbankdatei lädt nie Programmcode.</p>
+      <p class="dialog-lead plugin-warning"><strong>Achtung:</strong> Eine Erweiterung läuft mit allen Rechten dieser Seite. Sie kann alle Notizen lesen und ändern. Schalte nur Erweiterungen ein, denen du vertraust.</p>
       <div id="pluginList" class="plugin-list"></div>
+      <div class="plugin-load">
+        <label for="pluginFile">Weitere Datei aus <code>plugins/</code> laden</label>
+        <input type="text" id="pluginFile" placeholder="meine-erweiterung.js" autocomplete="off" spellcheck="false" data-i18n-skip>
+        <button type="button" id="pluginLoadBtn">Laden</button>
+      </div>
       <div class="row">
         <button type="submit" value="close" class="primary">Schliessen</button>
       </div>

@@ -17,12 +17,18 @@
    Der Ordner darf ausserhalb dieses Projekts liegen (--edition-dir); sein Name im Ergebnis ist js/<Dateiname>.
 
    Ergebnis (Ausprägung "local"), genau das, was im ZIP liegt:
-     index.html  css/  js/  lang/  vendor/  docs/  start.ps1  start.cmd  README.md  NOTICE
+     index.html  css/  js/  lang/  vendor/  plugins/  docs/  start.ps1  start.cmd  README.md  NOTICE
+
+   Erweiterungen: Der Ordner plugins/ geht mit (include "plugins"; eine Ausprägung kann über "copy" weitere Dateien
+   nach plugins/ legen). Der Build liest die Angaben jeder .js-Datei darin (register(): id, name, version, api,
+   description, theme) und stellt sie als Verzeichnis (NoNotesPlugins.catalog([...])) vor die Liste in plugins/plugins.js.
+   Im Dialog «Erweiterungen» lassen sie sich damit ein- und ausschalten, ohne eine Datei zu bearbeiten.
 */
 'use strict';
 
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const ROOT = path.resolve(__dirname, '..');
 const TEMPLATE = path.join(ROOT, 'packages', 'ui', 'index.html');
@@ -54,6 +60,49 @@ function walk(dir) {
     else out.push(abs);
   }
   return out;
+}
+
+/** Angaben einer Erweiterung, ohne Browser: das Skript läuft in einem leeren Kontext, register() wird aufgefangen.
+    Lässt sich die Datei so nicht lesen, bleibt nur ihr Name; ob sie läuft, zeigt sich beim Einschalten in der App. */
+function pluginEntry(abs, file) {
+  let def = null;
+  const sandbox = {
+    console: { log() {}, info() {}, warn() {}, error() {} },
+    document: {},
+    NoNotesPlugins: { API: 1, register(d) { if (!def) def = d; } },
+  };
+  sandbox.window = sandbox;
+  sandbox.self = sandbox;
+  try { vm.runInNewContext(fs.readFileSync(abs, 'utf8'), sandbox, { filename: file, timeout: 2000 }); }
+  catch (e) { return { file }; }
+  if (!def || typeof def !== 'object') return { file };
+  const str = v => (typeof v === 'string' ? v.trim() : '');
+  return {
+    file, id: str(def.id), name: str(def.name) || str(def.id) || file, version: str(def.version),
+    api: Number.isInteger(def.api) ? def.api : null, description: str(def.description), theme: !!(def.theme && typeof def.theme === 'object'),
+  };
+}
+
+/** Verzeichnis aller .js im Zielordner plugins/ (ausser plugins.js), das vor die Liste in plugins/plugins.js kommt. */
+function writePluginCatalog(outPlugins) {
+  const listFile = path.join(outPlugins, 'plugins.js');
+  if (!fs.existsSync(listFile)) return 0;
+  const files = walk(outPlugins)
+    .map(abs => path.relative(outPlugins, abs).split(path.sep).join('/'))
+    .filter(f => f.endsWith('.js') && f !== 'plugins.js')
+    .sort();
+  const rows = files.map(f => '  ' + JSON.stringify(pluginEntry(path.join(outPlugins, f), f)));
+  const head = `/* Von tools/build.cjs erzeugt: die Erweiterungen im Ordner plugins/ mit ihren Angaben. Ein- und ausschalten unter
+   Datenbank → Erweiterungen…; die Wahl merkt sich der Browser. Eigene Dateien: hier ablegen und im Dialog unter
+   «Weitere Datei laden» den Namen eingeben. Dieser Block wird bei jedem Build neu erzeugt. */
+NoNotesPlugins.catalog([
+${rows.join(',\n')}
+]);
+
+/* Immer geladen, ohne Schalter: die Liste aus plugins/plugins.js des Projekts. */
+`;
+  fs.writeFileSync(listFile, head + fs.readFileSync(listFile, 'utf8'));
+  return files.length;
 }
 
 function main() {
@@ -158,11 +207,14 @@ function main() {
     else place(srcAbs, destRel);
   }
 
+  // Verzeichnis der Erweiterungen vor die Liste stellen (auch die, die die Ausprägung über "copy" mitbringt)
+  const pluginCount = writePluginCatalog(path.join(out, 'plugins'));
+
   // Verweise prüfen: jede in der index.html genannte Datei muss im Ziel liegen.
   for (const m of html.matchAll(/(?:src|href)="((?:js|css|lang|vendor|plugins)\/[^"]+)"/g)) {
     if (!fs.existsSync(path.join(out, m[1]))) throw new Error(`Verweis ohne Datei im Ziel: ${m[1]}`);
   }
-  console.log(`Gebaut: ${path.relative(ROOT, out)} (Ausprägung ${manifest.id || args.edition}, Version ${args.version}, ${copied.size} Dateien)`);
+  console.log(`Gebaut: ${path.relative(ROOT, out)} (Ausprägung ${manifest.id || args.edition}, Version ${args.version}, ${copied.size} Dateien, ${pluginCount} Erweiterungen im Verzeichnis)`);
 }
 
 try { main(); } catch (e) { console.error('Build fehlgeschlagen:', e.message); process.exit(1); }

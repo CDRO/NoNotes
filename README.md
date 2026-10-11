@@ -172,13 +172,14 @@ geänderte Stelle.
 ### Erweiterungen und Designs
 
 NoNotes lässt sich mit **Erweiterungen** (Plugins) ergänzen: Skriptdateien im Ordner `plugins/` neben der App.
-Welche geladen werden, steht in `plugins/plugins.js`; unter **Datenbank → Erweiterungen…** siehst du, was geladen
-wurde und ob etwas schiefging. Eine Erweiterung kann Menüeinträge und Toolleistenknöpfe hinzufügen, auf Ereignisse
-reagieren, Notizen über dieselbe Datenschnittstelle wie die App lesen und ändern und ein **Design** mitbringen
-(Farben und Masse der Oberfläche; Auswahl im Menü, gespeichert in der Datenbankdatei).
+Unter **Datenbank → Erweiterungen…** siehst du, was im Ordner liegt, und schaltest es mit einem Schalter ein oder aus,
+sofort und ohne die Seite neu zu laden; die Wahl merkt sich der Browser. Eine eigene Datei legst du in den Ordner und
+gibst im Dialog ihren Namen ein. Eine Erweiterung kann Menüeinträge und Toolleistenknöpfe hinzufügen, auf Ereignisse
+reagieren, über dieselbe Schnittstelle wie die App auf die Daten zugreifen und ein **Design** mitbringen (Auswahl
+«Design» im Menü, gespeichert in der Datei wie die Hauptfarbe).
 
-**Achtung:** Eine Erweiterung läuft mit allen Rechten der Seite und kann alle Notizen lesen und ändern. Lade nur Dateien,
-denen du vertraust. Erweiterungen kommen nie aus der Datenbankdatei, nur aus dem Ordner `plugins/`. Im Ordner
+**Achtung:** Eine Erweiterung läuft mit allen Rechten der Seite und kann alle Notizen lesen und ändern. Schalte nur
+Dateien ein, denen du vertraust. Erweiterungen kommen nie aus der Datenbankdatei, nur aus dem Ordner `plugins/`. Im Ordner
 `plugins/beispiele/` liegen zwei Beispiele (Datum einfügen, Design «Sepia»). Die Schnittstelle ist asynchron und
 bleibt innerhalb von 1.x stabil; Beschreibung für Autoren in [docs/PLUGINS.md](docs/PLUGINS.md).
 
@@ -342,7 +343,7 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | Export | `packages/core/export.js` baut die Dateien, `zip.js` ist ein kleiner ZIP-Writer; das Bild liefert `NoNotesMindmap.toSvgString`, PNG über ein Canvas |
 | Druck | `packages/ui/print.js` baut das Druckdokument in `#printArea`; `@media print` blendet den Rest der App aus |
 | Scroll-Sync | `packages/ui/scrollsync.js`: Spiegel des Textes misst Zeilenhöhen, Vorschau-Blöcke tragen `data-line`, lineare Interpolation dazwischen |
-| Erweiterungen | `packages/core/plugins.js` (Verzeichnis, Lader, Ereignisse) und die Anbindung in `packages/ui/app.js`; Ordner `plugins/` mit Liste, Anleitung und Beispielen (siehe [docs/PLUGINS.md](docs/PLUGINS.md)) |
+| Erweiterungen | `packages/core/plugins.js` (Verzeichnis, Lader, Schalter, Ereignisse) und die Anbindung in `packages/ui/app.js`; Ordner `plugins/` mit Liste, Anleitung und Beispielen; das Verzeichnis des Ordners erzeugt `tools/build.cjs` (siehe [docs/PLUGINS.md](docs/PLUGINS.md)) |
 | Verlauf | `packages/core/history.js` (Patches und Zeilenvergleich als reine Textfunktionen); Fassungen und Aufbewahrung in `packages/data/db.js`, Dialog in `packages/ui/app.js`; wer eine Fassung geschrieben hat, steht in `author` (nur wenn ein Backend einen Namen liefert) |
 | Videos | `packages/core/embeds.js` erkennt Adressen von YouTube, Vimeo und Dailymotion (nur genau passende Hosts und Kennungen); `markdown.js` macht aus einer Adresse allein auf einer Zeile eine Karte, die Vorschau baut den Rahmen erst nach dem Klick (siehe [docs/EMBEDS.md](docs/EMBEDS.md)); Tests `test/embeds.cjs`, `test/embeds-ui.cjs` |
 | Lesemodus | Meldet die Hülle `readOnly` (siehe [docs/BACKEND.md](docs/BACKEND.md)), sperrt `packages/ui/app.js` alle Schreibwege (`data-write`, `denyWrite()`) und `readOnlyBackend` lehnt schreibende Aufrufe mit `READ_ONLY` ab; Test `test/readonly.cjs` |

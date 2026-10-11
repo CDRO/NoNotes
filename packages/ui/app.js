@@ -31,6 +31,7 @@
   const VIEW_KEY = 'nonotes.view';
   const MODE_KEY = 'nonotes.editorMode';
   const ARCHIVE_KEY = 'nonotes.showArchive';
+  const PLUGINS_KEY = 'nonotes.plugins';   // eingeschaltete Erweiterungen (Dateien in plugins/), je Browser
   const PREVIEW_DELAY_MS = 150;
 
   I18n.init();
@@ -86,7 +87,7 @@
     helpDialog: $('#helpDialog'), helpTabs: $('#helpTabs'), helpStorageStatus: $('#helpStorageStatus'),
     storageHelpBtn: $('#storageHelpBtn'), menuHelpBtn: $('#menuHelpBtn'), langRow: $('#langRow'), langSelect: $('#langSelect'), accentSwatches: $('#accentSwatches'),
     themeRow: $('#themeRow'), themeSelect: $('#themeSelect'), pluginMenu: $('#pluginMenu'), pluginsBtn: $('#pluginsBtn'),
-    pluginsDialog: $('#pluginsDialog'), pluginList: $('#pluginList'),
+    pluginsDialog: $('#pluginsDialog'), pluginList: $('#pluginList'), pluginFile: $('#pluginFile'), pluginLoadBtn: $('#pluginLoadBtn'),
     historyBtn: $('#historyBtn'), historyDialog: $('#historyDialog'), historyLead: $('#historyLead'), historyList: $('#historyList'),
     historyMeta: $('#historyMeta'), historyText: $('#historyText'), historyDiff: $('#historyDiff'), historyLegend: $('#historyLegend'),
     historyRestoreBtn: $('#historyRestoreBtn'), historyClearBtn: $('#historyClearBtn'),
@@ -117,6 +118,7 @@
     mapDirty: true,
     accent: Palette.DEFAULT,
     theme: '',            // Kennung der Erweiterung, deren Design gilt; leer = Standard
+    pluginFiles: [],      // in diesem Browser eingeschaltete Erweiterungen (Dateien in plugins/)
     accentStale: false,   // nach Datei öffnen oder Import: Hauptfarbe neu aus der Datenbank lesen
     mapSelection: null,   // 'root' | Zahl | null
     rename: null,         // { id, isNew }
@@ -282,7 +284,8 @@
     const edition = window.NoNotesEdition;
     if (!edition) throw new Error(t('Es ist keine Ausprägung geladen.'));
     shell = edition.createShell(shellHost());
-    await Plugins.loadAll(); // Skripte aus dem Ordner plugins/, bevor etwas gezeichnet wird (Designs)
+    state.pluginFiles = loadPluginChoice();
+    await Plugins.loadAll(state.pluginFiles); // feste Liste und die hier eingeschalteten Dateien aus plugins/, bevor etwas gezeichnet wird (Designs)
     try { applyTheme(localStorage.getItem(THEME_KEY) || ''); } catch (e) { /* ohne Zwischenspeicher: Standard */ }
     B = await shell.start();
     if (readOnly()) { B = readOnlyBackend(B); document.body.classList.add('readonly-mode'); }
@@ -616,8 +619,8 @@
     setStatus(t('Design: {name}', { name: theme ? theme.name : t('Standard') }), saveState());
   }
 
-  /** Auswahl im Menü, nur sichtbar, wenn Erweiterungen Designs mitbringen. */
-  function setupTheme() {
+  /** Auswahl im Menü, nur sichtbar, wenn eingeschaltete Erweiterungen Designs mitbringen. */
+  function renderThemeOptions() {
     const themes = Plugins.themes();
     el.themeRow.hidden = themes.length === 0;
     const standard = document.createElement('option');
@@ -630,6 +633,10 @@
       return o;
     }));
     el.themeSelect.value = state.theme;
+  }
+
+  function setupTheme() {
+    renderThemeOptions();
     el.themeSelect.addEventListener('change', () => chooseTheme(el.themeSelect.value));
   }
 
@@ -851,55 +858,156 @@
     el.mdToolbar.appendChild(b);
   }
 
+  /** Die in diesem Browser eingeschalteten Dateien (relativ zu plugins/). Die Datenbankdatei bestimmt nie, was geladen wird. */
+  function loadPluginChoice() {
+    try {
+      const v = JSON.parse(localStorage.getItem(PLUGINS_KEY) || '[]');
+      return Array.isArray(v) ? v.map(f => Plugins.cleanFile(f)).filter(Boolean) : [];
+    } catch (e) { return []; }
+  }
+
+  function savePluginChoice() {
+    try {
+      if (state.pluginFiles.length) localStorage.setItem(PLUGINS_KEY, JSON.stringify(state.pluginFiles));
+      else localStorage.removeItem(PLUGINS_KEY);
+    } catch (e) { /* egal */ }
+  }
+
+  /** Nimmt einer Erweiterung Menüeinträge und Toolleistenknöpfe (Kennungen sind a-z, 0-9 und -, darum ohne Maskierung). */
+  function removePluginUi(id) {
+    if (!id) return;
+    for (const b of el.pluginMenu.querySelectorAll(`[data-plugin="${id}"]`)) b.remove();
+    el.pluginMenu.hidden = !el.pluginMenu.querySelector('button');
+    for (const b of el.mdToolbar.querySelectorAll(`.tb-plugin[data-plugin="${id}"]`)) b.remove();
+  }
+
+  /** Schaltet eine Datei aus plugins/ ein (lädt sie bei Bedarf) oder aus. Gemerkt wird nur, was sich gültig gemeldet hat. */
+  async function setPluginEnabled(file, on) {
+    let entry = Plugins.all().find(p => p.file === file);
+    if (entry && entry.fixed) return;
+    if (on) {
+      if (entry && entry.status === 'off') await Plugins.activate(entry, pluginContext);
+      else if (!entry) { entry = await Plugins.load(file); await Plugins.activateAll(pluginContext); }
+      if (entry.valid && !state.pluginFiles.includes(entry.file)) { state.pluginFiles.push(entry.file); savePluginChoice(); }
+      await loadTheme();
+      renderThemeOptions();
+      if (entry.status === 'error') setStatus(t('Erweiterung «{name}»: {fehler}', { name: entry.name, fehler: entry.error }), 'error');
+      else setStatus(t('Erweiterung «{name}» eingeschaltet', { name: entry.name }), saveState());
+    } else {
+      state.pluginFiles = state.pluginFiles.filter(f => f !== file);
+      savePluginChoice();
+      const name = entry ? entry.name : file;
+      if (entry) {
+        const id = entry.valid ? entry.id : '';
+        Plugins.disable(entry);
+        removePluginUi(id);
+      }
+      applyTheme(state.theme); // gehörte das Design dazu, gilt Standard; die Datei behält die Angabe
+      renderThemeOptions();
+      setStatus(t('Erweiterung «{name}» ausgeschaltet', { name }), saveState());
+    }
+    renderPlugins();
+  }
+
+  async function loadPluginFromInput() {
+    const file = el.pluginFile.value.trim().replace(/^(?:\.\/)+/, '').replace(/^plugins\//, '');
+    if (!file) return;
+    el.pluginFile.value = '';
+    await setPluginEnabled(file, true);
+  }
+
+  /** Ein Eintrag im Dialog. Name, Version, Datei und Beschreibung gehören der Erweiterung (nicht übersetzt, data-i18n-skip). */
+  function pluginItem(it) {
+    const box = document.createElement('div');
+    box.className = 'plugin-item' + (it.on ? '' : ' off');
+    const head = document.createElement('div');
+    head.className = 'plugin-head';
+    const h = document.createElement('h3');
+    h.setAttribute('data-i18n-skip', '');
+    h.append(it.name);
+    if (it.version) {
+      const v = document.createElement('span');
+      v.className = 'plugin-version';
+      v.textContent = it.version;
+      h.append(v);
+    }
+    const f = document.createElement('span');
+    f.className = 'plugin-file';
+    f.textContent = it.file;
+    h.append(f);
+    head.appendChild(h);
+    const st = document.createElement('div');
+    st.className = 'plugin-state' + (it.status === 'error' ? ' error' : '');
+    st.textContent = { active: t('aktiv'), error: t('Fehler'), loaded: t('geladen'), off: t('aus'), available: t('verfügbar') }[it.status] || it.status;
+    head.appendChild(st);
+    const tooNew = it.api != null && it.api > Plugins.API;
+    if (!it.fixed) {
+      const sw = document.createElement('label');
+      sw.className = 'plugin-switch';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = it.on;
+      cb.disabled = tooNew;
+      cb.dataset.file = it.file;
+      cb.addEventListener('change', () => setPluginEnabled(it.file, cb.checked));
+      const txt = document.createElement('span');
+      txt.textContent = t('Ein');
+      sw.append(cb, txt);
+      head.appendChild(sw);
+    }
+    box.appendChild(head);
+    const note = (text, cls, own) => {
+      const d = document.createElement('p');
+      if (cls) d.className = cls;
+      if (own) d.setAttribute('data-i18n-skip', '');
+      d.textContent = text;
+      box.appendChild(d);
+    };
+    if (it.description) note(it.description, '', true);
+    if (it.theme) note(t('Bringt ein Design mit; Auswahl im Menü Datenbank.'), 'plugin-note');
+    if (it.fixed) note(t('Fest eingetragen in plugins/plugins.js; lässt sich hier nicht ausschalten.'), 'plugin-note');
+    if (tooNew) note(t('braucht die Schnittstelle {api}, diese App bietet {angebot}', { api: it.api, angebot: Plugins.API }), 'plugin-error');
+    if (it.needsReload) note(t('Ausgeschaltet. Was die Erweiterung selbst eingerichtet hat, verschwindet beim nächsten Laden der Seite.'), 'plugin-note');
+    if (it.error) note(it.error, 'plugin-error');
+    return box;
+  }
+
+  /** Dialog: eingeschaltete Erweiterungen (fest oder gewählt) und die verfügbaren aus dem Verzeichnis des Ordners plugins/. */
   function renderPlugins() {
-    const items = Plugins.all();
+    const loaded = Plugins.all();
+    const available = Plugins.available();
+    const known = new Set(loaded.map(p => p.file));
+    const info = file => available.find(a => a.file === file) || {};
     el.pluginList.replaceChildren();
-    if (!items.length) {
+    if (!loaded.length && !available.length) {
       const p = document.createElement('p');
       p.className = 'plugin-empty';
-      p.textContent = t('Keine Erweiterungen geladen. Eine Datei in plugins/ ablegen und in plugins/plugins.js eintragen; Anleitung und Beispiele liegen im Ordner plugins/.');
+      p.textContent = t('Im Ordner plugins/ wurde keine Erweiterung gefunden. Eine Datei dort ablegen und unten ihren Namen eingeben; Anleitung und Beispiele liegen im Ordner plugins/.');
       el.pluginList.appendChild(p);
       return;
     }
-    for (const entry of items) {
-      const box = document.createElement('div');
-      box.className = 'plugin-item';
-      const h = document.createElement('h3');
-      h.append(entry.name || entry.file);
-      if (entry.version) {
-        const v = document.createElement('span');
-        v.className = 'plugin-version';
-        v.textContent = entry.version;
-        h.append(v);
-      }
-      const st = document.createElement('span');
-      st.className = 'plugin-state' + (entry.status === 'error' ? ' error' : '');
-      st.textContent = entry.status === 'active' ? t('aktiv') : entry.status === 'error' ? t('Fehler') : t('geladen');
-      h.append(st);
-      const f = document.createElement('span');
-      f.className = 'plugin-file';
-      f.textContent = entry.file;
-      h.append(f);
-      box.appendChild(h);
-      if (entry.description) {
-        const d = document.createElement('p');
-        d.textContent = entry.description;
-        box.appendChild(d);
-      }
-      if (entry.theme) {
-        const d = document.createElement('p');
-        d.className = 'plugin-note';
-        d.textContent = t('Bringt ein Design mit; Auswahl im Menü Datenbank.');
-        box.appendChild(d);
-      }
-      if (entry.error) {
-        const d = document.createElement('p');
-        d.className = 'plugin-error';
-        d.textContent = entry.error;
-        box.appendChild(d);
-      }
-      el.pluginList.appendChild(box);
+    const items = loaded.map(p => {
+      const c = info(p.file);
+      return {
+        file: p.file, name: p.name || c.name || p.file, version: p.version || c.version || '', description: p.description || c.description || '',
+        theme: !!(p.theme || (p.status !== 'error' && c.theme)), status: p.status, error: p.error, fixed: p.fixed, needsReload: p.needsReload,
+        api: null, on: p.fixed || p.status !== 'off',
+      };
+    });
+    for (const c of available) {
+      if (known.has(c.file)) continue;
+      items.push({ file: c.file, name: c.name, version: c.version, description: c.description, theme: c.theme, status: 'available', error: '', fixed: false, needsReload: false, api: c.api, on: false });
     }
+    const group = (label, list) => {
+      if (!list.length) return;
+      const h = document.createElement('p');
+      h.className = 'plugin-group';
+      h.textContent = label;
+      el.pluginList.appendChild(h);
+      for (const it of list) el.pluginList.appendChild(pluginItem(it));
+    };
+    group(t('Eingeschaltet'), items.filter(i => i.on));
+    group(t('Verfügbar im Ordner plugins/'), items.filter(i => !i.on));
   }
 
   function openPluginsDialog() {
@@ -3039,6 +3147,8 @@
     setupAccent();
     setupTheme();
     el.pluginsBtn.addEventListener('click', openPluginsDialog);
+    el.pluginLoadBtn.addEventListener('click', loadPluginFromInput);
+    el.pluginFile.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); loadPluginFromInput(); } });
     el.storageHelpBtn.addEventListener('click', () => openHelp('storage'));
     el.helpTabs.addEventListener('click', async e => {
       const b = e.target.closest('button[data-tab]');

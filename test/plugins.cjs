@@ -1,5 +1,6 @@
 /* Test der Erweiterungs-Schnittstelle (v1.2.0): Liste im Ordner plugins/, Lader, Schnittstelle der Version 1,
-   Ereignisse, Designs, Fehlerisolierung. Der Build wird kopiert und mit Testerweiterungen bestückt.
+   Ereignisse, Designs, Fehlerisolierung; seit v1.7.0 das Verzeichnis aus dem Build und das Ein- und Ausschalten
+   zur Laufzeit im Dialog. Der Build wird kopiert und mit Testerweiterungen bestückt.
    Ausführen: npm test (nach tools/build.cjs). */
 'use strict';
 
@@ -64,14 +65,20 @@ const FILES = {
     NoNotesPlugins.register({ id: 'test-event-throw', name: 'Ereignis wirft', api: 1,
       activate(ctx) { ctx.on('note:open', () => { throw new Error('Ereignis kaputt'); }); } });`,
   'test-syntax-error.js': `this is not javascript (`,
+  'test-deactivate.js': `
+    NoNotesPlugins.register({ id: 'test-deactivate', name: 'Räumt auf', api: 1,
+      activate(ctx) { window.__deact = 0; ctx.ui.addMenuItem({ label: 'Aufräumer', action() {} }); },
+      deactivate() { window.__deact = (window.__deact || 0) + 1; } });`,
 };
 
-function buildWithPlugins(tmp, files) {
+/** Kopie des Builds mit den Testerweiterungen; files = feste Liste, catalog = Verzeichnis, wie es der Build schreibt. */
+function buildWithPlugins(tmp, files, catalog) {
   const dir = path.join(tmp, 'NoNotes');
   fs.rmSync(dir, { recursive: true, force: true });
   fs.cpSync(DIST, dir, { recursive: true });
   for (const [name, text] of Object.entries(FILES)) fs.writeFileSync(path.join(dir, 'plugins', name), text);
-  fs.writeFileSync(path.join(dir, 'plugins', 'plugins.js'), `NoNotesPlugins.list(${JSON.stringify(files)});\n`);
+  const head = catalog ? `NoNotesPlugins.catalog(${JSON.stringify(catalog)});\n` : '';
+  fs.writeFileSync(path.join(dir, 'plugins', 'plugins.js'), `${head}NoNotesPlugins.list(${JSON.stringify(files)});\n`);
   return 'file://' + path.join(dir, 'index.html');
 }
 
@@ -119,7 +126,8 @@ async function main() {
     assert.equal(await pa.locator('#pluginMenu').isVisible(), false, 'ohne Erweiterungen kein Abschnitt im Menü');
     await pa.click('#pluginsBtn');
     await pa.waitForSelector('#pluginsDialog[open]');
-    assert.match(await pa.locator('#pluginList').innerText(), /Keine Erweiterungen geladen/);
+    assert.match(await pa.locator('#pluginList').innerText(), /keine Erweiterung gefunden/);
+    assert.equal(await pa.locator('#pluginFile').isVisible(), true, 'eigene Datei lässt sich per Name laden');
     assert.match(await pa.locator('#pluginsDialog').innerText(), /allen Rechten dieser Seite/, 'Warnhinweis steht im Dialog');
     assert.deepEqual(ea, []);
     await ctxA.close();
@@ -163,8 +171,10 @@ async function main() {
     assert.match(dialogText, /kaputt beim Start/);
     assert.match(dialogText, /Bringt ein Design mit/);
     assert.equal(await page.locator('#pluginList .plugin-state.error').count() >= 6, true);
+    assert.match(dialogText, /Fest eingetragen in plugins\/plugins\.js/);
+    assert.equal(await page.locator('#pluginList input[type="checkbox"]').count(), 0, 'feste Einträge haben keinen Schalter');
     await page.keyboard.press('Escape');
-    step('Dialog «Erweiterungen»: Name, Version, Zustand, Fehlertexte');
+    step('Dialog «Erweiterungen»: Name, Version, Zustand, Fehlertexte; feste Einträge ohne Schalter');
 
     // Schnittstelle Version 1: stabile Namen (neue dürfen dazukommen, nichts darf wegfallen)
     const surface = await page.evaluate(() => {
@@ -294,6 +304,119 @@ async function main() {
     await ctx2.close();
     step('Fehlt die Erweiterung eines gewählten Designs, gilt Standard');
 
+    // ---------- Zur Laufzeit ein- und ausschalten (v1.7.0): Verzeichnis aus dem Build, Schalter, eigene Datei per Name ----------
+    const catalog = [
+      { file: 'test-ok.js', id: 'test-ok', name: 'Test OK', version: '2.0.0', api: 1, description: 'Prüft die Schnittstelle' },
+      { file: 'test-theme.js', id: 'test-theme', name: 'Test Theme', api: 1, theme: true },
+      { file: 'test-bad-api.js', id: 'test-bad-api', name: 'Zu neu', api: 99 },
+      { file: 'test-deactivate.js', id: 'test-deactivate', name: 'Räumt auf', api: 1 },
+      { file: '../js/app.js', id: 'boese', name: 'Böse', api: 1 }, // ein Name ausserhalb von plugins/ kommt nicht ins Verzeichnis
+    ];
+    const url6 = buildWithPlugins(tmp, ['test-event-throw.js'], catalog);
+    const ctx6 = await browser.newContext({ viewport: { width: 1400, height: 900 }, locale: 'de-CH' });
+    const { page: p6, errors: e6 } = await openApp(ctx6, url6);
+    assert.deepEqual(await p6.evaluate(() => NoNotesPlugins.all().map(p => p.file + ':' + p.status)), ['test-event-throw.js:active'], 'nur die feste Liste ist geladen');
+    assert.deepEqual(await p6.evaluate(() => NoNotesPlugins.available().map(a => a.file)), ['test-ok.js', 'test-theme.js', 'test-bad-api.js', 'test-deactivate.js']);
+    await p6.click('#menuBtn');
+    assert.equal(await p6.locator('#themeRow').isVisible(), false, 'Design der ausgeschalteten Erweiterung noch nicht da');
+    await p6.click('#pluginsBtn');
+    await p6.waitForSelector('#pluginsDialog[open]');
+    const groups = () => p6.evaluate(() => [...document.querySelectorAll('#pluginList .plugin-group')].map(g => g.textContent));
+    assert.deepEqual(await groups(), ['Eingeschaltet', 'Verfügbar im Ordner plugins/']);
+    const text6 = await p6.locator('#pluginList').innerText();
+    assert.match(text6, /Test OK[\s\S]*Prüft die Schnittstelle/, 'Angaben aus dem Verzeichnis, ohne die Datei zu laden');
+    assert.match(text6, /Test Theme[\s\S]*Bringt ein Design mit/);
+    assert.match(text6, /Zu neu[\s\S]*braucht die Schnittstelle 99, diese App bietet 1/);
+    assert.equal(await p6.locator('#pluginList input[data-file="test-bad-api.js"]').isDisabled(), true, 'zu neue Erweiterung hat keinen wirksamen Schalter');
+    assert.equal(await p6.locator('#pluginList input[data-file="test-event-throw.js"]').count(), 0, 'fester Eintrag ohne Schalter');
+    assert.equal(await p6.evaluate(() => window.__ctx), undefined, 'eine Datei aus dem Verzeichnis läuft nicht, bevor sie eingeschaltet ist');
+    step('Verzeichnis: Dialog schlägt vor, was im Ordner plugins/ liegt, mit Name, Beschreibung und Design, ohne etwas zu laden');
+
+    await p6.check('#pluginList input[data-file="test-ok.js"]');
+    await p6.waitForFunction(() => NoNotesPlugins.all().some(p => p.id === 'test-ok' && p.status === 'active'));
+    await p6.waitForFunction(() => /Test OK» eingeschaltet/.test(document.querySelector('#status').textContent));
+    assert.equal(await p6.evaluate(() => localStorage.getItem('nonotes.plugins')), JSON.stringify(['test-ok.js']), 'die Wahl merkt sich der Browser');
+    assert.match(await p6.locator('#pluginList').innerText(), /Eingeschaltet[\s\S]*Test OK[\s\S]*2\.0\.0[\s\S]*aktiv/i); // Gruppentitel stehen per CSS in Grossbuchstaben
+    await p6.check('#pluginList input[data-file="test-theme.js"]');
+    await p6.waitForFunction(() => NoNotesPlugins.all().some(p => p.id === 'test-theme' && p.status === 'active'));
+    await p6.keyboard.press('Escape');
+    await p6.click('#menuBtn');
+    assert.equal(await p6.locator('#themeRow').isVisible(), true, 'Designauswahl erscheint ohne Neuladen');
+    assert.equal(await p6.locator('#pluginMenu button:has-text("Zähle Notizen")').count(), 1, 'Menüeintrag ohne Neuladen');
+    await p6.selectOption('#themeSelect', 'test-theme');
+    await p6.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() === '#112233');
+    await p6.waitForFunction(SAVED);
+    await p6.keyboard.press('Escape');
+    await newRootNote(p6, 'Alpha');
+    await p6.dblclick('.mm-node:not(.mm-root)');
+    await p6.waitForSelector('#editorPane:not([hidden])');
+    assert.equal(await p6.locator('#mdToolbar button[data-plugin="test-ok"]').count(), 1, 'Toolleistenknopf ohne Neuladen');
+    await p6.waitForFunction(() => window.__events.some(e => e[0] === 'note:open'));
+    await p6.keyboard.press('Escape');
+    step('Einschalten: lädt und aktiviert sofort; Menü, Toolleiste, Ereignisse und Design sind da, ohne die Seite neu zu laden');
+
+    await p6.click('#menuBtn');
+    await p6.click('#pluginsBtn');
+    await p6.waitForSelector('#pluginsDialog[open]');
+    await p6.uncheck('#pluginList input[data-file="test-theme.js"]');
+    await p6.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() === '#f4f5f7');
+    assert.equal(await p6.evaluate(() => localStorage.getItem('nonotes.theme')), null, 'Zwischenspeicher des Designs geleert');
+    assert.match(await p6.locator('#pluginList').innerText(), /Verfügbar im Ordner plugins\/[\s\S]*Test Theme[\s\S]*aus/i);
+    await p6.check('#pluginList input[data-file="test-theme.js"]');
+    await p6.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() === '#112233');
+    step('Design ausschalten: Standard gilt; wieder einschalten: die Datei hatte die Angabe behalten, das Design kommt zurück');
+
+    await p6.evaluate(() => { window.__events.length = 0; });
+    await p6.uncheck('#pluginList input[data-file="test-ok.js"]');
+    await p6.waitForFunction(() => NoNotesPlugins.all().some(p => p.id === 'test-ok' && p.status === 'off'));
+    assert.match(await p6.locator('#pluginList').innerText(), /Test OK[\s\S]*verschwindet beim nächsten Laden der Seite/, 'ohne deactivate: Hinweis auf das Neuladen');
+    assert.deepEqual(JSON.parse(await p6.evaluate(() => localStorage.getItem('nonotes.plugins'))), ['test-theme.js']);
+    await p6.keyboard.press('Escape');
+    await p6.dblclick('.mm-node:not(.mm-root)');
+    await p6.waitForSelector('#editorPane:not([hidden])');
+    assert.equal(await p6.locator('#mdToolbar button[data-plugin="test-ok"]').count(), 0, 'Toolleistenknopf weg');
+    await p6.keyboard.press('Escape');
+    await p6.waitForTimeout(200);
+    assert.deepEqual(await p6.evaluate(() => window.__events), [], 'Ereignisse erreichen die ausgeschaltete Erweiterung nicht mehr');
+    await p6.click('#menuBtn');
+    assert.equal(await p6.locator('#pluginMenu button:has-text("Zähle Notizen")').count(), 0, 'Menüeintrag weg');
+    assert.equal(await p6.locator('#pluginMenu').isVisible(), false, 'Abschnitt im Menü ohne Einträge verschwindet');
+    await p6.click('#pluginsBtn');
+    await p6.waitForSelector('#pluginsDialog[open]');
+    await p6.check('#pluginList input[data-file="test-deactivate.js"]');
+    await p6.waitForFunction(() => NoNotesPlugins.all().some(p => p.id === 'test-deactivate' && p.status === 'active'));
+    await p6.uncheck('#pluginList input[data-file="test-deactivate.js"]');
+    await p6.waitForFunction(() => window.__deact === 1);
+    assert.doesNotMatch(await p6.locator('#pluginList .plugin-item', { hasText: 'Räumt auf' }).innerText(), /verschwindet beim nächsten Laden/, 'mit deactivate: kein Hinweis auf das Neuladen');
+    step('Ausschalten: Menü, Toolleiste, Ereignisse und Design werden genommen; deactivate() wird gerufen, sonst Hinweis auf das Neuladen');
+
+    // Eigene Datei per Name; unzulässige Namen bleiben im Ordner plugins/
+    await p6.fill('#pluginFile', 'test-noregister.js');
+    await p6.keyboard.press('Enter');
+    await p6.waitForFunction(() => NoNotesPlugins.all().some(p => p.file === 'test-noregister.js' && p.status === 'error'));
+    assert.match(await p6.locator('#pluginList').innerText(), /test-noregister\.js[\s\S]*register\(\)/);
+    await p6.fill('#pluginFile', '../js/app.js');
+    await p6.click('#pluginLoadBtn');
+    await p6.waitForFunction(() => /Ungültiger Dateiname/.test(document.querySelector('#status').textContent));
+    await p6.fill('#pluginFile', 'plugins/test-ok.js');
+    await p6.click('#pluginLoadBtn');
+    await p6.waitForFunction(() => NoNotesPlugins.all().some(p => p.id === 'test-ok' && p.status === 'active'));
+    assert.equal(await p6.evaluate(() => [...document.querySelectorAll('#pluginMenu button')].some(b => b.textContent === 'Zähle Notizen')), true, 'wieder eingeschaltet: activate lief noch einmal');
+    assert.deepEqual(JSON.parse(await p6.evaluate(() => localStorage.getItem('nonotes.plugins'))), ['test-theme.js', 'test-ok.js'], 'nur, was sich gültig gemeldet hat, wird gemerkt');
+    await p6.click('#pluginList input[data-file="test-noregister.js"]'); // click statt uncheck: der Eintrag verschwindet mit dem Schalter
+    await p6.click('#pluginList input[data-file="../js/app.js"]');
+    await p6.waitForFunction(() => !NoNotesPlugins.all().some(p => p.file === 'test-noregister.js' || p.file === '../js/app.js'));
+    step('Weitere Datei per Name: gültige Datei läuft, fehlerhafte wird gemeldet, ein Name ausserhalb von plugins/ wird abgelehnt');
+
+    // Neuladen: die Wahl bleibt, das Design kommt aus der Datei
+    await p6.reload();
+    await p6.waitForSelector(READY);
+    assert.deepEqual(await p6.evaluate(() => NoNotesPlugins.all().map(p => p.file + ':' + p.status)), ['test-event-throw.js:active', 'test-theme.js:active', 'test-ok.js:active']);
+    assert.equal(await cssVar(p6, '--bg'), '#112233');
+    assert.deepEqual(e6, [], 'keine Fehler im Browser');
+    await ctx6.close();
+    step('Nach dem Neuladen: feste Liste zuerst, dann die gemerkten Erweiterungen; das Design gilt');
+
     // Die mitgelieferten Beispiele funktionieren, wenn man sie in plugins/plugins.js freigibt
     const exDir = path.join(tmp, 'NoNotes');
     buildWithPlugins(tmp, []);
@@ -326,7 +449,7 @@ async function main() {
     await p3.click('#menuBtn');
     await p3.click('#pluginsBtn');
     await p3.waitForSelector('#pluginsDialog[open]');
-    const texts = await p3.evaluate(() => [...document.querySelectorAll('#pluginsDialog h2, #pluginsDialog .dialog-lead, #pluginList .plugin-state, #pluginList .plugin-error, #pluginList .plugin-note')].map(e => e.textContent));
+    const texts = await p3.evaluate(() => [...document.querySelectorAll('#pluginsDialog h2, #pluginsDialog .dialog-lead, #pluginList .plugin-group, #pluginList .plugin-state, #pluginList .plugin-error, #pluginList .plugin-note, #pluginList .plugin-switch span, .plugin-load label, #pluginLoadBtn')].map(e => e.textContent));
     for (const x of texts) assert.ok(x.includes('⟦'), `nicht übersetzbar: ${x}`);
     assert.deepEqual(e3, []);
     await ctx3.close();

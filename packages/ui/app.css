@@ -788,14 +788,20 @@ body:not(.view-tasks) .tasks-view { display: none; }
 .plugin-list { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 12px; max-height: 50vh; overflow: auto; }
 .plugin-empty { color: var(--muted); }
 .plugin-item { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--bg); }
+.plugin-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .plugin-item h3 { margin: 0; font-size: 14px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
 .plugin-item .plugin-version, .plugin-item .plugin-file { color: var(--muted); font-weight: 400; font-size: 12px; }
 .plugin-item p { margin: 4px 0 0; font-size: 13px; }
-.plugin-state { font-size: 12px; font-weight: 600; border-radius: 999px; padding: 1px 8px; background: var(--active); color: var(--text); }
+.plugin-state { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 1px 8px; background: var(--active); color: var(--text); }
 .plugin-state.error { background: color-mix(in srgb, var(--danger) 18%, var(--panel)); color: var(--danger); }
 .plugin-warning { border-left: 3px solid var(--warn); padding-left: 10px; }
 .tb-plugin { white-space: nowrap; }
 .plugin-error { color: var(--danger); }
+.plugin-item.off { opacity: .8; }
+.plugin-switch { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 13px; cursor: pointer; }
+.plugin-group { margin: 6px 0 0; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.plugin-load { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; font-size: 13px; }
+.plugin-load input { flex: 1; min-width: 180px; }
 
 /* ---------- Verlauf ---------- */
 

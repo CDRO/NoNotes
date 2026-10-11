@@ -1,11 +1,19 @@
 /* NoNotes – Erweiterungen (Plugins). Verzeichnis, Lader und Ereignisse; die Anbindung an die Oberfläche
    steht in packages/ui/app.js. Beschreibung für Autoren: docs/PLUGINS.md
 
-   Eine Erweiterung ist eine Skriptdatei im Ordner plugins/ neben der App. Welche Dateien geladen werden,
-   steht in plugins/plugins.js (NoNotesPlugins.list([...])). Die Datenbankdatei liefert nie Programmtext:
+   Eine Erweiterung ist eine Skriptdatei im Ordner plugins/ neben der App. Die Datenbankdatei liefert nie Programmtext:
    Erweiterungen kommen ausschliesslich aus dem Ordner der App. Sie laufen mit allen Rechten der Seite.
 
-   Eine Erweiterung meldet sich mit NoNotesPlugins.register({ id, name, version, api, description, theme, activate }).
+   Drei Wege, wie eine Datei (relativ zum Ordner plugins/) geladen wird:
+   - plugins/plugins.js nennt sie mit NoNotesPlugins.list([...]): sie wird immer geladen, ohne Schalter («fest»).
+   - Sie steht im Verzeichnis (NoNotesPlugins.catalog([...]), das der Build aus dem Ordner plugins/ erzeugt) und die
+     Person hat sie im Dialog «Erweiterungen» eingeschaltet. Die Wahl merkt sich der Browser (app.js).
+   - Die Person hat ihren Namen im Dialog eingegeben («Weitere Datei laden»).
+   Laden und Ausschalten gehen zur Laufzeit (seit v1.7.0). Ein Skript lässt sich nicht entladen; disable() nimmt der
+   Erweiterung darum, was die App ihr gegeben hat (Ereignisse; Menü, Toolleiste und Design räumt die Oberfläche), und ruft
+   deactivate(), wenn sie eins hat.
+
+   Eine Erweiterung meldet sich mit NoNotesPlugins.register({ id, name, version, api, description, theme, activate, deactivate }).
    api ist die Schnittstellenversion (heute 1). Innerhalb der Version 1.x kommt nur Neues dazu, nichts fällt weg
    und nichts ändert seine Bedeutung. Alles, was Daten berührt, ist asynchron (Promise). */
 (function (global) {
@@ -15,27 +23,62 @@
 
   const API = 1;
   const ID_RE = /^[a-z0-9][a-z0-9-]{1,40}$/;
+  // Dateiname relativ zu plugins/: Buchstaben, Ziffern, Punkt, Unterstrich, Bindestrich, Unterordner; kein Teil beginnt mit
+  // einem Punkt (also kein ..), Endung .js. Damit bleibt jede Datei im Ordner plugins/.
+  const FILE_RE = /^(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.js$/;
   // Farben und Masse, die ein Theme überschreiben darf (CSS-Variablen ohne --). Die Hauptfarbe bleibt Sache der Palette.
   const THEME_VARS = ['bg', 'panel', 'text', 'muted', 'border', 'hover', 'danger', 'ok', 'warn', 'radius', 'shadow'];
   const EVENTS = ['ready', 'database:replaced', 'note:open', 'note:close', 'note:saved'];
 
-  const listed = [];   // { file, url } in der Reihenfolge der Liste
-  const plugins = [];  // { id, name, version, description, file, status, error, def, theme }
+  const listed = [];    // { file } aus plugins/plugins.js, in dieser Reihenfolge (immer geladen)
+  const available = []; // Verzeichnis aus dem Build: { file, id, name, version, api, description, theme }
+  const plugins = [];   // { id, name, version, description, file, fixed, status, error, def, theme, valid, needsReload }
   const handlers = new Map(); // Ereignis → [{ id, fn }]
   let listBase = '';
-  let loading = null;  // Datei, deren Skript gerade läuft
+  let loading = null;   // { file, fixed } der Datei, deren Skript gerade läuft
+  let queue = Promise.resolve(); // Laden läuft immer nacheinander
 
   function scriptBase() {
     const s = global.document && global.document.currentScript;
     return s && s.src ? s.src.replace(/[^/]*$/, '') : '';
   }
 
-  /** Wird von plugins/plugins.js aufgerufen: die Dateien (relativ zum Ordner plugins/), in dieser Reihenfolge. */
+  /** Ordner plugins/ als Adresse: der von plugins/plugins.js, sonst plugins/ neben der Seite. */
+  function baseUrl() {
+    return listBase || new URL('plugins/', global.location.href).href;
+  }
+
+  /** Dateiname bereinigt (ohne führendes ./) oder '' wenn unzulässig. */
+  function cleanFile(file) {
+    if (typeof file !== 'string') return '';
+    const s = file.trim().replace(/^(?:\.\/)+/, '');
+    return FILE_RE.test(s) ? s : '';
+  }
+
+  /** Wird von plugins/plugins.js aufgerufen: die Dateien, die immer geladen werden, in dieser Reihenfolge. */
   function list(files) {
     if (!listBase) listBase = scriptBase();
     for (const f of Array.isArray(files) ? files : []) {
       if (typeof f === 'string' && f.trim()) listed.push({ file: f.trim() });
     }
+  }
+
+  /** Vom Build in plugins/plugins.js eingetragen: die Dateien im Ordner plugins/ mit ihren Angaben (ohne sie zu laden). */
+  function catalog(entries) {
+    if (!listBase) listBase = scriptBase();
+    const str = v => (typeof v === 'string' ? v.trim() : '');
+    for (const e of Array.isArray(entries) ? entries : []) {
+      const file = e && cleanFile(e.file);
+      if (!file || available.some(a => a.file === file)) continue;
+      available.push({
+        file, id: str(e.id), name: str(e.name) || file, version: str(e.version),
+        api: Number.isInteger(e.api) ? e.api : null, description: str(e.description), theme: !!e.theme,
+      });
+    }
+  }
+
+  function entryFor(file, fixed) {
+    return { id: '', name: file, version: '', description: '', file, fixed: !!fixed, status: 'loaded', error: '', def: null, theme: null, valid: false, needsReload: false };
   }
 
   function validTheme(theme) {
@@ -55,13 +98,14 @@
 
   /** Melden einer Erweiterung. Prüft die Beschreibung; ein Fehler macht nur diese Erweiterung unbrauchbar. */
   function register(def) {
-    const file = loading || '(unbekannt)';
-    const entry = { id: def && typeof def.id === 'string' ? def.id : '', name: '', version: '', description: '', file, status: 'loaded', error: '', def: def || null, theme: null };
+    const entry = entryFor(loading ? loading.file : '(unbekannt)', loading && loading.fixed);
+    entry.id = def && typeof def.id === 'string' ? def.id : '';
+    entry.def = def || null;
     plugins.push(entry);
     const fail = msg => { entry.status = 'error'; entry.error = msg; };
     if (!def || typeof def !== 'object') return fail(t('register() braucht ein Objekt'));
     if (!ID_RE.test(entry.id)) return fail(t('id fehlt oder ist ungültig (a-z, 0-9, Bindestrich, 2 bis 41 Zeichen)'));
-    if (plugins.some(p => p !== entry && p.id === entry.id)) return fail(t('id «{id}» ist schon vergeben', { id: entry.id }));
+    if (plugins.some(p => p !== entry && p.id === entry.id && p.valid)) return fail(t('id «{id}» ist schon vergeben', { id: entry.id }));
     entry.name = typeof def.name === 'string' && def.name.trim() ? def.name.trim() : entry.id;
     entry.version = typeof def.version === 'string' ? def.version : '';
     entry.description = typeof def.description === 'string' ? def.description : '';
@@ -69,6 +113,7 @@
     if (def.api > API) return fail(t('braucht die Schnittstelle {api}, diese App bietet {angebot}', { api: def.api, angebot: API }));
     if (def.api < 1) return fail(t('api muss mindestens 1 sein'));
     if (def.activate != null && typeof def.activate !== 'function') return fail(t('activate muss eine Funktion sein'));
+    if (def.deactivate != null && typeof def.deactivate !== 'function') return fail(t('deactivate muss eine Funktion sein'));
     if (def.theme != null) {
       const problem = validTheme(def.theme);
       if (problem) return fail(problem);
@@ -78,48 +123,102 @@
         light: Object.assign({}, def.theme.light), dark: Object.assign({}, def.theme.dark), css: def.theme.css || '',
       };
     }
+    entry.valid = true;
     return undefined;
   }
 
-  /** Lädt alle Skripte der Liste nacheinander. Eine fehlende oder kaputte Datei ist ein Fehler dieser Erweiterung. */
-  async function loadAll() {
-    for (const item of listed) {
-      const url = new URL(item.file, listBase || global.location.href).href;
-      const before = plugins.length;
-      loading = item.file;
-      const ok = await new Promise(resolve => {
-        const s = global.document.createElement('script');
-        s.src = url;
-        s.onload = () => resolve(null);
-        s.onerror = () => resolve(t('Datei nicht gefunden oder nicht lesbar'));
-        global.document.head.appendChild(s);
-      });
-      loading = null;
-      if (ok) {
-        plugins.push({ id: '', name: item.file, version: '', description: '', file: item.file, status: 'error', error: ok, def: null, theme: null });
-      } else if (plugins.length === before) {
-        plugins.push({ id: '', name: item.file, version: '', description: '', file: item.file, status: 'error', error: t('Die Datei hat sich nicht mit register() gemeldet'), def: null, theme: null });
-      }
-    }
+  /** Lädt eine Datei aus plugins/ und liefert ihren Eintrag; eine fehlende oder kaputte Datei ist ein Fehler dieser Erweiterung.
+      Eine schon geladene Datei wird nicht noch einmal geladen (ihr Eintrag kommt zurück). */
+  async function loadOne(file, fixed) {
+    const clean = cleanFile(file);
+    const known = plugins.find(p => p.file === (clean || String(file || '').trim()));
+    if (known) return known;
+    const bad = (name, error) => { const e = entryFor(name, fixed); e.status = 'error'; e.error = error; plugins.push(e); return e; };
+    if (!clean) return bad(String(file || '').trim() || '?', t('Ungültiger Dateiname: erlaubt sind Buchstaben, Ziffern, Punkt, Unterstrich, Bindestrich und Unterordner innerhalb von plugins/, Endung .js'));
+    const url = new URL(clean, baseUrl()).href;
+    const before = plugins.length;
+    loading = { file: clean, fixed: !!fixed };
+    const problem = await new Promise(resolve => {
+      const s = global.document.createElement('script');
+      s.src = url;
+      s.onload = () => resolve(null);
+      s.onerror = () => resolve(t('Datei nicht gefunden oder nicht lesbar'));
+      global.document.head.appendChild(s);
+    });
+    loading = null;
+    if (problem) return bad(clean, problem);
+    if (plugins.length === before) return bad(clean, t('Die Datei hat sich nicht mit register() gemeldet'));
+    return plugins[before];
+  }
+
+  function serial(fn) {
+    const p = queue.then(fn, fn);
+    queue = p.catch(() => {});
+    return p;
+  }
+
+  /** Lädt die feste Liste und danach die eingeschalteten Dateien (chosen), alle nacheinander. */
+  function loadAll(chosen) {
+    return serial(async () => {
+      for (const item of listed) await loadOne(item.file, true);
+      for (const f of Array.isArray(chosen) ? chosen : []) await loadOne(f, false);
+    });
+  }
+
+  /** Lädt eine Datei zur Laufzeit (relativ zu plugins/) und liefert ihren Eintrag. Danach activateAll() aufrufen. */
+  function load(file) {
+    return serial(() => loadOne(file, false));
   }
 
   function warn(entry, what, e) {
     console.warn(`Erweiterung ${entry.id || entry.file}: ${what}`, e); // i18n-ignore
   }
 
-  /** Ruft activate(ctx) jeder gültigen Erweiterung auf; makeContext(entry) liefert ihre Schnittstelle. */
+  async function activateOne(entry, makeContext) {
+    try {
+      if (entry.def.activate) await entry.def.activate(makeContext(entry));
+      entry.status = 'active';
+    } catch (e) {
+      entry.status = 'error';
+      entry.error = (e && e.message) || String(e);
+      warn(entry, 'activate fehlgeschlagen', e);
+    }
+  }
+
+  /** Ruft activate(ctx) jeder geladenen, noch nicht aktivierten Erweiterung auf; makeContext(entry) liefert ihre Schnittstelle. */
   async function activateAll(makeContext) {
     for (const entry of plugins) {
-      if (entry.status !== 'loaded') continue;
-      try {
-        if (entry.def.activate) await entry.def.activate(makeContext(entry));
-        entry.status = 'active';
-      } catch (e) {
-        entry.status = 'error';
-        entry.error = (e && e.message) || String(e);
-        warn(entry, 'activate fehlgeschlagen', e);
-      }
+      if (entry.status === 'loaded' && entry.valid) await activateOne(entry, makeContext);
     }
+  }
+
+  /** Schaltet eine ausgeschaltete Erweiterung wieder ein (ihr Skript ist schon da): activate(ctx) läuft noch einmal. */
+  async function activate(entry, makeContext) {
+    if (!entry || !entry.valid || entry.status !== 'off') return;
+    entry.status = 'loaded';
+    entry.error = '';
+    entry.needsReload = false;
+    await activateOne(entry, makeContext);
+  }
+
+  /** Schaltet aus: nimmt die Ereignisse, ruft deactivate(), wenn vorhanden. Liefert false, wenn der Eintrag ganz entfernt
+      wurde (eine Datei, die sich nie gültig gemeldet hat, hinterlässt nichts). Menü, Toolleiste und Design räumt die Oberfläche. */
+  function disable(entry) {
+    if (!entry || !plugins.includes(entry)) return false;
+    if (!entry.valid) { plugins.splice(plugins.indexOf(entry), 1); return false; }
+    if (entry.status === 'off') return true;
+    for (const arr of handlers.values()) {
+      for (let i = arr.length - 1; i >= 0; i--) if (arr[i].id === entry.id) arr.splice(i, 1);
+    }
+    if (entry.def.deactivate) {
+      try { entry.def.deactivate(); } catch (e) { warn(entry, 'deactivate fehlgeschlagen', e); }
+      entry.needsReload = false;
+    } else {
+      entry.needsReload = entry.status === 'active' && !!entry.def.activate;
+    }
+    entry.status = 'off';
+    entry.error = '';
+    return true;
   }
 
   function on(id, event, fn) {
@@ -140,7 +239,7 @@
     for (const rec of (handlers.get(event) || []).slice()) {
       try { await rec.fn(data); }
       catch (e) {
-        const entry = plugins.find(p => p.id === rec.id);
+        const entry = plugins.find(p => p.valid && p.id === rec.id);
         if (entry) { entry.error = (e && e.message) || String(e); }
         warn(entry || { id: rec.id }, `Fehler im Ereignis ${event}`, e); // i18n-ignore: Protokoll
       }
@@ -160,13 +259,16 @@
     return out;
   }
 
+  const live = p => p.status === 'loaded' || p.status === 'active';
+
   global.NoNotesPlugins = {
     API, EVENTS, THEME_VARS,
-    list, register, loadAll, activateAll, on, emit, themeCss,
+    list, catalog, register, loadAll, load, activateAll, activate, disable, on, emit, themeCss, cleanFile,
     all: () => plugins.slice(),
-    themes: () => plugins.filter(p => p.theme && (p.status === 'loaded' || p.status === 'active')).map(p => p.theme),
-    theme: id => { const p = plugins.find(x => x.theme && x.id === id && (x.status === 'loaded' || x.status === 'active')); return p ? p.theme : null; },
+    available: () => available.map(a => Object.assign({}, a)),
+    themes: () => plugins.filter(p => p.theme && live(p)).map(p => p.theme),
+    theme: id => { const p = plugins.find(x => x.theme && x.id === id && live(x)); return p ? p.theme : null; },
     listedCount: () => listed.length,
-    base: () => listBase,
+    base: () => baseUrl(),
   };
 })(window);

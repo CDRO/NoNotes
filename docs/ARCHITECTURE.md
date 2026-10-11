@@ -16,7 +16,7 @@ packages/
 editions/
   local/        edition.json (Skripte, Hilfeabschnitt, Dateien), edition.js, Startskripte: setzt die lokale Version zusammen
 lang/           Sprachpakete (de.js ist die Quellsprache)
-plugins/        Liste der Erweiterungen (plugins.js), Anleitung und Beispiele; ausgeliefert neben der App
+plugins/        Erweiterungen: feste Liste (plugins.js, der Build stellt das Verzeichnis des Ordners voran), Anleitung, Beispiele; ausgeliefert neben der App
 tools/          build.cjs (Bau), i18n.cjs (Sprachwerkzeug)
 test/           smoke.cjs (Gesamtablauf), backend.cjs (Vertrag), i18n.cjs (Sprachen)
 docs/           diese Dokumente
@@ -52,9 +52,13 @@ drei Regeln:
 ## Erweiterungen
 
 Eine Erweiterung ist eine Skriptdatei im Ordner `plugins/` neben der App, die sich mit `NoNotesPlugins.register()` meldet
-(`packages/core/plugins.js`). Die App lädt die Dateien aus `plugins/plugins.js` vor dem Start, ruft nach dem ersten Zeichnen
-`activate(ctx)` auf und meldet Ereignisse. Programmcode kommt nie aus der Datenbankdatei. Die Schnittstelle (`ctx`, Ereignisse,
-Theme-Variablen) ist für 1.x festgelegt, siehe [PLUGINS.md](PLUGINS.md).
+(`packages/core/plugins.js`). Beim Start lädt die App die feste Liste aus `plugins/plugins.js` und danach die Dateien, die die
+Person in diesem Browser eingeschaltet hat (`localStorage`), ruft nach dem ersten Zeichnen `activate(ctx)` auf und meldet
+Ereignisse. Im Dialog «Erweiterungen» lassen sich Dateien zur Laufzeit ein- und ausschalten (seit v1.7.0): Vorgeschlagen wird,
+was im Ordner liegt, nach dem Verzeichnis, das `tools/build.cjs` aus dem Zielordner `plugins/` erzeugt und vor die Liste stellt
+(`NoNotesPlugins.catalog([...])`), weil eine Seite den Ordner weder per `file://` noch auf einem Server selbst lesen kann; eigene
+Dateien gibt man per Name ein. Programmcode kommt nie aus der Datenbankdatei, und ein Dateiname bleibt immer innerhalb von
+`plugins/`. Die Schnittstelle (`ctx`, Ereignisse, Theme-Variablen) ist für 1.x festgelegt, siehe [PLUGINS.md](PLUGINS.md).
 
 ## Sprachen
 
