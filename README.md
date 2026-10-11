@@ -342,6 +342,7 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | Scroll-Sync | `packages/ui/scrollsync.js`: Spiegel des Textes misst Zeilenhöhen, Vorschau-Blöcke tragen `data-line`, lineare Interpolation dazwischen |
 | Erweiterungen | `packages/core/plugins.js` (Verzeichnis, Lader, Ereignisse) und die Anbindung in `packages/ui/app.js`; Ordner `plugins/` mit Liste, Anleitung und Beispielen (siehe [docs/PLUGINS.md](docs/PLUGINS.md)) |
 | Verlauf | `packages/core/history.js` (Patches und Zeilenvergleich als reine Textfunktionen); Fassungen und Aufbewahrung in `packages/data/db.js`, Dialog in `packages/ui/app.js`; wer eine Fassung geschrieben hat, steht in `author` (nur wenn ein Backend einen Namen liefert) |
+| Lesemodus | Meldet die Hülle `readOnly` (siehe [docs/BACKEND.md](docs/BACKEND.md)), sperrt `packages/ui/app.js` alle Schreibwege (`data-write`, `denyWrite()`) und `readOnlyBackend` lehnt schreibende Aufrufe mit `READ_ONLY` ab; Test `test/readonly.cjs` |
 | Zusammenführen | `packages/core/merge.js`: zeilenweiser Dreiwege-Vergleich (Myers) für gleichzeitige Änderungen derselben Notiz; Speichern mit `baseUpdatedAt`, Konfliktdialog in `packages/ui/app.js` |
 | Hauptfarbe | `packages/core/palette.js`: acht Farben mit heller und dunkler Fassung (Fläche, Schrift auf der Fläche, Farbe als Schrift, Tönung); die Seite setzt sie über CSS-Variablen, Export und Druck über `toSvgString` |
 | Kalender | `packages/core/ical.js`: iCalendar nach RFC 5545 mit festen UIDs, SEQUENCE, VALARM, Zeilenfaltung; gemerkte Kennungen in `meta` |

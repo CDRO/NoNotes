@@ -39,7 +39,7 @@
           <button type="button" id="disconnectBtn" role="menuitem">Dateiverbindung trennen</button>
           <div class="sep" role="separator"></div>
           <button type="button" id="downloadBtn" role="menuitem">Kopie herunterladen (.sqlite)</button>
-          <button type="button" id="importBtn" role="menuitem">Aus Datei importieren…</button>
+          <button type="button" id="importBtn" data-write role="menuitem">Aus Datei importieren…</button>
           <div class="sep" role="separator"></div>
           <button type="button" id="exportBtn" role="menuitem">Als Markdown exportieren…</button>
           <button type="button" id="calendarBtn" role="menuitem">Termine in Kalender exportieren (.ics)…</button>
@@ -74,7 +74,7 @@
       <!-- Mindmap -->
       <section class="map-view" id="mapView" aria-label="Mindmap">
         <div class="map-toolbar">
-          <button type="button" id="mapNewBtn" class="primary" title="Neue Notiz unter der Auswahl (Tab)">Neue Notiz</button>
+          <button type="button" id="mapNewBtn" data-write class="primary" title="Neue Notiz unter der Auswahl (Tab)">Neue Notiz</button>
           <button type="button" id="mapFitBtn" title="Alles einpassen (0)">Einpassen</button>
           <button type="button" id="mapZoomOutBtn" title="Verkleinern (−)" aria-label="Verkleinern">−</button>
           <button type="button" id="mapZoomInBtn" title="Vergrössern (+)" aria-label="Vergrössern">+</button>
@@ -134,7 +134,7 @@
       <aside class="sidebar" id="sidebar" aria-label="Notizliste">
         <div class="sidebar-tools">
           <input type="search" id="search" placeholder="Suchen…" aria-label="Notizen durchsuchen" autocomplete="off">
-          <button type="button" id="newBtn" class="primary" title="Neue Notiz (Alt+N)">Neue Notiz</button>
+          <button type="button" id="newBtn" data-write class="primary" title="Neue Notiz (Alt+N)">Neue Notiz</button>
         </div>
         <div class="sidebar-filters">
           <select id="listScope" aria-label="Bereich">
@@ -148,7 +148,7 @@
         <div id="listEmpty" class="empty" hidden></div>
         <div class="sidebar-foot">
           <span id="count"></span>
-          <button type="button" id="emptyTrashBtn" class="ghost danger small" hidden>Papierkorb leeren</button>
+          <button type="button" id="emptyTrashBtn" data-write class="ghost danger small" hidden>Papierkorb leeren</button>
         </div>
       </aside>
 
@@ -164,23 +164,23 @@
             <span class="meta" id="noteMeta"></span>
             <button type="button" id="historyBtn" class="ghost" title="Frühere Fassungen dieser Notiz ansehen und wiederherstellen">Verlauf</button>
             <button type="button" id="printBtn" class="ghost" title="Diese Notiz drucken (Ctrl+P)">Drucken</button>
-            <button type="button" id="childBtn" class="ghost" title="Unternotiz anlegen">+ Unternotiz</button>
-            <button type="button" id="archiveBtn" class="ghost" title="Notiz samt Unternotizen ins Archiv legen">Archivieren</button>
-            <button type="button" id="deleteBtn" class="ghost danger">Löschen</button>
+            <button type="button" id="childBtn" data-write class="ghost" title="Unternotiz anlegen">+ Unternotiz</button>
+            <button type="button" id="archiveBtn" data-write class="ghost" title="Notiz samt Unternotizen ins Archiv legen">Archivieren</button>
+            <button type="button" id="deleteBtn" data-write class="ghost danger">Löschen</button>
           </div>
           <div id="archiveBar" class="trash-bar archive-bar" hidden>
             <span id="archiveBarText">Diese Notiz ist archiviert.</span>
-            <button type="button" id="unarchiveBtn" class="primary" title="Diese Notiz zurückholen, dazu alle archivierten Notizen darüber">Zurückholen</button>
+            <button type="button" id="unarchiveBtn" data-write class="primary" title="Diese Notiz zurückholen, dazu alle archivierten Notizen darüber">Zurückholen</button>
           </div>
           <div id="trashBar" class="trash-bar" hidden>
             <span>Diese Notiz liegt im Papierkorb.</span>
-            <button type="button" id="restoreBtn" class="primary">Wiederherstellen</button>
-            <button type="button" id="purgeBtn" class="danger">Endgültig löschen</button>
+            <button type="button" id="restoreBtn" data-write class="primary">Wiederherstellen</button>
+            <button type="button" id="purgeBtn" data-write class="danger">Endgültig löschen</button>
           </div>
           <input type="text" id="title" class="title" placeholder="Titel" aria-label="Titel" autocomplete="off" spellcheck="true">
           <div class="tags-row">
             <div id="tagChips" class="chips" aria-label="Tags"></div>
-            <input type="text" id="tagInput" class="tag-input" list="tagSuggestions" placeholder="Tag hinzufügen…" aria-label="Tag hinzufügen" autocomplete="off">
+            <input type="text" id="tagInput" data-write class="tag-input" list="tagSuggestions" placeholder="Tag hinzufügen…" aria-label="Tag hinzufügen" autocomplete="off">
             <datalist id="tagSuggestions"></datalist>
           </div>
           <div class="editor-tools">
@@ -237,7 +237,7 @@
   <div id="multiBar" class="multi-bar" role="status" hidden>
     <span id="multiCount"></span>
     <button type="button" id="multiPrintBtn" class="primary">Drucken…</button>
-    <button type="button" id="multiArchiveBtn" title="Ausgewählte Notizen samt Unternotizen archivieren">Archivieren…</button>
+    <button type="button" id="multiArchiveBtn" data-write title="Ausgewählte Notizen samt Unternotizen archivieren">Archivieren…</button>
     <button type="button" id="multiClearBtn">Auswahl aufheben</button>
   </div>
 
@@ -330,8 +330,8 @@
         </div>
       </div>
       <div class="row">
-        <button type="button" id="historyRestoreBtn" class="primary">Diese Fassung wiederherstellen</button>
-        <button type="button" id="historyClearBtn" class="danger">Verlauf dieser Notiz löschen</button>
+        <button type="button" id="historyRestoreBtn" data-write class="primary">Diese Fassung wiederherstellen</button>
+        <button type="button" id="historyClearBtn" data-write class="danger">Verlauf dieser Notiz löschen</button>
         <button type="submit" value="close" class="ghost">Schliessen</button>
       </div>
       <p class="hint">Eine neue Fassung entsteht, wenn du nach einer Pause weiterarbeitest. Gespeichert werden nur die Unterschiede; aufbewahrt werden höchstens 50 Fassungen und 180 Tage. Beim Wiederherstellen bleibt der aktuelle Stand als Fassung erhalten.</p>

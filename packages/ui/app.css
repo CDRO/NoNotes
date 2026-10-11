@@ -497,6 +497,9 @@ mark { background: color-mix(in srgb, var(--warn) 35%, transparent); color: inhe
 .mm-node.mm-archived.mm-match, .mm-node.mm-archived.mm-selected { opacity: 1; }
 .editor.readonly .title, .editor.readonly .body { opacity: .7; }
 .editor.readonly .chip button { display: none; }
+
+/* Lesemodus (Hülle meldet readOnly): Schreibwege ausblenden; Theme und Hauptfarbe gelten für den ganzen Arbeitsbereich */
+body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-mode #themeRow { display: none !important; }
 .editor.readonly .editor-tools .segmented { display: inline-flex; }
 
 /* Editor-Modi */

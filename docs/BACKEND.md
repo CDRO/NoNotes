@@ -89,3 +89,11 @@ Die **Hülle** (`shell`) kümmert sich um alles rund um die Daten, das nicht zur
 `packages/store-local/local-shell.js`; sie zeigt, welche Rückrufe die Oberfläche anbietet (`host`) und
 welche Funktionen die Hülle bereitstellt (`start`, `afterReady`, `bind`, `flush`, `isDirty`,
 `storageLines`, `saveLine`).
+
+Optionale Eigenschaften der Hülle: `userName` (Anzeigename für Autor in Notiz und Verlauf), `role`, und seit v1.5.1 **`readOnly`**
+(true = die Person darf nichts ändern). Dann blendet die Oberfläche alle Schreibwege aus (Attribut `data-write`, Einträge des
+Kontextmenüs, Kästchen, Antwortfelder, Titel/Text/Tags gesperrt wie bei archivierten Notizen), jede Funktion, die schreiben
+würde, bricht mit dem Hinweis «Nur lesen» ab, und das Backend, das die Oberfläche und die Erweiterungen sehen, lehnt alle
+schreibenden Aufrufe mit der Kennung `READ_ONLY` ab. **Ausgenommen sind `setCollapsed` und `setAllCollapsed`**: Auf- und Zuklappen der Mindmap
+ist Ansicht, nicht Inhalt; ob es für alle gilt oder pro Person gespeichert wird, entscheidet das Backend. Hauptfarbe und Design
+lassen sich im Lesemodus nicht ändern (sie gelten für den ganzen Arbeitsbereich). Die lokale Hülle meldet nie `readOnly`.

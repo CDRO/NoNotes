@@ -609,4 +609,5 @@ NoNotesI18n.register('en', 'English', {
   'In Ordner speichern…': 'Save to folder…',
   'Als ZIP herunterladen': 'Download as ZIP',
   'Lade NoNotes…': 'Loading NoNotes…',
+  'Nur lesen: In diesem Arbeitsbereich sind Änderungen nicht erlaubt.': 'Read only: changes are not allowed in this workspace.',
 }, { locale: 'en-GB' });

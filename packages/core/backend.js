@@ -79,6 +79,7 @@
     HISTORY_NOT_FOUND: N_('Diese Fassung gibt es nicht mehr.'),
     ARCHIVED_READONLY: N_('Archivierte Notizen sind schreibgeschützt. Erst zurückholen.'),
     NOTE_CONFLICT: N_('Die Notiz wurde inzwischen von jemand anderem geändert.'),
+    READ_ONLY: N_('Nur lesen: In diesem Arbeitsbereich sind Änderungen nicht erlaubt.'),
   };
 
   /** Ergänzt Fehlerkennungen und ihre (deutschen) Meldungen, zum Beispiel für ein Backend über das Netz. Bestehende Kennungen

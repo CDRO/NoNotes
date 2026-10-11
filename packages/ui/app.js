@@ -220,6 +220,27 @@
   let B = null;       // Backend (asynchron), kommt aus der Ausprägung
   let shell = null;   // Hülle der Ausprägung (lokal: Speichern, Datei, Import)
 
+  // Lesemodus: Meldet die Hülle `readOnly`, darf die Person nichts ändern (zum Beispiel Rolle «nur lesen»). Die Oberfläche blendet die
+  // Schreibwege aus (Attribut data-write), jede Funktion, die schreiben würde, bricht mit einem Hinweis ab, und das Backend lehnt
+  // schreibende Aufrufe selbst ab (readOnlyBackend) – auch für Erweiterungen. Ausgenommen ist die persönliche Ansicht (Auf-/Zuklappen).
+  const readOnly = () => !!(shell && shell.readOnly);
+  const VIEW_STATE_CALLS = new Set(['setCollapsed', 'setAllCollapsed']);
+  function denyWrite() {
+    if (!readOnly()) return false;
+    hint(t('Nur lesen: In diesem Arbeitsbereich sind Änderungen nicht erlaubt.'));
+    return true;
+  }
+  function readOnlyBackend(backend) {
+    const blocked = new Set([...Backend.MUTATING].filter(m => !VIEW_STATE_CALLS.has(m)));
+    return new Proxy(backend, {
+      get(target, prop) {
+        if (blocked.has(prop)) return async () => { throw Object.assign(new Error('Nur lesen'), { code: 'READ_ONLY' }); }; // i18n-ignore: die Oberfläche übersetzt über die Kennung
+        const v = target[prop];
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    });
+  }
+
   /** Wird von der Hülle aufgerufen, wenn sie die Datenbank austauscht (Datei öffnen, Import). */
   function onDatabaseReplaced() {
     for (const id of [...state.attachmentUrls.keys()]) forgetAttachmentUrl(id);
@@ -263,6 +284,7 @@
     await Plugins.loadAll(); // Skripte aus dem Ordner plugins/, bevor etwas gezeichnet wird (Designs)
     try { applyTheme(localStorage.getItem(THEME_KEY) || ''); } catch (e) { /* ohne Zwischenspeicher: Standard */ }
     B = await shell.start();
+    if (readOnly()) { B = readOnlyBackend(B); document.body.classList.add('readonly-mode'); }
     if (B.capabilities && B.capabilities.files === false) { // Backend ohne Dateien auf dem Gerät: kein Datei-Menü
       for (const b of [el.createFileBtn, el.openFileBtn, el.disconnectBtn]) { b.hidden = true; b.disabled = true; }
     }
@@ -529,6 +551,7 @@
   }
 
   async function chooseAccent(id) {
+    if (denyWrite()) return;
     applyAccent(id);
     await B.setMeta('accent', state.accent);
     setStatus(t('Hauptfarbe: {farbe}', { farbe: Palette.name(state.accent) }), saveState());
@@ -582,6 +605,7 @@
   }
 
   async function chooseTheme(id) {
+    if (denyWrite()) return;
     applyTheme(id);
     await B.setMeta('theme', state.theme);
     const theme = state.theme ? Plugins.theme(state.theme) : null;
@@ -703,6 +727,7 @@
   }
 
   async function restoreHistoryVersion() {
+    if (denyWrite()) return;
     const h = state.history;
     if (!h || h.selected == null) return;
     const at = h.version ? fmtDate(h.version.at) : '';
@@ -719,6 +744,7 @@
   }
 
   async function clearHistory() {
+    if (denyWrite()) return;
     const h = state.history;
     if (!h || !h.items.length) return;
     if (!confirm(t('Den Verlauf dieser Notiz löschen? Der aktuelle Text bleibt erhalten.'))) return;
@@ -1212,7 +1238,7 @@
     renderTags(tags);
     const trashed = !!note.deleted_at;
     const archived = !trashed && !!note.archived_at;
-    const locked = trashed || archived; // Papierkorb und Archiv sind schreibgeschützt
+    const locked = trashed || archived || readOnly(); // Papierkorb und Archiv sind schreibgeschützt, ebenso alles im Lesemodus
     await renderAttachments(note.id, locked);
     if (!isLatest()) return;
     el.trashBar.hidden = !trashed;
@@ -1222,7 +1248,7 @@
     el.title.readOnly = locked;
     el.body.readOnly = locked;
     el.tagInput.disabled = locked;
-    el.deleteBtn.hidden = trashed;
+    el.deleteBtn.hidden = trashed || readOnly();
     el.historyBtn.hidden = trashed;
     el.childBtn.hidden = locked;
     el.archiveBtn.hidden = locked;
@@ -1252,6 +1278,7 @@
   }
 
   async function saveTags(tags) {
+    if (denyWrite()) return;
     if (state.currentId == null) return;
     await B.setTags(state.currentId, tags);
     renderTags(await B.getTags(state.currentId));
@@ -1355,6 +1382,7 @@
   }
 
   async function removeAttachment(a) {
+    if (denyWrite()) return;
     if (!confirm(t('Bild „{name}“ aus dieser Notiz entfernen? Verweise im Text zeigen danach ins Leere.', { name: a.name }))) return;
     await B.deleteAttachment(a.id);
     forgetAttachmentUrl(a.id);
@@ -1406,6 +1434,7 @@
   }
 
   async function addAttachments(files) {
+    if (denyWrite()) return;
     if (state.currentId == null) return;
     const note = await B.getNote(state.currentId);
     if (!note || note.deleted_at || note.archived_at) return;
@@ -1519,6 +1548,7 @@
       e.preventDefault();
       if (a.dataset.noteId) { await openNote(Number(a.dataset.noteId)); return; }
       const title = a.dataset.title;
+      if (denyWrite()) return;
       if (!confirm(t('Es gibt keine Notiz „{titel}“. Jetzt als Unternotiz anlegen?', { titel: title }))) return;
       const id = await B.createNote(state.currentId);
       await B.renameNote(id, title);
@@ -1670,6 +1700,7 @@
   }
 
   async function newNote() {
+    if (denyWrite()) return;
     const parentId = state.view === 'map' ? selectionAsParent() : null;
     if (state.view === 'map') { await newNoteInMap(parentId); return; }
     const id = await B.createNote(null);
@@ -1687,6 +1718,7 @@
   }
 
   async function newNoteInMap(parentId) {
+    if (denyWrite()) return;
     hideContextMenu();
     if (parentId != null && await B.isArchived(parentId)) { hint(t('Unter einer archivierten Notiz lässt sich nichts anlegen. Erst zurückholen.')); return; }
     if (parentId != null) {
@@ -1703,6 +1735,7 @@
   }
 
   async function newChildOfCurrent() {
+    if (denyWrite()) return;
     if (state.currentId == null) return;
     const parentId = state.currentId;
     if (await B.isArchived(parentId)) { hint(t('Unter einer archivierten Notiz lässt sich nichts anlegen. Erst zurückholen.')); return; }
@@ -2177,7 +2210,8 @@
     answerBtn.type = 'button';
     answerBtn.className = r.answer ? '' : 'primary';
     answerBtn.textContent = r.answer ? t('Antwort bearbeiten') : t('Beantworten');
-    answerBtn.addEventListener('click', () => openAnswerForm(item, r));
+    answerBtn.addEventListener('click', () => { if (!denyWrite()) openAnswerForm(item, r); });
+    answerBtn.hidden = readOnly();
     const gotoBtn = document.createElement('button');
     gotoBtn.type = 'button';
     gotoBtn.className = 'ghost';
@@ -2246,6 +2280,7 @@
   }
 
   async function saveAnswer(questionId, text) {
+    if (denyWrite()) return;
     try {
       const noteId = await B.answerQuestion(questionId, text);
       state.qAnswering = null;
@@ -2349,6 +2384,7 @@
     box.className = 't-check';
     box.checked = !!r.done;
     box.setAttribute('aria-label', r.done ? t('Aufgabe wieder öffnen') : t('Aufgabe abhaken'));
+    box.disabled = readOnly();
     box.addEventListener('change', () => toggleTaskDone(r.id, box.checked));
     const text = document.createElement('div');
     text.className = 'q-text';
@@ -2411,6 +2447,7 @@
   }
 
   async function toggleTaskDone(taskId, done) {
+    if (denyWrite()) return;
     try {
       const noteId = await B.setTaskDone(taskId, done);
       markEdited();
@@ -2427,6 +2464,7 @@
 
   /** Doppelklick in der Aufgabenliste: Aufgabe samt Unteraufgaben abschliessen bzw. wieder öffnen. */
   async function toggleTaskTreeInList(taskId) {
+    if (denyWrite()) return;
     try {
       const r = await B.toggleTaskTree(taskId);
       markEdited();
@@ -2502,6 +2540,7 @@
   }
 
   async function deleteNoteById(id) {
+    if (denyWrite()) return;
     hideContextMenu();
     const note = await B.getNote(id);
     if (!note) return;
@@ -2533,6 +2572,7 @@
 
   /** Archiviert Notizen samt allen Unternotizen, nach Rückfrage mit der Anzahl. */
   async function archiveNotes(ids) {
+    if (denyWrite()) return;
     hideContextMenu();
     await pruneMulti();
     const targets = (await Promise.all([...new Set(ids)].map(id => B.getNote(id)))).filter(n => n && !n.deleted_at && !n.archived_at).map(n => n.id);
@@ -2579,6 +2619,7 @@
 
   /** Holt genau diese Notiz aus dem Archiv, dazu die archivierten Notizen darüber. Unternotizen bleiben archiviert. */
   async function unarchiveById(id) {
+    if (denyWrite()) return;
     hideContextMenu();
     const note = await B.getNote(id);
     if (!note || !note.archived_at) return;
@@ -2595,6 +2636,7 @@
   }
 
   async function restoreCurrent() {
+    if (denyWrite()) return;
     if (state.currentId == null) return;
     const id = state.currentId;
     await B.restoreNote(id);
@@ -2607,6 +2649,7 @@
   }
 
   async function purgeCurrent() {
+    if (denyWrite()) return;
     if (state.currentId == null) return;
     const note = await B.getNote(state.currentId);
     const name = note && note.title.trim() ? t('„{titel}“', { titel: note.title.trim() }) : t('diese Notiz');
@@ -2619,6 +2662,7 @@
   }
 
   async function emptyTrash() {
+    if (denyWrite()) return;
     const n = await B.countTrash();
     if (!n) return;
     if (!confirm(tn('Die Notiz im Papierkorb endgültig löschen?', 'Alle {n} Notizen im Papierkorb endgültig löschen?', n))) return;
@@ -2630,6 +2674,7 @@
 
   /** Ablage aus der Mindmap: als Unternotiz des Ziels oder direkt vor/nach dem Ziel. */
   async function moveNoteTo(id, targetId, where) {
+    if (denyWrite()) return;
     try {
       if (where === 'before' || where === 'after') {
         if (targetId == null) return;
@@ -2680,6 +2725,7 @@
   }
 
   async function moveSelected(direction) {
+    if (denyWrite()) return;
     if (typeof state.mapSelection !== 'number') return;
     if (await B.moveAmongSiblings(state.mapSelection, direction)) {
       markEdited();
@@ -2699,6 +2745,7 @@
   // ---------- Umbenennen direkt im Knoten ----------
 
   async function beginRename(id, opts) {
+    if (denyWrite()) return;
     hideContextMenu();
     await cancelRename();
     if (id !== 'root' && await B.isArchived(id)) { hint(t('Archivierte Notizen sind schreibgeschützt. Erst zurückholen.')); return; }
@@ -2758,6 +2805,11 @@
   function showContextMenu(items, x, y) {
     const menu = el.contextMenu;
     menu.replaceChildren();
+    if (readOnly()) { // Lesemodus: nur Einträge ohne Schreibzugriff, ohne verwaiste Trennlinien
+      items = items.filter(i => i === 'sep' || !i.write)
+        .filter((i, k, a) => i !== 'sep' || (k > 0 && k < a.length - 1 && a[k - 1] !== 'sep'));
+      if (!items.length) return;
+    }
     for (const item of items) {
       if (item === 'sep') {
         const s = document.createElement('div');
@@ -2793,7 +2845,7 @@
   function showNodeMenu(id, x, y) {
     if (id == null) {
       showContextMenu([
-        { label: t('Neue Notiz'), key: 'Tab', action: () => newNoteInMap(null) },
+        { write: true, label: t('Neue Notiz'), key: 'Tab', action: () => newNoteInMap(null) },
         { label: t('Einpassen'), key: '0', action: () => state.map.fit() },
         'sep',
         { label: t('Alles ausklappen'), action: () => setAllCollapsed(false) },
@@ -2803,8 +2855,8 @@
     }
     if (id === 'root') {
       showContextMenu([
-        { label: t('Neue Notiz'), key: 'Tab', action: () => newNoteInMap(null) },
-        { label: t('Titel ändern'), key: 'F2', action: () => beginRename('root') },
+        { write: true, label: t('Neue Notiz'), key: 'Tab', action: () => newNoteInMap(null) },
+        { write: true, label: t('Titel ändern'), key: 'F2', action: () => beginRename('root') },
         'sep',
         { label: t('Alles ausklappen'), action: () => setAllCollapsed(false) },
         { label: t('Alles einklappen'), action: () => setAllCollapsed(true) },
@@ -2819,28 +2871,28 @@
       // Archivierte Notizen: nur ansehen, zurückholen, ein-/ausklappen, löschen
       const archivedItems = [
         { label: t('Öffnen'), key: 'Enter', action: () => openNote(id) },
-        { label: t('Zurückholen'), action: () => unarchiveById(id) },
+        { write: true, label: t('Zurückholen'), action: () => unarchiveById(id) },
       ];
       if (info.childCount) archivedItems.push({ label: info.collapsed ? t('Ausklappen') : t('Einklappen'), action: () => toggleCollapse(id) });
-      archivedItems.push('sep', { label: t('Löschen'), key: t('Entf'), danger: true, action: () => deleteNoteById(id) });
+      archivedItems.push('sep', { write: true, label: t('Löschen'), key: t('Entf'), danger: true, action: () => deleteNoteById(id) });
       showContextMenu(archivedItems, x, y);
       return;
     }
     const items = [
       { label: t('Öffnen'), key: 'Enter', action: () => openNote(id) },
-      { label: t('Unternotiz anlegen'), key: 'Tab', action: () => newNoteInMap(id) },
-      { label: t('Umbenennen'), key: 'F2', action: () => beginRename(id) },
+      { write: true, label: t('Unternotiz anlegen'), key: 'Tab', action: () => newNoteInMap(id) },
+      { write: true, label: t('Umbenennen'), key: 'F2', action: () => beginRename(id) },
     ];
     if (info && info.childCount) {
       items.push({ label: info.collapsed ? t('Ausklappen') : t('Einklappen'), action: () => toggleCollapse(id) });
     }
     items.push(
       { label: t('Drucken…'), action: () => openPrintDialog({ noteId: id, scope: 'subtree' }) },
-      { label: t('Archivieren…'), action: () => archiveNotes([id]) },
-      { label: t('Nach oben'), key: 'Alt+↑', action: async () => { state.mapSelection = id; await moveSelected(-1); } },
-      { label: t('Nach unten'), key: 'Alt+↓', action: async () => { state.mapSelection = id; await moveSelected(1); } },
+      { write: true, label: t('Archivieren…'), action: () => archiveNotes([id]) },
+      { write: true, label: t('Nach oben'), key: 'Alt+↑', action: async () => { state.mapSelection = id; await moveSelected(-1); } },
+      { write: true, label: t('Nach unten'), key: 'Alt+↓', action: async () => { state.mapSelection = id; await moveSelected(1); } },
       'sep',
-      { label: t('Löschen'), key: t('Entf'), danger: true, action: () => deleteNoteById(id) },
+      { write: true, label: t('Löschen'), key: t('Entf'), danger: true, action: () => deleteNoteById(id) },
     );
     showContextMenu(items, x, y);
   }
