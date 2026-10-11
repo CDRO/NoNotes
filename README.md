@@ -313,6 +313,8 @@ Dasselbe gilt für Fragen.
 - **Bilder** hängst du mit **🖼 Bild**, per Einfügen aus der Zwischenablage (`Ctrl+V`) oder
   durch Ablegen auf dem Text an. Sie liegen in der Datenbank, im Text steht `![Name](att:ID)`,
   die Vorschau zeigt sie. Grosse Bilder werden auf 1600 Pixel Kantenlänge verkleinert.
+- **Videos** von YouTube, Vimeo und Dailymotion: die Adresse allein auf einer Zeile (oder `![Titel](Adresse)`). Die Vorschau zeigt eine Karte «Video laden»; erst der Klick lädt das Video, vorher geht
+  keine Anfrage an den Anbieter. Gedruckt erscheint ein Link. Einzelheiten und Einschränkungen: [docs/EMBEDS.md](docs/EMBEDS.md).
   Der Streifen über dem Text zeigt alle Anhänge der Notiz mit Einfügen und Löschen.
   Beim Export landen sie im Ordner `attachments/`.
 - Oberste Zeile ist der Titel, `Enter` springt in den Text.
@@ -342,6 +344,7 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | Scroll-Sync | `packages/ui/scrollsync.js`: Spiegel des Textes misst Zeilenhöhen, Vorschau-Blöcke tragen `data-line`, lineare Interpolation dazwischen |
 | Erweiterungen | `packages/core/plugins.js` (Verzeichnis, Lader, Ereignisse) und die Anbindung in `packages/ui/app.js`; Ordner `plugins/` mit Liste, Anleitung und Beispielen (siehe [docs/PLUGINS.md](docs/PLUGINS.md)) |
 | Verlauf | `packages/core/history.js` (Patches und Zeilenvergleich als reine Textfunktionen); Fassungen und Aufbewahrung in `packages/data/db.js`, Dialog in `packages/ui/app.js`; wer eine Fassung geschrieben hat, steht in `author` (nur wenn ein Backend einen Namen liefert) |
+| Videos | `packages/core/embeds.js` erkennt Adressen von YouTube, Vimeo und Dailymotion (nur genau passende Hosts und Kennungen); `markdown.js` macht aus einer Adresse allein auf einer Zeile eine Karte, die Vorschau baut den Rahmen erst nach dem Klick (siehe [docs/EMBEDS.md](docs/EMBEDS.md)); Tests `test/embeds.cjs`, `test/embeds-ui.cjs` |
 | Lesemodus | Meldet die Hülle `readOnly` (siehe [docs/BACKEND.md](docs/BACKEND.md)), sperrt `packages/ui/app.js` alle Schreibwege (`data-write`, `denyWrite()`) und `readOnlyBackend` lehnt schreibende Aufrufe mit `READ_ONLY` ab; Test `test/readonly.cjs` |
 | Zusammenführen | `packages/core/merge.js`: zeilenweiser Dreiwege-Vergleich (Myers) für gleichzeitige Änderungen derselben Notiz; Speichern mit `baseUpdatedAt`, Konfliktdialog in `packages/ui/app.js` |
 | Hauptfarbe | `packages/core/palette.js`: acht Farben mit heller und dunkler Fassung (Fläche, Schrift auf der Fläche, Farbe als Schrift, Tönung); die Seite setzt sie über CSS-Variablen, Export und Druck über `toSvgString` |

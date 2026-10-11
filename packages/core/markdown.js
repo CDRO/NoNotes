@@ -2,7 +2,12 @@
    Unterstützt Überschriften, Absätze mit Zeilenumbrüchen, Listen (auch verschachtelt, auch
    Aufgaben), Zitate, Codeblöcke, Trennlinien, fett/kursiv/durchgestrichen, Code, Links,
    Bilder, automatische Links, [[Titel]]-Verweise auf Notizen sowie die NoNotes-Zeilen
-   "? Frage" und "! Antwort". Aller Text wird escaped; URLs sind auf sichere Schemata beschränkt. */
+   "? Frage" und "! Antwort". Aller Text wird escaped; URLs sind auf sichere Schemata beschränkt.
+
+   Videos (YouTube, Vimeo, Dailymotion; siehe embeds.js): Steht eine Zeile allein aus einer solchen Adresse oder aus ![Titel](Adresse) und
+   ist options.embeds gesetzt, entsteht eine Karte «Video von … laden». Sie enthält keinen Rahmen und löst keine Anfrage aus; die Seite baut
+   den Rahmen erst nach einem Klick (siehe docs/EMBEDS.md). Ohne options.embeds (Druck, Listen) wird aus ![Titel](Videoadresse) ein Link statt
+   eines Bildes, damit der Browser die Seite des Anbieters nicht als Bild abruft. */
 (function (global) {
   'use strict';
 
@@ -83,7 +88,10 @@
           let url = null;
           if (att) url = ctx.resolveAttachment ? ctx.resolveAttachment(Number(att[1])) : null;
           else url = safeUrl(m[2]);
-          if (url) out += `<img src="${escapeHtml(url)}" alt="${escapeHtml(m[1])}"${m[3] ? ` title="${escapeHtml(m[3])}"` : ''}${att ? ` class="md-att" data-attachment-id="${att[1]}"` : ''}>`;
+          const video = !att && global.NoNotesEmbeds ? global.NoNotesEmbeds.parse(m[2]) : null;
+          if (video) { // eine Videoadresse ist kein Bild: als Link zeigen
+            out += `<a href="${escapeHtml(video.watchUrl)}" target="_blank" rel="noopener noreferrer" class="md-video-link">▶ ${text(m[1] || t('Video: {anbieter}', { anbieter: video.name }))}</a>`;
+          } else if (url) out += `<img src="${escapeHtml(url)}" alt="${escapeHtml(m[1])}"${m[3] ? ` title="${escapeHtml(m[3])}"` : ''}${att ? ` class="md-att" data-attachment-id="${att[1]}"` : ''}>`;
           else if (att) out += `<span class="md-missing" title="${escapeHtml(t('Anhang {nummer} fehlt', { nummer: att[1] }))}">${text(t('[Bild „{name}“ fehlt]', { name: m[1] || t('Anhang') }))}</span>`;
           else emit(m[0]);
           i += m[0].length;
@@ -145,12 +153,35 @@
 
   function makeCtx(options) {
     options = options || {};
-    return { text: makeText(options.highlight), resolveTitle: options.resolveTitle, resolveAttachment: options.resolveAttachment, interactiveTasks: !!options.interactiveTasks, lineMap: !!options.lineMap };
+    return { text: makeText(options.highlight), resolveTitle: options.resolveTitle, resolveAttachment: options.resolveAttachment, interactiveTasks: !!options.interactiveTasks, lineMap: !!options.lineMap, embeds: !!options.embeds, embedLoad: options.embedLoad };
   }
 
   /** Nur Zeilenformatierung (fett, Code, Links, [[Verweise]]), z. B. für Listeneinträge und den Druck. */
   function inline(src, options) {
     return renderInline(String(src == null ? '' : src), makeCtx(options));
+  }
+
+  /** Karte für eine Zeile, die allein aus einer Videoadresse besteht (bloss oder als ![Titel](Adresse)); sonst null. */
+  function embedCard(line, ctx, lineAttr) {
+    const E = global.NoNotesEmbeds;
+    if (!E) return null;
+    const trimmed = line.trim();
+    let url = null;
+    let title = '';
+    const img = /^!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)$/.exec(trimmed);
+    if (img) { url = img[2]; title = img[1].trim(); }
+    else if (/^https?:\/\/\S+$/i.test(trimmed)) url = trimmed;
+    const v = url ? E.parse(url) : null;
+    if (!v) return null;
+    const canLoad = ctx.embedLoad ? !!ctx.embedLoad(v.provider) : true;
+    const name = escapeHtml(v.name);
+    return `<div class="md-embed" data-provider="${escapeHtml(v.provider)}" data-embed="${escapeHtml(v.embedUrl)}" data-title="${escapeHtml(title || t('Video: {anbieter}', { anbieter: v.name }))}"${lineAttr}>` +
+      '<div class="md-embed-card"><span class="md-embed-icon" aria-hidden="true">▶</span><div class="md-embed-text">' +
+      `<strong>${escapeHtml(title || t('Video von {anbieter}', { anbieter: v.name }))}</strong>` +
+      `<small>${escapeHtml(canLoad ? t('Beim Laden erfährt {anbieter} deine IP-Adresse.', { anbieter: v.name }) : t('Hier lässt {anbieter} das Einbetten nicht zu. Öffne das Video auf der Seite des Anbieters.', { anbieter: v.name }))}</small></div>` +
+      (canLoad ? `<button type="button" class="md-embed-load">${escapeHtml(t('Video laden'))}</button>` : '') +
+      `<a class="md-embed-open" href="${escapeHtml(v.watchUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t('Auf {anbieter} öffnen', { anbieter: v.name }))}</a>` +
+      '</div></div>';
   }
 
   function render(markdown, options) {
@@ -176,6 +207,12 @@
 
       // Leerzeile
       if (!line.trim()) { flushParagraph(); i++; continue; }
+
+      // Video allein auf einer Zeile: Karte statt Bild oder Link
+      if (ctx.embeds) {
+        const card = embedCard(line, ctx, la(i));
+        if (card) { flushParagraph(); out.push(card); i++; continue; }
+      }
 
       // Codeblock
       const fence = /^\s*(```|~~~)\s*(\S*)/.exec(line);

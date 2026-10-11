@@ -125,6 +125,7 @@
     qQuery: '',
     qSearchTimer: null,
     qAnswering: null,     // id der Frage, deren Antwortfeld offen ist
+    loadedEmbeds: new Set(), // Videos, die in dieser Sitzung per Klick geladen wurden (nach dem Neuzeichnen der Vorschau wieder laden)
     qDraft: null,         // Entwurf im offenen Antwortfeld (überlebt ein Neuzeichnen)
     qTag: '',
     editorMode: 'edit',   // 'edit' | 'split' | 'preview'
@@ -1497,8 +1498,36 @@
       resolveAttachment: id => state.attachmentUrls.get(id) || null,
       interactiveTasks: !el.body.readOnly,
       lineMap: true,
+      embeds: embedsOn(),
+      embedLoad: embedCanLoad,
     });
+    for (const box of el.preview.querySelectorAll('.md-embed')) if (state.loadedEmbeds.has(box.dataset.embed)) loadEmbed(box, false);
     if (state.editorMode === 'split' && state.scrollSync) state.scrollSync.afterRender();
+  }
+
+  // ---------- Videos einbetten (YouTube, Vimeo, Dailymotion) ----------
+
+  /** Die Hülle kann das Einbetten ausschalten (shell.embeds === 'off'), zum Beispiel ein Dienst, dessen Schutzkopf keine Rahmen erlaubt. */
+  const embedsOn = () => !(shell && shell.embeds === 'off');
+  /** YouTube lässt das Einbetten in Seiten ohne Herkunft (geöffnete Datei, file://) nicht zu: dort nur der Link zum Anbieter. */
+  const embedCanLoad = provider => !(provider === 'youtube' && window.location.protocol === 'file:');
+
+  /** Baut den Rahmen erst jetzt (nach dem Klick) und ersetzt die Karte. Der Rahmen ist abgeschottet (sandbox), sendet die Herkunft der Seite
+   *  (YouTube verlangt sie), aber keinen Pfad, und darf selbst abspielen, weil die Person eben geklickt hat. */
+  function loadEmbed(box, autoplay) {
+    const url = box.dataset.embed;
+    if (!url || box.querySelector('iframe')) return;
+    const frame = document.createElement('iframe');
+    frame.src = autoplay ? url + (url.includes('?') ? '&' : '?') + 'autoplay=1' : url;
+    frame.title = box.dataset.title || '';
+    frame.loading = 'lazy';
+    frame.referrerPolicy = 'strict-origin-when-cross-origin';
+    frame.allowFullscreen = true;
+    frame.setAttribute('allow', 'autoplay; fullscreen; picture-in-picture; encrypted-media'); // i18n-ignore: Berechtigungen des Rahmens
+    frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox allow-forms');
+    frame.className = 'md-embed-frame';
+    box.replaceChildren(frame);
+    state.loadedEmbeds.add(url);
   }
 
   /** Hinweis in der Statuszeile, ohne den Speicherstand falsch darzustellen. */
@@ -1545,6 +1574,8 @@
   }
 
   async function onPreviewClick(e) {
+    const load = e.target.closest('.md-embed-load');
+    if (load) { e.preventDefault(); loadEmbed(load.closest('.md-embed'), true); return; }
     const a = e.target.closest('a');
     if (!a) return;
     if (a.classList.contains('md-wiki')) {

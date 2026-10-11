@@ -83,10 +83,10 @@ async function main() {
   await page.reload();
   await page.waitForSelector(READY, { timeout: 30000 });
   assert.equal(await page.locator('body.readonly-mode').count(), 1);
-  for (const sel of ['#mapNewBtn', '#newBtn', '#importBtn', '.menu-accent']) {
-    if (sel === '#importBtn') await page.click('#menuBtn');
+  for (const sel of ['#mapNewBtn', '#newBtn', '#importBtn', '#calendarBtn', '.menu-accent']) {
+    if (sel === '#importBtn') await page.click('#menuBtn'); // die beiden Menüeinträge werden bei geöffnetem Menü geprüft (der Kalenderexport schreibt Kennungen in die Datenbank)
     assert.equal(await page.locator(sel).first().isVisible(), false, sel + ' ist ausgeblendet');
-    if (sel === '#importBtn') await page.keyboard.press('Escape');
+    if (sel === '#calendarBtn') await page.keyboard.press('Escape');
   }
   await page.waitForFunction(title => [...document.querySelectorAll('.mm-node > text')].some(x => x.textContent === title), 'Plan');
   step('Lesemodus: Knöpfe zum Anlegen und Importieren und die Wahl der Hauptfarbe sind ausgeblendet');

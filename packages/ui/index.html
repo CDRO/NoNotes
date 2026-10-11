@@ -42,7 +42,7 @@
           <button type="button" id="importBtn" data-write role="menuitem">Aus Datei importieren…</button>
           <div class="sep" role="separator"></div>
           <button type="button" id="exportBtn" role="menuitem">Als Markdown exportieren…</button>
-          <button type="button" id="calendarBtn" role="menuitem">Termine in Kalender exportieren (.ics)…</button>
+          <button type="button" id="calendarBtn" data-write role="menuitem">Termine in Kalender exportieren (.ics)…</button>
           <div class="sep" role="separator"></div>
           <button type="button" id="storageHelpBtn" role="menuitem">Datenablage erklärt…</button>
           <button type="button" id="menuHelpBtn" role="menuitem">Hilfe (F1)</button>
@@ -415,6 +415,7 @@
             <tr><td>Zitat</td><td><code>&gt; Text</code></td><td><em>│ Text</em></td></tr>
             <tr><td>Link</td><td><code>[Google](https://google.com)</code>, Adressen wie <code>www.google.com</code> werden automatisch verlinkt</td><td><u>Google</u></td></tr>
             <tr><td>Bild aus dem Web</td><td><code>![Beschreibung](https://…/bild.png)</code></td><td>Bild</td></tr>
+            <tr><td>Video</td><td>Adresse eines Videos von <strong>YouTube</strong>, <strong>Vimeo</strong> oder <strong>Dailymotion</strong> allein auf einer Zeile, oder <code>![Titel](Adresse)</code></td><td>Eine Karte «Video laden». Erst der Klick lädt das Video; vorher geht keine Anfrage an den Anbieter. Gedruckt erscheint ein Link.</td></tr>
             <tr><td>Trennlinie</td><td><code>---</code> auf eigener Zeile</td><td>———</td></tr>
           </tbody>
         </table>
@@ -540,6 +541,7 @@
   <script src="../core/dates.js"></script>
   <script src="../core/questions.js"></script>
   <script src="../core/tasks.js"></script>
+  <script src="../core/embeds.js"></script>
   <script src="../core/markdown.js"></script>
   <script src="../core/editing.js"></script>
   <script src="../core/backend.js"></script>

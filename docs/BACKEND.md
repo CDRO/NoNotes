@@ -96,4 +96,7 @@ Kontextmenüs, Kästchen, Antwortfelder, Titel/Text/Tags gesperrt wie bei archiv
 würde, bricht mit dem Hinweis «Nur lesen» ab, und das Backend, das die Oberfläche und die Erweiterungen sehen, lehnt alle
 schreibenden Aufrufe mit der Kennung `READ_ONLY` ab. **Ausgenommen sind `setCollapsed` und `setAllCollapsed`**: Auf- und Zuklappen der Mindmap
 ist Ansicht, nicht Inhalt; ob es für alle gilt oder pro Person gespeichert wird, entscheidet das Backend. Hauptfarbe und Design
-lassen sich im Lesemodus nicht ändern (sie gelten für den ganzen Arbeitsbereich). Die lokale Hülle meldet nie `readOnly`.
+lassen sich im Lesemodus nicht ändern (sie gelten für den ganzen Arbeitsbereich). Die lokale Hülle meldet nie `readOnly`. Im Lesemodus ist auch der Kalenderexport ausgeblendet, weil er Kennungen in der Datenbank ablegt.
+
+**`embeds`** (seit v1.6.0): `'off'` schaltet das Einbetten von Videos aus (die Vorschau zeigt dann nur Links). Sonst gilt `'ask'`: Videos von YouTube, Vimeo und Dailymotion erscheinen als Karte und laden erst nach einem Klick
+(siehe [EMBEDS.md](EMBEDS.md)). Wer die Seite mit einem Schutzkopf (CSP) ausliefert, muss `frame-src` für die Hosts aus `NoNotesEmbeds.frameHosts()` öffnen, sonst blockiert der Browser den Rahmen.

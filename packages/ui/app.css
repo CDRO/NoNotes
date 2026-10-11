@@ -821,3 +821,14 @@ body:not(.view-tasks) .tasks-view { display: none; }
 .conflict-text .cf-base { color: var(--muted); }
 .history-empty { color: var(--muted); padding: 10px; }
 @media (max-width: 760px) { .history-body { grid-template-columns: 1fr; } .history-list { max-height: 25vh; } }
+
+/* ---------- Videos einbetten ---------- */
+.md-embed { margin: 12px 0; }
+.md-embed-card { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
+.md-embed-icon { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; background: var(--accent); color: var(--accent-contrast); flex: 0 0 auto; }
+.md-embed-text { flex: 1 1 200px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.md-embed-text small { color: var(--muted); }
+.md-embed-open { font-size: .9em; }
+.md-embed-frame { display: block; width: 100%; aspect-ratio: 16 / 9; border: 0; border-radius: var(--radius); background: #000; }
+.md-video-link { white-space: nowrap; }
+@media print { .md-embed { display: none; } }
