@@ -340,6 +340,9 @@
     el.langSelect.value = I18n.language();
     el.langSelect.addEventListener('change', async () => {
       I18n.setLanguage(el.langSelect.value, true);
+      // Erst die offene Notiz sichern: sonst fragt beforeunload nach «ungespeicherten Änderungen» oder das Neuladen bleibt hängen.
+      // Bei einem Konflikt entscheidet die Person zuerst; die Sprache gilt dann beim nächsten Laden.
+      try { if (!(await ensureSaved())) return; } catch (e) { /* neu laden trotzdem */ }
       try { await shell.flush(); } catch (e) { /* neu laden trotzdem */ }
       location.reload();
     });

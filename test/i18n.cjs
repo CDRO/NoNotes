@@ -411,14 +411,24 @@ async function packTest(browser, tmp) {
   assert.match(await page.locator('#viewQuestionsBtn').innerText(), /Fragen/, 'nicht übersetzter Text bleibt deutsch');
   step('Testpaket: Einzahl und Mehrzahl, Rückfall auf Deutsch');
 
-  // Wechsel auf Deutsch: gemerkt, nach dem Neuladen deutsch
-  await page.click('#menuBtn');
-  await page.selectOption('#langSelect', 'de');
+  // Wechsel auf Deutsch: gemerkt, nach dem Neuladen deutsch. Dabei steht noch eine Eingabe aus (kein Warten auf «gespeichert»):
+  // der Wechsel sichert sie selbst, statt an der Rückfrage «ungespeicherte Änderungen» hängen zu bleiben.
+  await page.click('#newBtn');
+  await page.waitForSelector('#editorPane:not([hidden])');
+  await page.evaluate(() => { // Eingabe und Sprachwechsel im selben Augenblick: das Speichern der Eingabe ist noch nicht ausgelöst
+    const title = document.querySelector('#title');
+    title.value = 'Three';
+    title.dispatchEvent(new Event('input', { bubbles: true }));
+    const select = document.querySelector('#langSelect');
+    select.value = 'de';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
   await page.waitForFunction(() => document.querySelector('#menuBtn').textContent.includes('Datenbank') && !document.querySelector('#menuBtn').textContent.includes('TT'));
   await page.waitForSelector(READY);
   assert.equal(await page.evaluate(() => localStorage.getItem('nonotes.lang')), 'de');
   assert.equal(await page.locator('#viewMapBtn').innerText(), 'Mindmap');
-  assert.equal(await page.locator('#count').innerText(), '2 Notizen', 'Daten bleiben beim Sprachwechsel erhalten');
+  assert.equal(await page.locator('#count').innerText(), '3 Notizen', 'Daten bleiben beim Sprachwechsel erhalten, auch die Eingabe, die noch aussteht');
+  assert.ok((await page.locator('#list .note-title').allInnerTexts()).includes('Three'), 'der Titel wurde vor dem Neuladen gesichert');
   step('Sprachwechsel: gespeichert, Seite neu geladen, Daten bleiben');
 
   // Standardtitel einer neuen Mindmap folgt der Sprache
