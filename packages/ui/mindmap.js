@@ -286,9 +286,12 @@
       const cx = dir > 0 ? child.x : child.x + child.w;
       const cy = child.y + child.h / 2;
       const mx = (px + cx) / 2;
+      // data-*: für Erweiterungen (Verbindung Eltern → Kind samt Endpunkten); 'root' ist die Wurzel
       svgEl('path', {
         class: 'mm-edge',
         d: `M ${px} ${py} C ${mx} ${py}, ${mx} ${cy}, ${cx} ${cy}`,
+        'data-from': String(parent.id), 'data-to': String(child.id),
+        'data-x1': px, 'data-y1': py, 'data-x2': cx, 'data-y2': cy,
       }, edgesG);
     }
 
@@ -401,10 +404,12 @@
     }
 
     function setSelected(id) {
+      const before = inst.selectedId;
       inst.selectedId = id == null ? null : (id === 'root' ? 'root' : Number(id));
       for (const g of nodesG.children) {
         g.classList.toggle('mm-selected', String(g.dataset.id) === String(inst.selectedId));
       }
+      if (before !== inst.selectedId && handlers.onSelectionChange) handlers.onSelectionChange(inst.selectedId);
     }
 
     /** Nachbar für Tastaturnavigation: 'up' | 'down' | 'left' | 'right'. */
