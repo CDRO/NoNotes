@@ -60,13 +60,14 @@
   }
 
   async function mapSvgFor(backend, list, scope, archived) {
-    if (scope === 'all') return Mindmap().toSvgString(await backend.getTree({ archive: !!archived }), { mapTitle: await backend.getMapTitle(), expandAll: true, accent: await Exporter().accentOf(backend) });
+    const links = await backend.getLinks(); // Querverweise: gezeichnet, wenn beide Enden im Bild sind
+    if (scope === 'all') return Mindmap().toSvgString(await backend.getTree({ archive: !!archived }), { mapTitle: await backend.getMapTitle(), expandAll: true, accent: await Exporter().accentOf(backend), links });
     const rows = await backend.getTree({ archive: true });
     const included = new Set(list.map(n => n.id));
     const subset = rows.filter(r => included.has(r.id)).map(r => Object.assign({}, r, {
       parent_id: r.parent_id != null && included.has(r.parent_id) ? r.parent_id : null,
     }));
-    return Mindmap().toSvgString(subset, { mapTitle: await backend.getMapTitle(), expandAll: true, accent: await Exporter().accentOf(backend) });
+    return Mindmap().toSvgString(subset, { mapTitle: await backend.getMapTitle(), expandAll: true, accent: await Exporter().accentOf(backend), links });
   }
 
   async function metaHtml(backend, n, note) {

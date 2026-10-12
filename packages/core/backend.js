@@ -30,7 +30,7 @@
     // Archiv
     'isArchived', 'archiveCount', 'archiveNote', 'unarchiveNote', 'countArchived',
     // Verweise zwischen Notizen
-    'findNoteByTitle', 'titleIndex',
+    'findNoteByTitle', 'titleIndex', 'getLinks',
     // Tags
     'getTags', 'setTags', 'listAllTags',
     // Fragen

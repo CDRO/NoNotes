@@ -31,6 +31,7 @@
   const VIEW_KEY = 'nonotes.view';
   const MODE_KEY = 'nonotes.editorMode';
   const ARCHIVE_KEY = 'nonotes.showArchive';
+  const LINKS_KEY = 'nonotes.showLinks';     // Querverweise ([[Titel*]]) in der Mindmap zeigen, je Browser
   const PLUGINS_KEY = 'nonotes.plugins';   // eingeschaltete Erweiterungen (Dateien in plugins/), je Browser
   const PREVIEW_DELAY_MS = 150;
 
@@ -68,7 +69,7 @@
     listScope: $('#listScope'), tagFilter: $('#tagFilter'), emptyTrashBtn: $('#emptyTrashBtn'),
     editor: $('#editor'), trashBar: $('#trashBar'), restoreBtn: $('#restoreBtn'), purgeBtn: $('#purgeBtn'),
     archiveBar: $('#archiveBar'), archiveBarText: $('#archiveBarText'), unarchiveBtn: $('#unarchiveBtn'), archiveBtn: $('#archiveBtn'),
-    mapArchiveBtn: $('#mapArchiveBtn'), multiArchiveBtn: $('#multiArchiveBtn'), printArchive: $('#printArchive'), exportArchive: $('#exportArchive'),
+    mapArchiveBtn: $('#mapArchiveBtn'), mapLinksBtn: $('#mapLinksBtn'), multiArchiveBtn: $('#multiArchiveBtn'), printArchive: $('#printArchive'), exportArchive: $('#exportArchive'),
     tagChips: $('#tagChips'), tagInput: $('#tagInput'), tagSuggestions: $('#tagSuggestions'),
     modeSwitch: $('#modeSwitch'), preview: $('#preview'),
     exportBtn: $('#exportBtn'), exportDialog: $('#exportDialog'), exportForm: $('#exportForm'),
@@ -148,6 +149,7 @@
     calHandle: null,          // gemerkte Kalenderdatei (.ics)
     scrollSync: null,         // synchrones Scrollen in der geteilten Ansicht
     showArchive: false,       // archivierte Notizen in der Mindmap zeigen
+    showLinks: true,          // Querverweise als gestrichelte Linien in der Mindmap zeigen
     renderTokens: {},         // je Ansicht der neueste Zeichenauftrag; ältere, spät fertige werden verworfen
     sync: null,               // Stand der offenen Notiz (siehe newSync): worauf der Editor aufbaut, Speichervorgang, Konflikt
     searchTimer: null,
@@ -317,6 +319,7 @@
       view = localStorage.getItem(VIEW_KEY) || 'map';
       mode = localStorage.getItem(MODE_KEY) || 'edit';
       state.showArchive = localStorage.getItem(ARCHIVE_KEY) === '1';
+      state.showLinks = localStorage.getItem(LINKS_KEY) !== '0';
     } catch (e) { /* egal */ }
     await setEditorMode(['edit', 'split', 'preview'].includes(mode) ? mode : 'edit');
 
@@ -1093,10 +1096,14 @@
     }
     await pruneMulti();
     const rows = await B.getTree({ archive: reveal });
+    const links = await B.getLinks();
     const mapTitle = await B.getMapTitle();
     if (!isLatest()) return;
-    state.map.render(rows, { mapTitle, matchIds });
+    const ids = new Set(rows.map(r => r.id));
+    const shown = links.filter(l => ids.has(l.from_id) && ids.has(l.to_id)); // Querverweise, deren beide Enden in dieser Karte sind
+    state.map.render(rows, { mapTitle, matchIds, links: state.showLinks ? shown : [] });
     await renderArchiveButton();
+    renderLinksButton(shown.length);
     state.map.setSelected(state.mapSelection);
     state.map.setMulti(state.multi);
     state.mapDirty = false;
@@ -1115,6 +1122,19 @@
     const n = await B.countArchived();
     el.mapArchiveBtn.setAttribute('aria-pressed', String(state.showArchive));
     el.mapArchiveBtn.textContent = (state.showArchive ? t('Archiv ausblenden') : t('Archiv anzeigen')) + (n ? ` (${n})` : '');
+  }
+
+  /** Schalter für die Querverweise, nur sichtbar, wenn es in dieser Karte welche gibt. */
+  function renderLinksButton(n) {
+    el.mapLinksBtn.hidden = !n;
+    el.mapLinksBtn.setAttribute('aria-pressed', String(state.showLinks));
+    el.mapLinksBtn.textContent = (state.showLinks ? t('Verweise ausblenden') : t('Verweise anzeigen')) + ` (${n})`;
+  }
+
+  async function toggleLinksView() {
+    state.showLinks = !state.showLinks;
+    try { localStorage.setItem(LINKS_KEY, state.showLinks ? '1' : '0'); } catch (e) { /* egal */ }
+    await renderMap();
   }
 
   async function toggleArchiveView() {
@@ -3235,6 +3255,7 @@
     el.emptyTrashBtn.addEventListener('click', emptyTrash);
     el.restoreBtn.addEventListener('click', restoreCurrent);
     el.mapArchiveBtn.addEventListener('click', toggleArchiveView);
+    el.mapLinksBtn.addEventListener('click', toggleLinksView);
     el.archiveBtn.addEventListener('click', async () => { if (state.currentId != null) await archiveNotes([state.currentId]); });
     el.unarchiveBtn.addEventListener('click', async () => { if (state.currentId != null) await unarchiveById(state.currentId); });
     el.multiArchiveBtn.addEventListener('click', () => archiveNotes([...state.multi]));

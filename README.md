@@ -143,6 +143,7 @@ Die Notizen bilden einen Baum um einen zentralen Knoten, dessen Titel du per Dop
 | Löschen | `Entf` oder Rechtsklick → Löschen. Unternotizen rücken zum übergeordneten Knoten auf. |
 | Navigieren | Pfeiltasten wandern durch den Baum. Mausrad zoomt, Ziehen der Fläche verschiebt, `0` oder **Einpassen** zeigt alles. |
 | Mehrere auswählen | `Ctrl`+Klick (oder `Shift`+Klick) sammelt Knoten; die Leiste unten zeigt die Anzahl, bietet **Drucken…** und **Auswahl aufheben** (`Esc`). In der Liste geht `Ctrl`+Klick ebenso. |
+| Querverweise | Ein `[[Titel*]]` im Text (Stern am Ende) zieht eine **gestrichelte Linie** mit Pfeil zur Notiz mit diesem Titel, quer zur Hierarchie. Der Schalter **Verweise** in der Leiste blendet alle Linien aus oder ein und erscheint nur, wenn es welche gibt; die Wahl merkt sich der Browser. Eingeklappte Ziele bekommen keine Linie. Export und Druck zeichnen die Linien im Mindmap-Bild. |
 
 ### Hauptfarbe
 
@@ -292,6 +293,7 @@ Dasselbe gilt für Fragen.
 - Der Text ist Markdown: Überschriften, Listen, Aufgabenlisten `- [ ]`, Zitate, Code,
   Links, Bilder, fett und kursiv. `[[Titel]]` verweist auf eine andere Notiz; ein Klick in
   der Vorschau öffnet sie, bei fehlendem Ziel wird sie auf Wunsch als Unternotiz angelegt.
+  `[[Titel*]]` ist ein **Querverweis**: derselbe Link, dazu eine gestrichelte Linie in der Mindmap.
   Adressen ohne `https://` wie `www.beispiel.ch` werden automatisch ergänzt.
 - Die **Toolleiste** über dem Text setzt alles per Klick: Überschrift (Auswahlliste), fett,
   kursiv, durchgestrichen, Code, Listen, Aufgabe, Zitat, Codeblock, Trennlinie, Link,
@@ -349,6 +351,7 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | Erweiterungen | `packages/core/plugins.js` (Verzeichnis, Lader, Schalter, Ereignisse) und die Anbindung in `packages/ui/app.js`; Ordner `plugins/` mit Liste, Anleitung und Beispielen; das Verzeichnis des Ordners erzeugt `tools/build.cjs` (siehe [docs/PLUGINS.md](docs/PLUGINS.md)) |
 | Verlauf | `packages/core/history.js` (Patches und Zeilenvergleich als reine Textfunktionen); Fassungen und Aufbewahrung in `packages/data/db.js`, Dialog in `packages/ui/app.js`; wer eine Fassung geschrieben hat, steht in `author` (nur wenn ein Backend einen Namen liefert) |
 | Videos | `packages/core/embeds.js` erkennt Adressen von YouTube, Vimeo und Dailymotion (nur genau passende Hosts und Kennungen); `markdown.js` macht aus einer Adresse allein auf einer Zeile eine Karte, die Vorschau baut den Rahmen erst nach dem Klick (siehe [docs/EMBEDS.md](docs/EMBEDS.md)); Tests `test/embeds.cjs`, `test/embeds-ui.cjs` |
+| Querverweise | `[[Titel*]]` im Text: `packages/core/links.js` liest sie, `db.js` führt den Index `note_links` (Schema 13) beim Speichern nach und löst Ziele über den Titel auf (`getLinks`); die Mindmap zeichnet gestrichelte Linien mit Pfeil zwischen sichtbaren Knoten, auch im SVG für Export und Druck; Schalter «Verweise» in der Leiste (je Browser gemerkt); Test `test/links.cjs` |
 | Lesemodus | Meldet die Hülle `readOnly` (siehe [docs/BACKEND.md](docs/BACKEND.md)), sperrt `packages/ui/app.js` alle Schreibwege (`data-write`, `denyWrite()`) und `readOnlyBackend` lehnt schreibende Aufrufe mit `READ_ONLY` ab; Test `test/readonly.cjs` |
 | Zusammenführen | `packages/core/merge.js`: zeilenweiser Dreiwege-Vergleich (Myers) für gleichzeitige Änderungen derselben Notiz; Speichern mit `baseUpdatedAt`, Konfliktdialog in `packages/ui/app.js` |
 | Hauptfarbe | `packages/core/palette.js`: acht Farben mit heller und dunkler Fassung (Fläche, Schrift auf der Fläche, Farbe als Schrift, Tönung); die Seite setzt sie über CSS-Variablen, Export und Druck über `toSvgString` |
@@ -432,7 +435,7 @@ in die Datenbankdatei, die Mindmap-Bedienung, Fragen, Markdown-Vorschau, Tags, P
 Umsortieren per Drag & Drop, Bild-Anhänge, den Export (Ordner und ZIP), das Drucken (mit gestubbtem
 `window.print`), Toolleiste und Hilfe, Aufgaben, Termine mit Uhrzeit, den Kalenderexport, das synchrone
 Scrollen der geteilten Ansicht, Unteraufgaben, das Archiv und die Migration alter Datenbanken. Dazu
-kommen der Vertrag der Backend-Schnittstelle (`test/backend.cjs`), die Datenbankschicht mit Schema 12, Konflikterkennung und Autor (`test/db.cjs`), das Zusammenführen (`test/merge.cjs`), gleichzeitiges Arbeiten und Änderungen von aussen (`test/conflict.cjs`, `test/external.cjs`), der Build fremder Ausprägungen (`test/build.cjs`), die Hauptfarbe (`test/palette.cjs`), die Erweiterungs-Schnittstelle (`test/plugins.cjs`), den Verlauf (`test/history.cjs`) und die
+kommen der Vertrag der Backend-Schnittstelle (`test/backend.cjs`), die Datenbankschicht mit Schema 13, Konflikterkennung, Autor und Querverweise (`test/db.cjs`), das Zusammenführen (`test/merge.cjs`), gleichzeitiges Arbeiten und Änderungen von aussen (`test/conflict.cjs`, `test/external.cjs`), der Build fremder Ausprägungen (`test/build.cjs`), die Hauptfarbe (`test/palette.cjs`), die Erweiterungs-Schnittstelle (`test/plugins.cjs`), den Verlauf (`test/history.cjs`) und die
 Sprachprüfungen (`test/i18n.cjs`, `tools/i18n.cjs lint` und `check`):
 
 ```bash

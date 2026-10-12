@@ -1,5 +1,5 @@
-/* Test der Datenbankschicht ohne Browser: Schema 12 (Autor), Migration aus Schema 11, Konflikterkennung beim Speichern (NOTE_CONFLICT),
-   Autor im Verlauf. Lädt dieselben Skripte wie die Seite in einen vm-Kontext, mit festgehaltener Uhr.
+/* Test der Datenbankschicht ohne Browser: Schema 13 (Autor, Querverweise), Migration aus Schema 11, Konflikterkennung beim Speichern
+   (NOTE_CONFLICT), Autor im Verlauf, Querverweise [[Titel*]]. Lädt dieselben Skripte wie die Seite in einen vm-Kontext, mit festgehaltener Uhr.
    Ausführen: node test/db.cjs */
 'use strict';
 
@@ -23,7 +23,7 @@ async function main() {
     static now() { return now; }
   };
   const context = vm.createContext(sandbox);
-  for (const f of ['packages/core/i18n.js', 'packages/core/history.js', 'packages/core/dates.js', 'packages/core/questions.js', 'packages/core/tasks.js', 'packages/core/backend.js', 'packages/core/merge.js', 'packages/data/db.js']) {
+  for (const f of ['packages/core/i18n.js', 'packages/core/history.js', 'packages/core/dates.js', 'packages/core/questions.js', 'packages/core/tasks.js', 'packages/core/links.js', 'packages/core/backend.js', 'packages/core/merge.js', 'packages/data/db.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
   }
   const SQL = await require(path.join(ROOT, 'vendor', 'sql.js', 'sql-asm.js'))();
@@ -31,13 +31,14 @@ async function main() {
   const Backend = sandbox.NoNotesBackend;
   const json = v => JSON.parse(JSON.stringify(v));
 
-  // ---------- Schema 12 ----------
+  // ---------- Schema 13 ----------
   let db = DB.open(SQL, null);
   const cols = (d, t) => d.exec(`PRAGMA table_info(${t})`)[0].values.map(r => r[1]);
-  assert.equal(DB.getMeta(db, 'schema_version'), '12');
+  assert.equal(DB.getMeta(db, 'schema_version'), '13');
   assert.ok(cols(db, 'notes').includes('updated_by'));
   assert.ok(cols(db, 'note_history').includes('author'));
-  step('Schema 12: Spalten updated_by (Notiz) und author (Verlauf)');
+  assert.deepEqual(cols(db, 'note_links'), ['id', 'note_id', 'title', 'key', 'line_no']);
+  step('Schema 13: Spalten updated_by (Notiz) und author (Verlauf), Tabelle note_links (Querverweise)');
 
   // ---------- Migration aus Schema 11 (Tabellen so, wie v1.3 und v1.4 sie anlegten) ----------
   {
@@ -65,7 +66,7 @@ async function main() {
     const bytes = old.export();
     old.close();
     const migrated = DB.open(SQL, bytes);
-    assert.equal(DB.getMeta(migrated, 'schema_version'), '12');
+    assert.equal(DB.getMeta(migrated, 'schema_version'), '13');
     assert.ok(cols(migrated, 'notes').includes('updated_by') && cols(migrated, 'note_history').includes('author'));
     assert.equal(DB.getNote(migrated, 1).title, 'Alt');
     assert.equal(DB.getNote(migrated, 1).updated_by, null);
@@ -140,6 +141,52 @@ async function main() {
   DB.updateNote(db, lonely, 'x', 'vier', { author: 'A'.repeat(200) });
   assert.equal(DB.getNote(db, lonely).updated_by.length, 80);
   step('Autor: leer wird zu keinem Autor, zu lange Namen werden gekürzt');
+
+  // ---------- Querverweise [[Titel*]] (Schema 13) ----------
+  {
+    const d = DB.open(SQL, null);
+    const alpha = DB.createNote(d, null);
+    const beta = DB.createNote(d, null);
+    const gamma = DB.createNote(d, alpha);
+    DB.renameNote(d, beta, 'Beta');
+    DB.renameNote(d, gamma, 'Gamma');
+    DB.updateNote(d, alpha, 'Alpha', 'Siehe [[Beta*]] und [[Gamma]] und [[Alpha*]] und [[Nirgends*]] und [[beta *]]\n```\n[[Gamma*]]\n```\nEnde [[ *]]');
+    DB.updateNote(d, gamma, 'Gamma', 'Zurück zu [[ALPHA*]] und nochmals [[Alpha*]]');
+    const links = () => json(DB.getLinks(d));
+    assert.deepEqual(links(), [{ from_id: alpha, to_id: beta, title: 'Beta' }, { from_id: gamma, to_id: alpha, title: 'ALPHA' }]);
+    assert.equal(d.exec('SELECT count(*) FROM note_links')[0].values[0][0], 4, 'je Notiz und Ziel ein Eintrag (Alpha: beta, alpha, nirgends; Gamma: alpha); ohne Ziel wartet der Eintrag, auf sich selbst zählt er nicht');
+    step('Querverweise: nur [[Titel*]] zählt, Gross-/Kleinschreibung egal, Code-Block und leerer Titel nicht, auf sich selbst keine Linie');
+
+    DB.updateNote(d, alpha, 'Alpha', 'Siehe [[Beta]]');
+    assert.deepEqual(links(), [{ from_id: gamma, to_id: alpha, title: 'ALPHA' }], 'ohne Stern verschwindet die Linie');
+    DB.updateNote(d, alpha, 'Alpha', 'Siehe [[Beta*]]');
+    DB.deleteNote(d, beta);
+    assert.deepEqual(links(), [{ from_id: gamma, to_id: alpha, title: 'ALPHA' }], 'gelöschtes Ziel: keine Linie');
+    DB.restoreNote(d, beta);
+    assert.equal(links().length, 2, 'zurückgeholt: die Linie ist wieder da');
+    DB.archiveNote(d, beta);
+    assert.equal(links().length, 2, 'archiviertes Ziel bleibt Ziel (die Karte zeigt die Linie nur mit dem Archiv)');
+    DB.unarchiveNote(d, beta);
+    const beta2 = DB.createNote(d, null);
+    tick(1000);
+    DB.updateNote(d, beta2, 'beta', 'zweite Notiz mit demselben Titel');
+    assert.equal(links().find(l => l.from_id === alpha).to_id, beta2, 'gleicher Titel: wie bei [[Titel]] gewinnt die aktive, zuletzt geänderte Notiz');
+    DB.deleteNote(d, gamma);
+    DB.emptyTrash(d);
+    assert.equal(d.exec('SELECT count(*) FROM note_links WHERE note_id = ?', [gamma])[0].values[0][0], 0, 'endgültig gelöscht: Einträge weg');
+    step('Querverweise folgen Text, Papierkorb, Archiv und Titelauflösung');
+
+    // Migration aus Schema 12: bestehende Texte werden gelesen
+    const old = new SQL.Database(DB.exportBytes(d));
+    old.run('DROP TABLE note_links');
+    old.run("UPDATE meta SET value = '12' WHERE key = 'schema_version'");
+    const bytes = old.export();
+    old.close();
+    const mig = DB.open(SQL, bytes);
+    assert.equal(DB.getMeta(mig, 'schema_version'), '13');
+    assert.equal(json(DB.getLinks(mig)).length, 1, 'die Linie Alpha → beta kommt aus dem bestehenden Text');
+    step('Migration aus Schema 12: Tabelle angelegt und aus den Texten gefüllt');
+  }
 
   console.log('\nDatenbank-Test bestanden.');
 }

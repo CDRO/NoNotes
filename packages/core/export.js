@@ -87,9 +87,10 @@
   }
 
   function inline(text, resolveLink, resolveAttachment) {
-    let out = text.replace(/\[\[([^\]]+)\]\]/g, (m, title) => {
-      const href = resolveLink ? resolveLink(title.trim()) : null;
-      return href ? `[${title.trim()}](${href})` : title.trim();
+    let out = text.replace(/\[\[([^\]]+)\]\]/g, (m, inner) => {
+      const title = inner.trim().replace(/\*$/, '').trim() || inner.trim(); // [[Titel*]] (Querverweis) wird derselbe Link
+      const href = resolveLink ? resolveLink(title) : null;
+      return href ? `[${title}](${href})` : title;
     });
     out = out.replace(/\]\((www\.[^)\s]+)/gi, '](https://$1');
     if (resolveAttachment) {
@@ -227,7 +228,9 @@
   }
 
   async function renderSvg(backend, options) {
-    return Mindmap().toSvgString(await backend.getTree({ archive: !!(options && options.archived) }), { mapTitle: await backend.getMapTitle(), expandAll: true, accent: await accentOf(backend) });
+    return Mindmap().toSvgString(await backend.getTree({ archive: !!(options && options.archived) }), {
+      mapTitle: await backend.getMapTitle(), expandAll: true, accent: await accentOf(backend), links: await backend.getLinks(),
+    });
   }
 
   /** SVG-Zeichenkette → PNG-Bytes über ein Canvas. */

@@ -35,7 +35,7 @@ async function contract() {
   const miss = C.missing(B);
   if (miss.length) fail('Methoden fehlen: ' + miss.join(', '));
   // Jede Funktion in db.js, die mit db als erstem Argument arbeitet, ist Teil des Vertrags oder bewusst intern.
-  const INTERNAL = new Set(['open', 'exportBytes', 'configure', 'normalizeTag', 'syncQuestions', 'syncTasks', 'subtreeNoteIds']);
+  const INTERNAL = new Set(['open', 'exportBytes', 'configure', 'normalizeTag', 'syncQuestions', 'syncTasks', 'syncLinks', 'subtreeNoteIds']);
   for (const [name, fn] of Object.entries(DB)) {
     if (typeof fn !== 'function' || INTERNAL.has(name)) continue;
     if (!C.METHODS.includes(name)) fail(`db.js-Funktion ${name} ist weder im Vertrag noch als intern vermerkt`);
@@ -90,6 +90,8 @@ async function contract() {
   await call('listNotes', '', {});
   await call('countNotes', {});
   await call('findNoteByTitle', 'Beta');
+  const links = await call('getLinks');
+  if (!Array.isArray(links)) fail('getLinks liefert keine Liste');
   const index = await call('titleIndex');
   if (!Array.isArray(index) || !index.length || !Array.isArray(index[0]) || index[0].length !== 2) fail('titleIndex liefert keine Paare');
   await call('getTags', a);

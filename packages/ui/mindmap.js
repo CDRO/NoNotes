@@ -1,6 +1,6 @@
 /* NoNotes – Mindmap: Layout, SVG-Darstellung und Interaktion.
-   Kennt keine Datenbank. Bekommt flache Zeilen (id, title, parent_id, sort_order, collapsed, badge)
-   und meldet Aktionen über Rückrufe. */
+   Kennt keine Datenbank. Bekommt flache Zeilen (id, title, parent_id, sort_order, collapsed, badge), dazu Querverweise
+   ({ from_id, to_id, title }; gestrichelte Linien quer zur Hierarchie, seit v1.8.0) und meldet Aktionen über Rückrufe. */
 (function (global) {
   'use strict';
 
@@ -143,12 +143,56 @@
     return { placed, bounds };
   }
 
+  // ---------- Querverweise ----------
+
+  /** Pfad eines Querverweises von Knoten a zu Knoten b: waagerecht zwischen den zugewandten Seiten; liegen beide in derselben
+   *  Spalte, als Bogen über die Aussenseite der Karte, damit die Linie nicht durch die Knoten dazwischen läuft. */
+  function linkPath(a, b) {
+    const y1 = a.y + a.h / 2;
+    const y2 = b.y + b.h / 2;
+    const rightOf = b.x >= a.x + a.w;
+    if (rightOf || b.x + b.w <= a.x) {
+      const x1 = rightOf ? a.x + a.w : a.x;
+      const x2 = rightOf ? b.x : b.x + b.w;
+      const dx = (x2 - x1) / 2;
+      return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+    }
+    const dir = (a.dir || b.dir || 1) > 0 ? 1 : -1; // Seite der Karte: der Bogen zeigt von der Wurzel weg
+    const x1 = dir > 0 ? a.x + a.w : a.x;
+    const x2 = dir > 0 ? b.x + b.w : b.x;
+    const bulge = dir * Math.min(90, Math.abs(y2 - y1) / 2 + 24);
+    return `M ${x1} ${y1} C ${x1 + bulge} ${y1}, ${x2 + bulge} ${y2}, ${x2} ${y2}`;
+  }
+
+  /** Querverweise, deren beide Enden gezeichnet sind (nicht eingeklappt, nicht die Wurzel): [{ a, b, title }], je Paar einmal. */
+  function drawableLinks(links, placed) {
+    const byId = new Map(placed.filter(n => !n.isRoot).map(n => [n.id, n]));
+    const out = [];
+    const seen = new Set();
+    for (const l of links || []) {
+      const a = byId.get(l.from_id);
+      const b = byId.get(l.to_id);
+      if (!a || !b || a === b) continue;
+      const key = `${a.id}>${b.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ a, b, title: l.title });
+    }
+    return out;
+  }
+
+  const ARROW_ATTRS = { viewBox: '0 0 10 10', refX: '9', refY: '5', markerWidth: '7', markerHeight: '7', orient: 'auto-start-reverse' };
+  const ARROW_PATH = 'M 0 0 L 10 5 L 0 10 z';
+
   // ---------- Instanz ----------
 
   function create(svg, handlers) {
     handlers = handlers || {};
+    const defs = svgEl('defs', null, svg);
+    svgEl('path', { d: ARROW_PATH }, svgEl('marker', Object.assign({ id: 'mmLinkArrow', class: 'mm-link-arrow' }, ARROW_ATTRS), defs));
     const viewport = svgEl('g', { class: 'mm-viewport' }, svg);
     const edgesG = svgEl('g', { class: 'mm-edges' }, viewport);
+    const linksG = svgEl('g', { class: 'mm-links' }, viewport);
     const nodesG = svgEl('g', { class: 'mm-nodes' }, viewport);
     const overlayG = svgEl('g', { class: 'mm-overlay' }, viewport);
     const dropLine = svgEl('line', { class: 'mm-drop-line', visibility: 'hidden' }, overlayG);
@@ -248,6 +292,20 @@
       }, edgesG);
     }
 
+    /** Gestrichelte Linie eines Querverweises; bei einer Suche blass, wenn ein Ende kein Treffer ist. */
+    function drawLink(l) {
+      const dim = svg.classList.contains('has-matches') && [l.a, l.b].some(n => !n.match && !n.matchInside);
+      const p = svgEl('path', {
+        class: 'mm-link' + (dim ? ' mm-dim' : ''),
+        d: linkPath(l.a, l.b),
+        'data-from': l.a.id, 'data-to': l.b.id,
+        'marker-end': 'url(#mmLinkArrow)',
+      }, linksG);
+      const name = n => (n.title || '').trim() || t('Ohne Titel');
+      svgEl('title', null, p).textContent = t('Verweis von „{von}“ auf „{nach}“', { von: name(l.a), nach: name(l.b) });
+    }
+
+    /** rows wie getTree; options.mapTitle, options.matchIds (Suche), options.links (Querverweise, nur sichtbare Enden werden gezeichnet). */
     function render(rows, options) {
       options = options || {};
       const { root, byId } = buildTree(rows, options.mapTitle || '');
@@ -272,10 +330,12 @@
       }
 
       edgesG.replaceChildren();
+      linksG.replaceChildren();
       nodesG.replaceChildren();
       for (const n of placed) {
         for (const c of n.visibleChildren) drawEdge(n, c);
       }
+      for (const l of drawableLinks(options.links, placed)) drawLink(l);
       for (const n of placed) drawNode(n);
 
       if (inst.needsFit) { fit(); inst.needsFit = false; }
@@ -538,7 +598,7 @@
   }
 
   /** Rendert die Mindmap als eigenständige SVG-Zeichenkette (helles Farbschema, Stile eingebettet).
-   *  rows wie bei render(); options.mapTitle, options.expandAll (eingeklappte Äste aufklappen). */
+   *  rows wie bei render(); options.mapTitle, options.expandAll (eingeklappte Äste aufklappen), options.links (Querverweise). */
   function toSvgString(rows, options) {
     options = options || {};
     const prepared = options.expandAll ? rows.map(r => Object.assign({}, r, { collapsed: 0 })) : rows;
@@ -572,6 +632,12 @@
         const mx = (px + cx) / 2;
         parts.push(`<path d="M ${px} ${py} C ${mx} ${py}, ${mx} ${cy}, ${cx} ${cy}" fill="none" stroke="${c.muted}" stroke-opacity="0.55" stroke-width="2"/>`);
       }
+    }
+    const links = drawableLinks(options.links, placed);
+    if (links.length) {
+      const attrs = Object.entries(ARROW_ATTRS).map(([k, v]) => `${k}="${v}"`).join(' ');
+      parts.push(`<defs><marker id="mmLinkArrow" ${attrs}><path d="${ARROW_PATH}" fill="${c.muted}"/></marker></defs>`);
+      for (const l of links) parts.push(`<path d="${linkPath(l.a, l.b)}" fill="none" stroke="${c.muted}" stroke-opacity="0.8" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#mmLinkArrow)"/>`);
     }
     for (const n of placed) {
       const fill = n.isRoot ? c.accent : c.panel;

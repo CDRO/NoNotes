@@ -393,6 +393,10 @@ body:not(.view-list).editor-open #editorPane { max-width: 1000px; }
 .mindmap:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
 
 .mm-edge { fill: none; stroke: var(--muted); stroke-opacity: .55; stroke-width: 2; }
+.mm-link { fill: none; stroke: var(--muted); stroke-opacity: .8; stroke-width: 1.5; stroke-dasharray: 6 4; pointer-events: stroke; }
+.mm-link:hover { stroke: var(--accent); stroke-opacity: 1; }
+.mm-link-arrow path { fill: var(--muted); }
+.mindmap.has-matches .mm-link.mm-dim { opacity: .25; }
 
 .mm-node { cursor: pointer; }
 .mm-node rect { fill: var(--panel); stroke: var(--border); stroke-width: 1.5; transition: stroke .12s, fill .12s; }
@@ -537,6 +541,7 @@ body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-
 .md a, .q-item a { color: var(--accent-ink); }
 .md a.md-wiki, .q-item a.md-wiki { text-decoration: none; border-bottom: 1px dashed var(--accent-ink); }
 .md a.md-wiki.missing, .q-item a.md-wiki.missing { color: var(--muted); border-bottom-color: var(--muted); }
+.md a.md-wiki-cross::before { content: "⇢ "; opacity: .7; }
 .md a.md-wiki.missing::after { content: " +"; opacity: .7; }
 .q-item a.md-wiki.missing::after { content: " ?"; opacity: .7; }
 .md-q { display: flex; gap: 10px; align-items: flex-start; margin: .6em 0; padding: 8px 12px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border); }

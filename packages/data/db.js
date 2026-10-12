@@ -3,7 +3,7 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 12;
+  const SCHEMA_VERSION = 13;
 
   // Verlauf pro Notiz: eine «Arbeitsphase» endet nach so langer Pause oder so langer Dauer; danach beginnt eine neue Fassung.
   // Aufbewahrt werden höchstens so viele Fassungen und Tage; meta history_max_versions / history_max_days / history_enabled ('0') ändern das.
@@ -139,6 +139,7 @@
       CREATE INDEX idx_tasks_note ON tasks (note_id);
     `);
     createHistoryTable(db);
+    createLinksTable(db);
     setMeta(db, 'schema_version', SCHEMA_VERSION);
     setMeta(db, 'created_at', nowIso());
     setMeta(db, 'map_title', defaultMapTitle);
@@ -305,6 +306,13 @@
       const histCols = selectAll(db, 'PRAGMA table_info(note_history)').map(c => c.name);
       if (!histCols.includes('author')) db.exec('ALTER TABLE note_history ADD COLUMN author TEXT');
       version = 12;
+    }
+
+    if (version < 13) {
+      // Querverweise [[Titel*]]: Index je Notiz, aus den bestehenden Texten gefüllt
+      createLinksTable(db);
+      for (const row of selectAll(db, 'SELECT id, body FROM notes WHERE deleted_at IS NULL')) syncLinks(db, row.id, row.body);
+      version = 13;
     }
 
     setMeta(db, 'schema_version', SCHEMA_VERSION);
@@ -474,6 +482,7 @@
     db.run('UPDATE notes SET title = ?, body = ?, updated_at = ?, updated_by = ? WHERE id = ?', [title, body, ts, author, id]);
     syncQuestions(db, id, body);
     syncTasks(db, id, body);
+    syncLinks(db, id, body);
     return ts;
   }
 
@@ -751,6 +760,7 @@
     db.run('DELETE FROM note_tags WHERE note_id = ?', [id]);
     db.run('DELETE FROM attachments WHERE note_id = ?', [id]);
     db.run('DELETE FROM tasks WHERE note_id = ?', [id]);
+    db.run('DELETE FROM note_links WHERE note_id = ?', [id]);
     db.run('DELETE FROM note_history WHERE note_id = ?', [id]);
     db.run('DELETE FROM notes WHERE id = ?', [id]);
     pruneTags(db);
@@ -789,6 +799,46 @@
       }
     }
     for (const e of unused) db.run('DELETE FROM tasks WHERE id = ?', [e.id]);
+  }
+
+  // ---------- Querverweise ----------
+
+  /** Querverweise [[Titel*]] je Notiz (Schema 13); das Ziel wird beim Lesen über den Titel aufgelöst. */
+  function createLinksTable(db) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS note_links (
+        id      INTEGER PRIMARY KEY AUTOINCREMENT,
+        note_id INTEGER NOT NULL,
+        title   TEXT NOT NULL,
+        key     TEXT NOT NULL,
+        line_no INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_note_links_note ON note_links (note_id);
+    `);
+  }
+
+  /** Gleicht die Querverweise einer Notiz mit ihrem Text ab (packages/core/links.js liest sie). */
+  function syncLinks(db, noteId, body) {
+    const L = global.NoNotesLinks;
+    if (!L) return;
+    db.run('DELETE FROM note_links WHERE note_id = ?', [noteId]);
+    for (const l of L.parse(body)) {
+      db.run('INSERT INTO note_links (note_id, title, key, line_no) VALUES (?, ?, ?, ?)', [noteId, l.title, l.key, l.lineIndex]);
+    }
+  }
+
+  /** Querverweise zwischen lebenden Notizen: [{ from_id, to_id, title }], in der Reihenfolge der Notizen und des Textes.
+   *  Das Ziel ist die Notiz mit diesem Titel wie bei [[Titel]] (ohne Gross-/Kleinschreibung; bei mehreren die aktive, dann die
+   *  zuletzt geänderte); ohne Ziel oder auf sich selbst gibt es keinen Eintrag. Archivierte Notizen zählen an beiden Enden. */
+  function getLinks(db) {
+    const index = titleIndex(db);
+    const out = [];
+    for (const r of selectAll(db, 'SELECT l.note_id, l.title, l.key FROM note_links l JOIN notes n ON n.id = l.note_id WHERE n.deleted_at IS NULL ORDER BY l.note_id, l.id')) {
+      const to = index.get(r.key);
+      if (to == null || to === r.note_id) continue;
+      out.push({ from_id: r.note_id, to_id: to, title: r.title });
+    }
+    return out;
   }
 
   /** Aufgaben über alle lebenden Notizen. status: 'open' | 'done' | 'all'; sort: 'due' | 'note'. */
@@ -1188,6 +1238,8 @@
     listAllTags,
     normalizeTag,
     syncTasks,
+    syncLinks,
+    getLinks,
     listTasks,
     countTasks,
     getTask,

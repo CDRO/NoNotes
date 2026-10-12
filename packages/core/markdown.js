@@ -1,7 +1,7 @@
 /* NoNotes – kleiner, sicherer Markdown-Renderer.
    Unterstützt Überschriften, Absätze mit Zeilenumbrüchen, Listen (auch verschachtelt, auch
    Aufgaben), Zitate, Codeblöcke, Trennlinien, fett/kursiv/durchgestrichen, Code, Links,
-   Bilder, automatische Links, [[Titel]]-Verweise auf Notizen sowie die NoNotes-Zeilen
+   Bilder, automatische Links, [[Titel]]-Verweise auf Notizen (auch [[Titel*]], Querverweis) sowie die NoNotes-Zeilen
    "? Frage" und "! Antwort". Aller Text wird escaped; URLs sind auf sichere Schemata beschränkt.
 
    Videos (YouTube, Vimeo, Dailymotion; siehe embeds.js): Steht eine Zeile allein aus einer solchen Adresse oder aus ![Titel](Adresse) und
@@ -99,13 +99,15 @@
         }
       }
 
-      // [[Titel]]
+      // [[Titel]] und [[Titel*]] (Querverweis: dazu eine gestrichelte Linie in der Mindmap, siehe packages/core/links.js)
       if (ch === '[' && src[i + 1] === '[') {
         const close = src.indexOf(']]', i + 2);
         if (close > i) {
-          const title = src.slice(i + 2, close).trim();
+          const raw = src.slice(i + 2, close).trim();
+          const cross = raw.endsWith('*');
+          const title = (cross ? raw.slice(0, -1) : raw).trim();
           const id = ctx.resolveTitle ? ctx.resolveTitle(title) : null;
-          out += `<a href="#" class="md-wiki${id == null ? ' missing' : ''}" data-title="${escapeHtml(title)}"${id != null ? ` data-note-id="${id}"` : ''}>${text(title)}</a>`;
+          out += `<a href="#" class="md-wiki${cross ? ' md-wiki-cross' : ''}${id == null ? ' missing' : ''}" data-title="${escapeHtml(title)}"${id != null ? ` data-note-id="${id}"` : ''}>${text(title)}</a>`;
           i = close + 2;
           continue;
         }
