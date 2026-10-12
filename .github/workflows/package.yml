@@ -63,29 +63,75 @@ jobs:
           echo "Version: ${VERSION} (Release: ${RELEASE})"
 
       - name: ZIP bauen (lokale Ausprägung, mit der Versionsnummer in der App)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          node tools/build.cjs --edition local --version "${{ steps.version.outputs.version }}"
-          (cd dist/NoNotes && zip -r -X "../NoNotes-${{ steps.version.outputs.version }}.zip" .)
-          ls -la dist
-          unzip -l dist/NoNotes-*.zip
+          node tools/build.cjs --edition local --version "$VERSION"
+          (cd dist/NoNotes && zip -r -X "../NoNotes-$VERSION.zip" .)
+          unzip -l "dist/NoNotes-$VERSION.zip"
 
       - name: ZIP als Artefakt bereitstellen
         uses: actions/upload-artifact@v4
         with:
           name: NoNotes-${{ steps.version.outputs.version }}
-          path: dist/NoNotes-*.zip
+          path: dist/NoNotes-${{ steps.version.outputs.version }}.zip
           if-no-files-found: error
 
-      - name: Release anlegen (Tag oder manueller Start mit Version)
+      # Zweites Artefakt «NoNotes (with Plugins)»: dieselbe App samt allen Erweiterungen aus CDRO/NoNotes-plugins.
+      # Ist dieses Repository privat, braucht es hier ein Secret PLUGINS_TOKEN (Fine-grained Token, Leserecht auf
+      # dessen Inhalt); ohne Zugriff gibt es eine Warnung und nur das ZIP ohne Erweiterungen.
+      - name: Erweiterungen holen (CDRO/NoNotes-plugins)
+        id: plugins
+        uses: actions/checkout@v5
+        continue-on-error: true
+        with:
+          repository: CDRO/NoNotes-plugins
+          token: ${{ secrets.PLUGINS_TOKEN || github.token }}
+          path: build/erweiterungen
+          persist-credentials: false
+
+      - name: Hinweis, wenn die Erweiterungen fehlen
+        if: steps.plugins.outcome != 'success'
+        run: echo "::warning::CDRO/NoNotes-plugins konnte nicht geholt werden (privat? dann Secret PLUGINS_TOKEN mit Leserecht anlegen). Es gibt nur das ZIP ohne Erweiterungen."
+
+      - name: ZIP mit Erweiterungen bauen (NoNotes-with-Plugins)
+        if: steps.plugins.outcome == 'success'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          node tools/build.cjs --edition local --version "$VERSION" --plugins build/erweiterungen --out dist/NoNotes-with-Plugins
+          node -e '
+            const fs = require("node:fs");
+            const list = fs.readFileSync("dist/NoNotes-with-Plugins/plugins/plugins.js", "utf8");
+            const cat = JSON.parse(/NoNotesPlugins\.catalog\((\[[\s\S]*?\])\);/.exec(list)[1]);
+            console.log("Erweiterungen im Verzeichnis:");
+            for (const e of cat) console.log(`  ${e.file}  ${e.id ? `${e.name} ${e.version || ""} (api ${e.api})` : "(ohne Angaben; meldet sich erst im Browser)"}`);
+            const extern = cat.filter(e => !e.file.startsWith("beispiele/"));
+            if (!extern.length) { console.error("Keine Erweiterung aus CDRO/NoNotes-plugins im Verzeichnis"); process.exit(1); }
+          '
+          (cd dist/NoNotes-with-Plugins && zip -r -X "../NoNotes-with-Plugins-$VERSION.zip" .)
+          unzip -l "dist/NoNotes-with-Plugins-$VERSION.zip" | grep -E "plugins/|files$"
+
+      - name: ZIP mit Erweiterungen als Artefakt bereitstellen
+        if: steps.plugins.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: NoNotes-with-Plugins-${{ steps.version.outputs.version }}
+          path: dist/NoNotes-with-Plugins-${{ steps.version.outputs.version }}.zip
+          if-no-files-found: error
+
+      - name: Release anlegen (Tag oder manueller Start mit Version; beide ZIPs, falls gebaut)
         if: steps.version.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
+          ls -la dist/NoNotes-*.zip
           if gh release view "$VERSION" >/dev/null 2>&1; then
-            echo "Release $VERSION existiert bereits, ZIP wird ersetzt."
+            echo "Release $VERSION existiert bereits, ZIPs werden ersetzt."
             gh release upload "$VERSION" dist/NoNotes-*.zip --clobber
           else
             # --target legt den Tag auf diesem Commit an, falls er noch nicht existiert.

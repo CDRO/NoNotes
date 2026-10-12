@@ -25,7 +25,10 @@ Der Quelltext ist einsehbar. Fehler und Wünsche gern als Issue; Pull Requests w
 
 ## Start
 
-1. ZIP aus dem [Release](../../releases) oder aus dem Workflow-Artefakt herunterladen und entpacken.
+1. ZIP aus dem [Release](../../releases) oder aus dem Workflow-Artefakt herunterladen und entpacken. Es gibt zwei:
+   `NoNotes-<Version>.zip` (die App mit den zwei Beispiel-Erweiterungen) und `NoNotes-with-Plugins-<Version>.zip`
+   (dieselbe App, zusätzlich alle Erweiterungen aus [CDRO/NoNotes-plugins](https://github.com/CDRO/NoNotes-plugins),
+   jede mit ihrer Anleitung im Ordner `plugins/`; eingeschaltet wird unter **Datenbank → Erweiterungen…**).
 2. Eine der drei Möglichkeiten:
    - **Doppelklick auf `index.html`** (öffnet im Standardbrowser), oder
    - Doppelklick auf `start.cmd`, oder
@@ -448,12 +451,16 @@ lädt neu, die Daten bleiben). Weitere Sprachen sind Dateien in `lang/` und komm
 
 ## Release
 
-Der Workflow `.github/workflows/package.yml` läuft bei jedem Push: Smoke-Test, dann ZIP
-als Artefakt. Ein Release mit Tag entsteht auf zwei Wegen:
+Der Workflow `.github/workflows/package.yml` läuft bei jedem Push: Smoke-Test, dann zwei ZIPs
+als Artefakte: `NoNotes-<Version>.zip` und `NoNotes-with-Plugins-<Version>.zip`. Für das zweite holt der
+Workflow das Repository `CDRO/NoNotes-plugins` und baut mit `node tools/build.cjs --plugins <Ordner>`; die
+Unterordner dieses Repositorys landen in `plugins/` und stehen im Verzeichnis des Dialogs «Erweiterungen».
+Ist das Repository privat, braucht der Workflow ein Secret `PLUGINS_TOKEN` (Fine-grained Token mit Leserecht
+auf dessen Inhalt); ohne Zugriff gibt es eine Warnung und nur das erste ZIP. Ein Release mit Tag entsteht auf zwei Wegen:
 
 - **Manuell**: unter *Actions → Testen und paketieren → Run workflow* den gewünschten Stand
   wählen und die Version eingeben, z. B. `v0.1.0`. Der Workflow legt den Tag auf diesem
-  Commit an, baut das ZIP und veröffentlicht das Release.
+  Commit an, baut die ZIPs und veröffentlicht das Release (existiert es schon, werden die ZIPs ersetzt).
 - **Per Tag**: `git tag v0.1.0 && git push origin v0.1.0` löst denselben Ablauf aus.
 
 Die Versionsnummer wird dabei in die App geschrieben und erscheint oben neben dem Namen.

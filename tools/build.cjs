@@ -4,6 +4,7 @@
    gebündelt: Dateien werden kopiert, die Verweise in der index.html auf die flache Struktur umgeschrieben.
 
    Aufruf:  node tools/build.cjs [--edition local | --edition-dir <Ordner>] [--version v1.0.0] [--out dist/NoNotes]
+                               [--plugins <Ordner>]...
 
    Die Seite ist eine gemeinsame Vorlage (packages/ui/index.html) mit zwei Platzhaltern für die Ausprägung:
      <!-- EDITION-SCRIPTS -->        die Skripte der Ausprägung (Hülle, Backend ...)
@@ -20,9 +21,12 @@
      index.html  css/  js/  lang/  vendor/  plugins/  docs/  start.ps1  start.cmd  README.md  NOTICE
 
    Erweiterungen: Der Ordner plugins/ geht mit (include "plugins"; eine Ausprägung kann über "copy" weitere Dateien
-   nach plugins/ legen). Der Build liest die Angaben jeder .js-Datei darin (register(): id, name, version, api,
-   description, theme) und stellt sie als Verzeichnis (NoNotesPlugins.catalog([...])) vor die Liste in plugins/plugins.js.
-   Im Dialog «Erweiterungen» lassen sie sich damit ein- und ausschalten, ohne eine Datei zu bearbeiten.
+   nach plugins/ legen). --plugins <Ordner> nimmt zusätzlich die Erweiterungen eines anderen Ordners oder Repositorys
+   mit (mehrfach möglich): seine Unterordner kommen ganz nach plugins/ (mit ihren README), .js-Dateien direkt im Ordner
+   ebenfalls; andere Dateien direkt im Ordner (README, LICENSE …), Verstecktes (.git) und node_modules bleiben draussen.
+   Der Build liest die Angaben jeder .js-Datei in plugins/ (register(): id, name, version, api, description, theme) und
+   stellt sie als Verzeichnis (NoNotesPlugins.catalog([...])) vor die Liste in plugins/plugins.js. Im Dialog
+   «Erweiterungen» lassen sie sich damit ein- und ausschalten, ohne eine Datei zu bearbeiten.
 */
 'use strict';
 
@@ -34,13 +38,14 @@ const ROOT = path.resolve(__dirname, '..');
 const TEMPLATE = path.join(ROOT, 'packages', 'ui', 'index.html');
 
 function parseArgs(argv) {
-  const args = { edition: 'local', editionDir: null, version: 'dev', out: null };
+  const args = { edition: 'local', editionDir: null, version: 'dev', out: null, plugins: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--edition') args.edition = argv[++i];
     else if (a === '--edition-dir') args.editionDir = path.resolve(argv[++i]);
     else if (a === '--version') args.version = argv[++i];
     else if (a === '--out') args.out = argv[++i];
+    else if (a === '--plugins') args.plugins.push(path.resolve(argv[++i]));
     else throw new Error(`Unbekannte Option: ${a}`);
   }
   return args;
@@ -51,13 +56,28 @@ function copy(src, dest) {
   fs.copyFileSync(src, dest);
 }
 
-/** Alle Dateien unter dir, relativ zu base, mit / als Trenner. */
-function walk(dir) {
+/** Alle Dateien unter dir (absolute Pfade); skip(name, isDir) lässt Einträge aus. */
+function walk(dir, skip) {
   const out = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (skip && skip(entry.name, entry.isDirectory())) continue;
     const abs = path.join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...walk(abs));
+    if (entry.isDirectory()) out.push(...walk(abs, skip));
     else out.push(abs);
+  }
+  return out;
+}
+
+const hiddenOrModules = name => name.startsWith('.') || name === 'node_modules';
+
+/** Dateien eines Ordners mit Erweiterungen (--plugins): Unterordner ganz, direkt im Ordner nur .js. */
+function pluginSources(dir) {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (hiddenOrModules(entry.name)) continue;
+    const abs = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walk(abs, hiddenOrModules));
+    else if (entry.name.endsWith('.js')) out.push(abs);
   }
   return out;
 }
@@ -207,7 +227,13 @@ function main() {
     else place(srcAbs, destRel);
   }
 
-  // Verzeichnis der Erweiterungen vor die Liste stellen (auch die, die die Ausprägung über "copy" mitbringt)
+  // Erweiterungen aus weiteren Ordnern (--plugins), zum Beispiel aus dem Repository CDRO/NoNotes-plugins
+  for (const dir of args.plugins) {
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) throw new Error(`Ordner mit Erweiterungen fehlt: ${dir}`);
+    for (const abs of pluginSources(dir)) place(abs, path.posix.join('plugins', path.relative(dir, abs).split(path.sep).join('/')));
+  }
+
+  // Verzeichnis der Erweiterungen vor die Liste stellen (auch die, die die Ausprägung über "copy" oder --plugins mitbringt)
   const pluginCount = writePluginCatalog(path.join(out, 'plugins'));
 
   // Verweise prüfen: jede in der index.html genannte Datei muss im Ziel liegen.

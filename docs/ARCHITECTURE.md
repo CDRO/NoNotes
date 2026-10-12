@@ -81,6 +81,12 @@ Die Seite ist eine Vorlage (`packages/ui/index.html`) mit zwei Platzhaltern für
 Eine Ausprägung ist ein Ordner mit `edition.json`; er darf auch ausserhalb dieses Projekts liegen (`node tools/build.cjs --edition-dir <Ordner>`),
 zum Beispiel in einem anderen Projekt, das NoNotes einbindet. Zum Entwickeln bauen und `dist/NoNotes/index.html` öffnen.
 
+`--plugins <Ordner>` (mehrfach möglich) nimmt die Erweiterungen eines weiteren Ordners oder Repositorys mit: seine Unterordner
+kommen ganz nach `plugins/` (eine Erweiterung je Unterordner, mit README), `.js`-Dateien direkt im Ordner ebenfalls; andere Dateien
+direkt im Ordner, Verstecktes und `node_modules` bleiben draussen. Der Workflow baut damit das zweite Artefakt
+`NoNotes-with-Plugins-<Version>.zip` aus `CDRO/NoNotes-plugins`. Das Verzeichnis für den Dialog «Erweiterungen» entsteht danach aus
+allem, was in `plugins/` liegt.
+
 ## Tests
 
 `npm test` baut und führt der Reihe nach aus: `i18n lint`, `i18n check`, `test/backend.cjs`,

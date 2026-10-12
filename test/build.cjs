@@ -89,6 +89,33 @@ try {
   assert.deepEqual(lokalCat.map(e => e.id), ['datum-einfuegen', 'sepia'], 'die Beispiele stehen im Verzeichnis der lokalen Ausprägung');
   step('Lokale Ausprägung: alle Dateien wie bisher, Beispiele im Verzeichnis');
 
+  // --plugins <Ordner>: Erweiterungen eines anderen Repositorys (Aufbau wie CDRO/NoNotes-plugins: ein Unterordner je Erweiterung)
+  const erw = path.join(tmp, 'erweiterungen');
+  fs.mkdirSync(path.join(erw, 'ordner'), { recursive: true });
+  fs.mkdirSync(path.join(erw, '.git'));
+  fs.mkdirSync(path.join(erw, 'node_modules', 'x'), { recursive: true });
+  fs.writeFileSync(path.join(erw, 'README.md'), '# Erweiterungen\n'); // direkt im Ordner: bleibt draussen (würde mit plugins/README.md kollidieren)
+  fs.writeFileSync(path.join(erw, 'LICENSE'), 'MIT');
+  fs.writeFileSync(path.join(erw, 'flach.js'), "NoNotesPlugins.register({ id: 'flach', name: 'Flach', api: 1 });");
+  fs.writeFileSync(path.join(erw, '.git', 'HEAD'), 'ref: refs/heads/main');
+  fs.writeFileSync(path.join(erw, 'node_modules', 'x', 'index.js'), 'module.exports = 1;');
+  fs.writeFileSync(path.join(erw, 'ordner', 'plugin.js'), "const REGELN = [1];\nNoNotesPlugins.register({ id: 'im-ordner', name: 'Im Ordner', version: '2.0', api: 1, description: 'Aus einem Unterordner' });");
+  fs.writeFileSync(path.join(erw, 'ordner', 'README.md'), '# Im Ordner\n');
+  const mit = path.join(tmp, 'mit-erweiterungen');
+  r = run(['--edition', 'local', '--out', mit, '--version', 'v1.0.0', '--plugins', erw]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  for (const f of ['plugins/flach.js', 'plugins/ordner/plugin.js', 'plugins/ordner/README.md', 'plugins/beispiele/sepia.js', 'plugins/plugins.js']) assert.ok(fs.existsSync(path.join(mit, f)), `mit: ${f}`);
+  for (const f of ['plugins/LICENSE', 'plugins/.git', 'plugins/node_modules']) assert.ok(!fs.existsSync(path.join(mit, f)), `nicht dabei: ${f}`);
+  assert.equal(fs.readFileSync(path.join(mit, 'plugins', 'README.md'), 'utf8'), fs.readFileSync(path.join(ROOT, 'plugins', 'README.md'), 'utf8'), 'die README des Ordners plugins/ bleibt die der App');
+  const mitCat = JSON.parse(/NoNotesPlugins\.catalog\((\[[\s\S]*?\])\);/.exec(fs.readFileSync(path.join(mit, 'plugins', 'plugins.js'), 'utf8'))[1]);
+  assert.deepEqual(mitCat.map(e => e.file), ['beispiele/datum-einfuegen.js', 'beispiele/sepia.js', 'flach.js', 'ordner/plugin.js']);
+  assert.deepEqual(mitCat.find(e => e.file === 'ordner/plugin.js'), { file: 'ordner/plugin.js', id: 'im-ordner', name: 'Im Ordner', version: '2.0', api: 1, description: 'Aus einem Unterordner', theme: false });
+  assert.match(r.stdout, /4 Erweiterungen im Verzeichnis/);
+  r = run(['--edition', 'local', '--out', mit, '--plugins', path.join(tmp, 'nirgends')]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /Ordner mit Erweiterungen fehlt/);
+  step('--plugins: Unterordner und .js-Dateien eines weiteren Ordners kommen nach plugins/ und ins Verzeichnis; README, LICENSE, .git und node_modules bleiben draussen');
+
   console.log('\nBuild-Test bestanden.');
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
