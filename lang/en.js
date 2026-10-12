@@ -506,6 +506,8 @@ NoNotesI18n.register('en', 'English', {
   'Später entscheiden': 'Decide later',
   'Was sich zusammenführen liess, ist schon zusammengeführt; hier stehen nur die Stellen, die beide geändert haben. Bis zur Entscheidung wird diese Notiz nicht gespeichert, dein Text bleibt im Editor.': 'Whatever could be merged has been merged; only the places that both of you changed are shown here. Until you decide, this note is not saved and your text stays in the editor.',
   'Erweiterungen': 'Extensions',
+  'Diese Hilfetexte stammen von den geladenen Erweiterungen.': 'These help texts come from the loaded extensions.',
+  'help muss ein Markdown-Text oder ein Objekt mit einem Text je Sprache sein': 'help must be Markdown text or an object with one text per language',
   'Erweiterungen sind Skriptdateien im Ordner <code>plugins/</code> neben der App. Welche geladen werden, steht in <code>plugins/plugins.js</code>. Die Datenbankdatei lädt nie Programmcode.': 'Extensions are script files in the <code>plugins/</code> folder next to the app. <code>plugins/plugins.js</code> lists which ones are loaded. The database file never loads program code.',
   '<strong>Achtung:</strong> Eine Erweiterung läuft mit allen Rechten dieser Seite. Sie kann alle Notizen lesen und ändern. Lade nur Erweiterungen, denen du vertraust.': '<strong>Warning:</strong> An extension runs with all the rights of this page. It can read and change all your notes. Only load extensions you trust.',
   'Termine in Kalender exportieren': 'Export due dates to calendar',

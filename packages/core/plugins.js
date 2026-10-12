@@ -53,10 +53,29 @@
     return null;
   }
 
+  /** help: Markdown-Text oder { sprache: text }. Liefert { sprache: text } (Schlüssel '' = für jede Sprache) oder null. */
+  function normalizeHelp(help) {
+    const ok = v => typeof v === 'string' && v.trim() && v.length <= 50000;
+    if (ok(help)) return { '': help };
+    if (!help || typeof help !== 'object' || Array.isArray(help)) return null;
+    const out = {};
+    for (const [k, v] of Object.entries(help)) {
+      if (!ok(v)) return null;
+      out[k.toLowerCase()] = v;
+    }
+    return Object.keys(out).length ? out : null;
+  }
+
+  /** Text in der Sprache lang: genau, dann ihre Hauptsprache (de-ch → de), dann en, dann de, dann irgendeiner. */
+  function pickHelp(map, lang) {
+    const l = String(lang || '').toLowerCase();
+    return map[l] || map[l.split('-')[0]] || map[''] || map.en || map.de || map[Object.keys(map)[0]];
+  }
+
   /** Melden einer Erweiterung. Prüft die Beschreibung; ein Fehler macht nur diese Erweiterung unbrauchbar. */
   function register(def) {
     const file = loading || '(unbekannt)';
-    const entry = { id: def && typeof def.id === 'string' ? def.id : '', name: '', version: '', description: '', file, status: 'loaded', error: '', def: def || null, theme: null };
+    const entry = { id: def && typeof def.id === 'string' ? def.id : '', name: '', version: '', description: '', file, status: 'loaded', error: '', def: def || null, theme: null, help: null };
     plugins.push(entry);
     const fail = msg => { entry.status = 'error'; entry.error = msg; };
     if (!def || typeof def !== 'object') return fail(t('register() braucht ein Objekt'));
@@ -69,6 +88,10 @@
     if (def.api > API) return fail(t('braucht die Schnittstelle {api}, diese App bietet {angebot}', { api: def.api, angebot: API }));
     if (def.api < 1) return fail(t('api muss mindestens 1 sein'));
     if (def.activate != null && typeof def.activate !== 'function') return fail(t('activate muss eine Funktion sein'));
+    if (def.help != null) {
+      entry.help = normalizeHelp(def.help);
+      if (!entry.help) return fail(t('help muss ein Markdown-Text oder ein Objekt mit einem Text je Sprache sein'));
+    }
     if (def.theme != null) {
       const problem = validTheme(def.theme);
       if (problem) return fail(problem);
@@ -164,6 +187,8 @@
     API, EVENTS, THEME_VARS,
     list, register, loadAll, activateAll, on, emit, themeCss,
     all: () => plugins.slice(),
+    /** Hilfetexte der gültigen Erweiterungen in der Sprache lang: [{ id, name, text }] */
+    helpEntries: lang => plugins.filter(p => p.help && (p.status === 'loaded' || p.status === 'active')).map(p => ({ id: p.id, name: p.name, text: pickHelp(p.help, lang) })),
     themes: () => plugins.filter(p => p.theme && (p.status === 'loaded' || p.status === 'active')).map(p => p.theme),
     theme: id => { const p = plugins.find(x => x.theme && x.id === id && (x.status === 'loaded' || x.status === 'active')); return p ? p.theme : null; },
     listedCount: () => listed.length,
