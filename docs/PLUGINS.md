@@ -163,5 +163,6 @@ anbieten will, wählt anhand von `ctx.language()` selbst aus.
 - Ein Bruch käme frühestens mit `api: 2` in NoNotes 2.0; die App meldet dann eine ältere Erweiterung
   deutlich, statt sie still falsch zu behandeln.
 - Seit 1.7.0 dazugekommen (ohne Änderung an `api`): `deactivate()` in `register`, das Verzeichnis
-  `NoNotesPlugins.catalog([...])`/`available()` und das Laden und Schalten zur Laufzeit (`load`, `activate`, `disable`).
-  Ereignisse, `ctx` und Theme-Variablen sind unverändert.
+  `NoNotesPlugins.catalog([...])`/`available()` und das Laden und Schalten zur Laufzeit (`load`, `activate`, `disable`);
+  nach 1.8.0 die Ereignisse `mindmap:rendered` und `mindmap:select` samt den `data-`Attributen an den Linien.
+  `ctx` und Theme-Variablen sind unverändert.
