@@ -344,10 +344,12 @@
     }
 
     function setSelected(id) {
+      const before = inst.selectedId;
       inst.selectedId = id == null ? null : (id === 'root' ? 'root' : Number(id));
       for (const g of nodesG.children) {
         g.classList.toggle('mm-selected', String(g.dataset.id) === String(inst.selectedId));
       }
+      if (before !== inst.selectedId && handlers.onSelectionChange) handlers.onSelectionChange(inst.selectedId);
     }
 
     /** Nachbar für Tastaturnavigation: 'up' | 'down' | 'left' | 'right'. */

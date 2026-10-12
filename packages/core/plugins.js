@@ -17,7 +17,7 @@
   const ID_RE = /^[a-z0-9][a-z0-9-]{1,40}$/;
   // Farben und Masse, die ein Theme überschreiben darf (CSS-Variablen ohne --). Die Hauptfarbe bleibt Sache der Palette.
   const THEME_VARS = ['bg', 'panel', 'text', 'muted', 'border', 'hover', 'danger', 'ok', 'warn', 'radius', 'shadow'];
-  const EVENTS = ['ready', 'database:replaced', 'note:open', 'note:close', 'note:saved', 'mindmap:rendered'];
+  const EVENTS = ['ready', 'database:replaced', 'note:open', 'note:close', 'note:saved', 'mindmap:rendered', 'mindmap:select'];
 
   const listed = [];   // { file, url } in der Reihenfolge der Liste
   const plugins = [];  // { id, name, version, description, file, status, error, def, theme }

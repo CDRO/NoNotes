@@ -88,6 +88,7 @@ läuft weiter.
 | `note:close` | Der Editor wurde geschlossen | `{ id }` |
 | `note:saved` | Nach einer Pause im Schreiben, nachdem die Änderung übernommen wurde | `{ id }` |
 | `mindmap:rendered` | Die Mindmap wurde (neu) gezeichnet. Die Verbindungslinien sind `path.mm-edge` mit `data-from` (Kennung der Elternnotiz, bei der Wurzel `root`), `data-to` (Kennung der Unternotiz) und den Endpunkten `data-x1`, `data-y1`, `data-x2`, `data-y2` | `{}` |
+| `mindmap:select` | Die Auswahl in der Mindmap hat sich geändert (Klick, Tastatur, Neuzeichnen mit anderer Auswahl) | `{ id }`: Notizkennung, `'root'` für die Wurzel oder `null` ohne Auswahl |
 | `database:replaced` | Eine andere Datei wurde geöffnet oder importiert | `{}` |
 
 Rückrufe dürfen `async` sein. Die App wartet nicht auf sie.

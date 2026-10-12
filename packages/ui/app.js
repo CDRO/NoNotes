@@ -298,6 +298,7 @@
         if (opts && opts.toggle && typeof id === 'number') { toggleMulti(id); return; }
         state.mapSelection = id;
       },
+      onSelectionChange: id => emitPlugins('mindmap:select', { id }),
       onOpen: id => openNote(id),
       onOpenRoot: () => beginRename('root'),
       onReparent: (id, parentId, where) => moveNoteTo(id, parentId, where),
