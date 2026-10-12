@@ -56,6 +56,10 @@ const FILES = {
       id: 'test-theme', name: 'Test Theme', api: 1,
       theme: { name: 'Test-Design', light: { bg: '#112233', radius: '2px' }, dark: { bg: '#223344' }, css: '.logo { letter-spacing: 3px; }' },
     });`,
+  'test-help.js': `
+    NoNotesPlugins.register({ id: 'test-help', name: 'Test Hilfe', api: 1,
+      help: { de: '# Titel\\n\\nHilfe **fett** <b>x</b>', en: 'English help' } });`,
+  'test-bad-help.js': `NoNotesPlugins.register({ id: 'test-bad-help', name: 'Schlechte Hilfe', api: 1, help: 42 });`,
   'test-bad-api.js': `NoNotesPlugins.register({ id: 'test-bad-api', name: 'Zu neu', api: 99 });`,
   'test-throws.js': `NoNotesPlugins.register({ id: 'test-throws', name: 'Wirft', api: 1, activate() { throw new Error('kaputt beim Start'); } });`,
   'test-dup.js': `NoNotesPlugins.register({ id: 'test-ok', name: 'Doppelt', api: 1 });`,
@@ -82,7 +86,7 @@ function buildWithPlugins(tmp, files, catalog) {
   return 'file://' + path.join(dir, 'index.html');
 }
 
-const ALL = ['test-ok.js', 'test-theme.js', 'test-bad-api.js', 'test-throws.js', 'test-dup.js', 'test-bad-theme.js', 'test-noregister.js', 'test-event-throw.js', 'fehlt.js', 'test-syntax-error.js'];
+const ALL = ['test-ok.js', 'test-help.js', 'test-bad-help.js', 'test-theme.js', 'test-bad-api.js', 'test-throws.js', 'test-dup.js', 'test-bad-theme.js', 'test-noregister.js', 'test-event-throw.js', 'fehlt.js', 'test-syntax-error.js'];
 
 async function openApp(ctx, url) {
   const page = await ctx.newPage();
@@ -207,6 +211,24 @@ async function main() {
     await page.waitForFunction(() => /Es gibt 1 Notizen/.test(document.querySelector('#status').textContent));
     assert.equal(await page.locator('#menu').isVisible(), false, 'Menü schliesst nach dem Klick');
     step('Menüeintrag: Aktion liest über ctx.backend und meldet in der Statuszeile');
+
+    // Hilfefenster: gemeinsames Tab «Erweiterungen» mit einem Abschnitt je Erweiterung mit Hilfetext
+    assert.equal(by('test-bad-help.js').status, 'error');
+    assert.match(by('test-bad-help.js').error, /help muss/);
+    await page.click('#menuBtn');
+    await page.click('#menuHelpBtn');
+    await page.waitForSelector('#helpDialog[open]');
+    const helpTab = page.locator('#helpTabs button[data-tab="plugins"]');
+    assert.equal(await helpTab.isVisible(), true, 'Tab Erweiterungen sichtbar');
+    await helpTab.click();
+    const secs = await page.locator('#helpPlugins .help-plugin').count();
+    assert.equal(secs, 1, 'ein Abschnitt (nur test-help hat Hilfe)');
+    assert.equal(await page.locator('#helpPlugins .help-plugin h3').innerText(), 'Test Hilfe');
+    assert.equal(await page.locator('#helpPlugins .help-plugin h4').innerText(), 'Titel', 'Überschrift rückt unter den Abschnittstitel');
+    assert.equal(await page.locator('#helpPlugins strong').innerText(), 'fett');
+    assert.equal(await page.locator('#helpPlugins b').count(), 0, 'HTML im Hilfetext wird maskiert');
+    await page.keyboard.press('Escape');
+    step('Hilfefenster: Tab «Erweiterungen» mit Abschnitt je Erweiterung, Markdown, maskiertes HTML, ungültige help gemeldet');
 
     // Toolleistenknopf und Editor-Schnittstelle, Ereignisse beim Öffnen und Schreiben
     await page.dblclick('.mm-node:not(.mm-root)');

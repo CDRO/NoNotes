@@ -5,6 +5,10 @@ NoNotesPlugins.register({
   name: 'Sepia',
   version: '1.0.0',
   api: 1,
+  help: {
+    de: 'Ein Design mit warmem Papier statt kühlem Grau. Auswählen im Menü *Datenbank* unter **Design**; die Wahl wird in der Datenbankdatei gespeichert. Die Hauptfarbe bleibt Sache des Menüs *Hauptfarbe*.',
+    en: 'A theme with warm paper instead of cool grey. Choose it in the *Database* menu under **Design**; the choice is saved in the database file. The accent colour stays with the *Hauptfarbe* menu.',
+  },
   description: 'Warmes Papier statt kühlem Grau.',
   theme: {
     name: 'Sepia',

@@ -173,9 +173,9 @@ async function walkTest(browser, mode) {
   // Hilfe
   await page.click('#helpBtn');
   await page.waitForSelector('#helpDialog[open]');
-  const tabs = await page.locator('#helpTabs [role="tab"], #helpTabs button').count();
+  const tabs = await page.locator('#helpTabs button:visible').count();
   for (let i = 0; i < tabs; i++) {
-    await page.locator('#helpTabs [role="tab"], #helpTabs button').nth(i).click();
+    await page.locator('#helpTabs button:visible').nth(i).click();
     await page.waitForTimeout(100);
     await check('Hilfe Tab ' + i);
   }

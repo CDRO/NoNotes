@@ -88,6 +88,7 @@ gilt für eine Erweiterung, deren `activate` oder deren Ereignisrückruf einen F
 | `version`, `description` | nein | Anzeige im Dialog |
 | `activate(ctx)` | nein | Wird nach dem ersten Zeichnen aufgerufen (beim Einschalten zur Laufzeit sofort); darf `async` sein |
 | `deactivate()` | nein | Seit 1.7.0. Wird beim Ausschalten gerufen; nimmt zurück, was `activate` ausserhalb von `ctx` eingerichtet hat (Zeitgeber, eigene Elemente). `ctx`-Beiträge räumt die App selbst |
+| `help` | nein | Seit 1.9.0. Hilfetext für das Hilfefenster, siehe unten; er erscheint, solange die Erweiterung eingeschaltet ist |
 | `theme` | nein | Ein Design, siehe unten |
 
 ## Die Schnittstelle `ctx`
@@ -149,6 +150,30 @@ NoNotesPlugins.register({
 Ein Design darf diese Variablen setzen: `bg`, `panel`, `text`, `muted`, `border`, `hover`, `danger`, `ok`, `warn`,
 `radius`, `shadow`. Die **Hauptfarbe** (`accent` …) gehört dem Menü **Hauptfarbe** und lässt sich von einem Design
 nicht überschreiben; sie gilt immer zusammen mit dem Design. Werte dürfen kein `;`, `{`, `}`, `<` oder `>` enthalten.
+
+## Hilfetext
+
+Eine Erweiterung kann das Hilfefenster ergänzen (`register({ help })`). Alle Hilfetexte stehen gemeinsam in einem
+zusätzlichen Tab **Erweiterungen** (das Tab erscheint nur, wenn mindestens eine Erweiterung einen Hilfetext hat);
+jede Erweiterung bekommt dort einen Abschnitt mit ihrem Namen als Überschrift.
+
+```js
+NoNotesPlugins.register({
+  id: 'hallo', name: 'Hallo', api: 1,
+  help: {
+    de: 'Der Knopf **Gruss** im Menü zeigt einen Gruss.\n\n#### Tipp\nFunktioniert überall.',
+    en: 'The **Greeting** menu item shows a greeting.\n\n#### Tip\nWorks everywhere.',
+  },
+});
+```
+
+- `help` ist ein Markdown-Text (derselbe Dialekt wie in den Notizen; HTML wird maskiert) oder ein Objekt mit einem Text
+  je Sprache (`de`, `en`, …). Ein einzelner Text gilt für jede Sprache.
+- Gewählt wird der Text der Sprache der Oberfläche, sonst ihrer Hauptsprache (`de-ch` → `de`), sonst `en`, sonst `de`,
+  sonst der erste.
+- Der Name der Erweiterung ist die Abschnittsüberschrift; Überschriften im Text rücken darunter ein (`#` wird zur
+  Unterüberschrift), du schreibst sie also einfach als `#`, `##` …
+- Der Text wird beim Start gelesen. Eine Erweiterung, die nicht geladen werden konnte, zeigt keinen Hilfetext.
 
 ## Texte der Erweiterung
 

@@ -911,6 +911,7 @@
       setStatus(t('Erweiterung «{name}» ausgeschaltet', { name }), saveState());
     }
     renderPlugins();
+    setupPluginHelp(); // das Hilfe-Tab «Erweiterungen» zeigt nur eingeschaltete Erweiterungen
   }
 
   async function loadPluginFromInput() {
@@ -2247,6 +2248,34 @@
     else el.helpDialog.setAttribute('open', '');
   }
 
+  /** Zusätzliches Hilfe-Tab «Erweiterungen»: ein Abschnitt je Erweiterung mit Hilfetext (register({ help })). */
+  function setupPluginHelp() {
+    const items = Plugins.helpEntries(I18n.language());
+    const tabBtn = el.helpTabs.querySelector('button[data-tab="plugins"]');
+    const box = document.getElementById('helpPlugins');
+    tabBtn.hidden = items.length === 0;
+    box.replaceChildren();
+    for (const item of items) {
+      const sec = document.createElement('section');
+      sec.className = 'help-plugin';
+      sec.dataset.plugin = item.id;
+      const h = document.createElement('h3');
+      h.textContent = item.name;
+      const body = document.createElement('div');
+      body.className = 'md';
+      body.innerHTML = M.render(item.text); // der Markdown-Renderer maskiert HTML
+      // Überschriften des Plugins unter dem Abschnittstitel einordnen (# → h4, … ab h6 gedeckelt)
+      for (const hd of [...body.querySelectorAll('h1,h2,h3,h4,h5,h6')]) {
+        const lvl = Math.min(6, Number(hd.tagName[1]) + 3);
+        const n = document.createElement('h' + lvl);
+        n.innerHTML = hd.innerHTML;
+        hd.replaceWith(n);
+      }
+      sec.append(h, body);
+      box.appendChild(sec);
+    }
+  }
+
   async function showHelpTab(tab) {
     for (const b of el.helpTabs.querySelectorAll('button[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
     for (const panel of el.helpDialog.querySelectorAll('.help-panel')) panel.hidden = panel.dataset.panel !== tab;
@@ -3168,6 +3197,7 @@
     setupLanguage();
     setupAccent();
     setupTheme();
+    setupPluginHelp();
     el.pluginsBtn.addEventListener('click', openPluginsDialog);
     el.pluginLoadBtn.addEventListener('click', loadPluginFromInput);
     el.pluginFile.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); loadPluginFromInput(); } });

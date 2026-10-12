@@ -714,6 +714,11 @@ body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-
 .help-head h2 { margin-right: auto; }
 .help-panel h3 { margin: 14px 0 6px; font-size: 14px; }
 .help-panel h3:first-child { margin-top: 0; }
+.help-plugin { padding: 10px 0 4px; border-top: 1px solid var(--border); }
+.help-plugin:first-child { border-top: 0; padding-top: 0; }
+.help-plugin h3 { margin-top: 0; }
+.help-plugin .md h4, .help-plugin .md h5, .help-plugin .md h6 { margin: 12px 0 4px; font-size: 13px; }
+.help-plugin .md p, .help-plugin .md li { font-size: 14px; }
 .help-panel p, .help-panel li { font-size: 14px; line-height: 1.5; }
 .help-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .help-table th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--border); }

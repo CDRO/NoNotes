@@ -87,6 +87,7 @@ jobs:
         continue-on-error: true
         with:
           repository: CDRO/NoNotes-plugins
+          ref: plugins
           token: ${{ secrets.PLUGINS_TOKEN || github.token }}
           path: build/erweiterungen
           persist-credentials: false

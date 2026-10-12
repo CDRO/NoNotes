@@ -5,6 +5,10 @@ NoNotesPlugins.register({
   name: 'Datum einfügen',
   version: '1.0.0',
   api: 1,
+  help: {
+    de: 'Der Knopf **Datum** in der Toolleiste des Editors fügt das heutige Datum an der Markierung ein. Im Menü *Datenbank* zählt **Notizen zählen** alle Notizen ohne Archiv.',
+    en: 'The **Date** button in the editor toolbar inserts today\'s date at the selection. In the *Database* menu, **Notizen zählen** counts all notes excluding the archive.',
+  },
   description: 'Knopf «Datum» in der Toolleiste fügt das heutige Datum ein; Menüeintrag «Notizen zählen».',
 
   activate(ctx) {

@@ -13,7 +13,7 @@
    Erweiterung darum, was die App ihr gegeben hat (Ereignisse; Menü, Toolleiste und Design räumt die Oberfläche), und ruft
    deactivate(), wenn sie eins hat.
 
-   Eine Erweiterung meldet sich mit NoNotesPlugins.register({ id, name, version, api, description, theme, activate, deactivate }).
+   Eine Erweiterung meldet sich mit NoNotesPlugins.register({ id, name, version, api, description, theme, help, activate, deactivate }).
    api ist die Schnittstellenversion (heute 1). Innerhalb der Version 1.x kommt nur Neues dazu, nichts fällt weg
    und nichts ändert seine Bedeutung. Alles, was Daten berührt, ist asynchron (Promise). */
 (function (global) {
@@ -32,7 +32,7 @@
 
   const listed = [];    // { file } aus plugins/plugins.js, in dieser Reihenfolge (immer geladen)
   const available = []; // Verzeichnis aus dem Build: { file, id, name, version, api, description, theme }
-  const plugins = [];   // { id, name, version, description, file, fixed, status, error, def, theme, valid, needsReload }
+  const plugins = [];   // { id, name, version, description, file, fixed, status, error, def, theme, help, valid, needsReload }
   const handlers = new Map(); // Ereignis → [{ id, fn }]
   let listBase = '';
   let loading = null;   // { file, fixed } der Datei, deren Skript gerade läuft
@@ -78,7 +78,7 @@
   }
 
   function entryFor(file, fixed) {
-    return { id: '', name: file, version: '', description: '', file, fixed: !!fixed, status: 'loaded', error: '', def: null, theme: null, valid: false, needsReload: false };
+    return { id: '', name: file, version: '', description: '', file, fixed: !!fixed, status: 'loaded', error: '', def: null, theme: null, help: null, valid: false, needsReload: false };
   }
 
   function validTheme(theme) {
@@ -94,6 +94,25 @@
     }
     if (theme.css != null && (typeof theme.css !== 'string' || /<\/?style/i.test(theme.css))) return t('theme.css muss Text ohne <style> sein');
     return null;
+  }
+
+  /** help: Markdown-Text oder { sprache: text }. Liefert { sprache: text } (Schlüssel '' = für jede Sprache) oder null. */
+  function normalizeHelp(help) {
+    const ok = v => typeof v === 'string' && v.trim() && v.length <= 50000;
+    if (ok(help)) return { '': help };
+    if (!help || typeof help !== 'object' || Array.isArray(help)) return null;
+    const out = {};
+    for (const [k, v] of Object.entries(help)) {
+      if (!ok(v)) return null;
+      out[k.toLowerCase()] = v;
+    }
+    return Object.keys(out).length ? out : null;
+  }
+
+  /** Text in der Sprache lang: genau, dann ihre Hauptsprache (de-ch → de), dann en, dann de, dann irgendeiner. */
+  function pickHelp(map, lang) {
+    const l = String(lang || '').toLowerCase();
+    return map[l] || map[l.split('-')[0]] || map[''] || map.en || map.de || map[Object.keys(map)[0]];
   }
 
   /** Melden einer Erweiterung. Prüft die Beschreibung; ein Fehler macht nur diese Erweiterung unbrauchbar. */
@@ -114,6 +133,10 @@
     if (def.api < 1) return fail(t('api muss mindestens 1 sein'));
     if (def.activate != null && typeof def.activate !== 'function') return fail(t('activate muss eine Funktion sein'));
     if (def.deactivate != null && typeof def.deactivate !== 'function') return fail(t('deactivate muss eine Funktion sein'));
+    if (def.help != null) {
+      entry.help = normalizeHelp(def.help);
+      if (!entry.help) return fail(t('help muss ein Markdown-Text oder ein Objekt mit einem Text je Sprache sein'));
+    }
     if (def.theme != null) {
       const problem = validTheme(def.theme);
       if (problem) return fail(problem);
@@ -266,6 +289,8 @@
     list, catalog, register, loadAll, load, activateAll, activate, disable, on, emit, themeCss, cleanFile,
     all: () => plugins.slice(),
     available: () => available.map(a => Object.assign({}, a)),
+    /** Hilfetexte der eingeschalteten Erweiterungen in der Sprache lang: [{ id, name, text }] */
+    helpEntries: lang => plugins.filter(p => p.help && live(p)).map(p => ({ id: p.id, name: p.name, text: pickHelp(p.help, lang) })),
     themes: () => plugins.filter(p => p.theme && live(p)).map(p => p.theme),
     theme: id => { const p = plugins.find(x => x.theme && x.id === id && live(x)); return p ? p.theme : null; },
     listedCount: () => listed.length,
