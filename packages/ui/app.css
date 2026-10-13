@@ -127,8 +127,16 @@ body {
   border: 0;
   padding: 8px 10px;
   border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 .menu-panel button:hover { background: var(--hover); }
+.menu-panel button.danger { color: var(--danger); }
+.menu-panel button.danger:hover { background: var(--hover); color: var(--danger); }
+/* Symbol vor dem Text (Linien in der Textfarbe); Einträge ohne Symbol bekommen einen leeren Platzhalter, damit der Text bündig bleibt */
+.menu-panel .mi { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; opacity: .8; }
+.menu-panel .plugin-menu { display: flex; flex-direction: column; }
 .menu-panel .sep { height: 1px; background: var(--border); margin: 6px 0; }
 .menu-panel .menu-accent { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 4px 10px 6px; font-size: 13px; }
 .menu-panel .swatches { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -256,11 +264,15 @@ button.danger { color: var(--danger); }
 }
 
 .editor-bar { display: flex; align-items: center; gap: 10px; }
-.editor-bar .meta { color: var(--muted); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.crumbs { flex: 1; min-width: 0; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.crumbs button { border: 0; background: none; padding: 2px 4px; color: var(--muted); border-radius: 4px; font-size: 13px; }
+.editor-bar .note-menu .menu-panel { min-width: 240px; }
+.editor-tools .meta { margin-left: auto; color: var(--muted); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Pfad: Vorfahren der offenen Notiz, klickbar; passt er nicht, fallen mittlere Glieder zu «…» zusammen (app.js) */
+.crumbs { flex: 1; min-width: 0; font-size: 14px; color: var(--muted); overflow: hidden; white-space: nowrap; }
+.crumbs button { border: 0; background: none; padding: 3px 6px; color: var(--muted); border-radius: 4px; font-size: 14px; }
 .crumbs button:hover { background: var(--hover); color: var(--text); }
-.crumbs .sep { margin: 0 2px; opacity: .7; }
+.crumbs button.last { color: var(--text); }
+.crumbs .sep { margin: 0 2px; opacity: .6; }
+.crumbs .more { padding: 3px 4px; color: var(--muted); cursor: default; }
 
 .title, .body { width: 100%; min-width: 0; }
 

@@ -156,7 +156,7 @@ kurz Blau aufblitzt. Das Mindmap-Bild in Export und Druck übernimmt die Farbe.
 
 ### Verlauf pro Notiz
 
-Der Knopf **Verlauf** im Editor zeigt frühere Fassungen der Notiz. Eine neue Fassung entsteht, wenn du nach einer
+**Notiz → Verlauf…** im Editor zeigt frühere Fassungen der Notiz. Eine neue Fassung entsteht, wenn du nach einer
 Pause von mehr als fünf Minuten weiterarbeitest (oder nach 30 Minuten Dauerarbeit); während des Schreibens bleibt es
 bei einer Fassung, damit der Verlauf nicht aus Hunderten Tastenanschlägen besteht. Gespeichert werden **nur die
 Unterschiede**, nicht ganze Kopien: bei einer 100-KB-Notiz mit Änderungen an einer Stelle kostet jede Fassung nur die
@@ -325,7 +325,7 @@ Dasselbe gilt für Fragen.
   Beim Export landen sie im Ordner `attachments/`.
 - Oberste Zeile ist der Titel, `Enter` springt in den Text.
 - Der Pfad über dem Titel zeigt, wo die Notiz im Baum hängt; die Einträge sind anklickbar.
-- **+ Unternotiz** legt direkt eine Unternotiz an.
+- Das Menü **Notiz ▾** rechts über dem Titel bündelt die Aktionen zur offenen Notiz: Unternotiz anlegen, Verlauf, Drucken, Archivieren, Löschen. Links davon steht der Pfad der Notiz; wird er zu lang, fallen mittlere Glieder zu «…» zusammen.
 - `Ctrl+S` speichert sofort (passiert sonst automatisch nach kurzer Pause).
 - Auf schmalen Fenstern wird zwischen Liste und Editor umgeschaltet (`Esc` oder «Zurück»).
 

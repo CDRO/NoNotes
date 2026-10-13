@@ -34,22 +34,22 @@
       <div class="menu">
         <button type="button" id="menuBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="menu">Datenbank ▾</button>
         <div id="menu" class="menu-panel" role="menu" hidden>
-          <button type="button" id="createFileBtn" role="menuitem">Datenbankdatei anlegen…</button>
-          <button type="button" id="openFileBtn" role="menuitem">Datenbankdatei öffnen…</button>
-          <button type="button" id="disconnectBtn" role="menuitem">Dateiverbindung trennen</button>
+          <button type="button" id="createFileBtn" role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5l3 3v10H4z M9 1.5v3h3 M8 7v4 M6 9h4"/></svg>Datenbankdatei anlegen…</button>
+          <button type="button" id="openFileBtn" role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 4h4l1.5 1.5h7.5v8h-13z"/></svg>Datenbankdatei öffnen…</button>
+          <button type="button" id="disconnectBtn" role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 9.5 3.8 12.2a2 2 0 0 0 2.8 2.8l2.7-2.7 M9.5 6.5l2.7-2.7a2 2 0 0 0-2.8-2.8L6.7 3.7 M2.5 2.5l11 11"/></svg>Dateiverbindung trennen</button>
           <div class="sep" role="separator"></div>
-          <button type="button" id="downloadBtn" role="menuitem">Kopie herunterladen (.sqlite)</button>
-          <button type="button" id="importBtn" data-write role="menuitem">Aus Datei importieren…</button>
+          <button type="button" id="downloadBtn" role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8 M5 7l3 3 3-3 M2.5 12.5v1h11v-1"/></svg>Kopie herunterladen (.sqlite)</button>
+          <button type="button" id="importBtn" data-write role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 10V2 M5 5l3-3 3 3 M2.5 12.5v1h11v-1"/></svg>Aus Datei importieren…</button>
           <div class="sep" role="separator"></div>
-          <button type="button" id="exportBtn" role="menuitem">Als Markdown exportieren…</button>
-          <button type="button" id="calendarBtn" data-write role="menuitem">Termine in Kalender exportieren (.ics)…</button>
+          <button type="button" id="exportBtn" role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5l3 3v10H4z M9 1.5v3h3 M6 8h4 M6 10.5h4"/></svg>Als Markdown exportieren…</button>
+          <button type="button" id="calendarBtn" data-write role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v10h-11z M2.5 6.5h11 M5 1.5v3 M11 1.5v3"/></svg>Termine in Kalender exportieren (.ics)…</button>
           <div class="sep" role="separator"></div>
-          <button type="button" id="storageHelpBtn" role="menuitem">Datenablage erklärt…</button>
-          <button type="button" id="menuHelpBtn" role="menuitem">Hilfe (F1)</button>
+          <button type="button" id="storageHelpBtn" role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2c3.3 0 5.5.9 5.5 2s-2.2 2-5.5 2S2.5 5.1 2.5 4s2.2-2 5.5-2z M2.5 4v8c0 1.1 2.2 2 5.5 2s5.5-.9 5.5-2V4 M2.5 8c0 1.1 2.2 2 5.5 2s5.5-.9 5.5-2"/></svg>Datenablage erklärt…</button>
+          <button type="button" id="menuHelpBtn" role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 14.5A6.5 6.5 0 1 0 8 1.5a6.5 6.5 0 0 0 0 13z M6.2 6.3a1.9 1.9 0 1 1 2.6 1.8c-.6.3-.8.6-.8 1.2 M8 11.4v.1"/></svg>Hilfe (F1)</button>
           <div id="pluginMenu" class="plugin-menu" hidden>
             <div class="sep" role="separator"></div>
           </div>
-          <button type="button" id="pluginsBtn" role="menuitem">Erweiterungen…</button>
+          <button type="button" id="pluginsBtn" role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5h3v1.6a1.4 1.4 0 1 0 1.5 0V2.5h3v3h-1.6a1.4 1.4 0 1 0 0 1.5h1.6v3h-3v1.6a1.4 1.4 0 1 1-1.5 0V10H6V8.4a1.4 1.4 0 1 1 0-1.5z"/></svg>Erweiterungen…</button>
           <div class="menu-lang" id="langRow" hidden>
             <label for="langSelect">Sprache</label>
             <select id="langSelect" data-i18n-skip></select>
@@ -162,12 +162,17 @@
           <div class="editor-bar">
             <button type="button" id="backBtn" class="ghost back-btn" title="Zurück (Esc)">← Zurück</button>
             <nav class="crumbs" id="crumbs" aria-label="Pfad"></nav>
-            <span class="meta" id="noteMeta"></span>
-            <button type="button" id="historyBtn" class="ghost" title="Frühere Fassungen dieser Notiz ansehen und wiederherstellen">Verlauf</button>
-            <button type="button" id="printBtn" class="ghost" title="Diese Notiz drucken (Ctrl+P)">Drucken</button>
-            <button type="button" id="childBtn" data-write class="ghost" title="Unternotiz anlegen">+ Unternotiz</button>
-            <button type="button" id="archiveBtn" data-write class="ghost" title="Notiz samt Unternotizen ins Archiv legen">Archivieren</button>
-            <button type="button" id="deleteBtn" data-write class="ghost danger">Löschen</button>
+            <div class="menu note-menu">
+              <button type="button" id="noteMenuBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="noteMenu" title="Aktionen zu dieser Notiz">Notiz ▾</button>
+              <div id="noteMenu" class="menu-panel" role="menu" hidden>
+                <button type="button" id="childBtn" data-write role="menuitem" title="Eine neue Notiz unter dieser anlegen"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.5v6a2 2 0 0 0 2 2h7.5 M9.5 7.5l3 3-3 3"/></svg>Unternotiz anlegen</button>
+                <button type="button" id="historyBtn" role="menuitem" title="Frühere Fassungen dieser Notiz ansehen und wiederherstellen"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9 M2.5 2.5v3h3 M8 5v3.5l2.3 1.4"/></svg>Verlauf…</button>
+                <button type="button" id="printBtn" role="menuitem" title="Diese Notiz drucken"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6V2.5h7V6 M4.5 11H3a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1.5 M4.5 9.5h7v4h-7z"/></svg>Drucken… (Ctrl+P)</button>
+                <div class="sep" role="separator"></div>
+                <button type="button" id="archiveBtn" data-write role="menuitem" title="Notiz samt Unternotizen ins Archiv legen"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12v3H2z M3 6v7.5h10V6 M6.5 9h3"/></svg>Archivieren…</button>
+                <button type="button" id="deleteBtn" data-write role="menuitem" class="danger" title="Notiz in den Papierkorb legen"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10 M6.5 2.5h3 M4.5 4.5l.6 9h5.8l.6-9 M6.8 7v4.5 M9.2 7v4.5"/></svg>Löschen</button>
+              </div>
+            </div>
           </div>
           <div id="archiveBar" class="trash-bar archive-bar" hidden>
             <span id="archiveBarText">Diese Notiz ist archiviert.</span>
@@ -221,6 +226,7 @@
               <button type="button" role="tab" data-mode="preview" aria-selected="false" title="Vorschau (Ctrl+E)">Vorschau</button>
             </div>
             <button type="button" id="helpBtn" class="help-btn" title="Hilfe: alles, was der Editor kann (F1)" aria-label="Hilfe">?</button>
+            <span class="meta" id="noteMeta"></span>
           </div>
           <div class="attachments" id="attachments" aria-label="Anhänge" hidden></div>
           <div class="editor-body" id="editorBody">
@@ -487,8 +493,8 @@
               <dt><kbd>Esc</kbd></dt><dd>Auswahl aufheben</dd>
             </dl>
             <h3>Archiv</h3>
-            <p>Eine archivierte Notiz ist samt allen Unternotizen ausgeblendet, behält aber ihren Platz im Baum. Archivieren geht per Rechtsklick auf den Knoten, mit dem Knopf <em>Archivieren</em> im Editor oder in der Auswahlleiste (mehrere Notizen). Der Schalter <em>Archiv anzeigen</em> in der Mindmap-Leiste blendet sie blass und gestrichelt ein, die Liste hat dafür den Bereich <em>Archiv</em>. Die Suche findet archivierte Notizen immer, auch bei ausgeblendetem Archiv. Archivierte Notizen sind schreibgeschützt, und ihre Fragen und Aufgaben fehlen in den Listen. Zurückgeholt wird Notiz für Notiz: <em>Zurückholen</em> holt genau diese Notiz und alle archivierten Notizen darüber, ihre archivierten Unternotizen bleiben im Archiv. Beim Drucken und Exportieren sind Archivierte nur mit dem Kästchen <em>Archivierte Notizen mit einbeziehen</em> dabei.</p>
-            <p><strong>Verlauf:</strong> Der Knopf <em>Verlauf</em> im Editor zeigt frühere Fassungen der Notiz. Eine neue Fassung entsteht, wenn du nach einer Pause weiterarbeitest; gespeichert werden nur die Unterschiede. Die gewählte Fassung lässt sich ansehen (mit markierten Unterschieden zur aktuellen) und <em>wiederherstellen</em>; der Stand davor bleibt als Fassung erhalten.</p>
+            <p>Eine archivierte Notiz ist samt allen Unternotizen ausgeblendet, behält aber ihren Platz im Baum. Archivieren geht per Rechtsklick auf den Knoten, im Editor über <em>Notiz → Archivieren…</em> oder in der Auswahlleiste (mehrere Notizen). Der Schalter <em>Archiv anzeigen</em> in der Mindmap-Leiste blendet sie blass und gestrichelt ein, die Liste hat dafür den Bereich <em>Archiv</em>. Die Suche findet archivierte Notizen immer, auch bei ausgeblendetem Archiv. Archivierte Notizen sind schreibgeschützt, und ihre Fragen und Aufgaben fehlen in den Listen. Zurückgeholt wird Notiz für Notiz: <em>Zurückholen</em> holt genau diese Notiz und alle archivierten Notizen darüber, ihre archivierten Unternotizen bleiben im Archiv. Beim Drucken und Exportieren sind Archivierte nur mit dem Kästchen <em>Archivierte Notizen mit einbeziehen</em> dabei.</p>
+            <p><strong>Verlauf:</strong> <em>Notiz → Verlauf…</em> im Editor zeigt frühere Fassungen der Notiz. Eine neue Fassung entsteht, wenn du nach einer Pause weiterarbeitest; gespeichert werden nur die Unterschiede. Die gewählte Fassung lässt sich ansehen (mit markierten Unterschieden zur aktuellen) und <em>wiederherstellen</em>; der Stand davor bleibt als Fassung erhalten.</p>
           </div>
         </div>
       </section>

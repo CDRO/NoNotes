@@ -160,6 +160,8 @@ async function walkTest(browser, mode) {
     await page.fill('#body', text);
     await page.waitForFunction(SAVED);
   }
+  await page.click('#noteMenuBtn');
+  await check('Menü Notiz');
   await page.click('#historyBtn');
   await page.waitForSelector('#historyDialog[open]');
   await page.waitForFunction(() => document.querySelectorAll('#historyList button').length >= 1);

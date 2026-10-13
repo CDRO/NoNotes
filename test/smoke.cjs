@@ -192,6 +192,7 @@ async function main() {
 
     page.once('dialog', d => d.accept());
     await page.click('#list li:first-child');
+    await page.click('#noteMenuBtn');
     await page.click('#deleteBtn');
     await page.waitForFunction(() => document.querySelectorAll('#list li').length === 1);
     await waitSaved(page);
@@ -560,6 +561,7 @@ async function main() {
     // Papierkorb: löschen, wiederherstellen, endgültig löschen
     await page8.click('#list li:has-text("Bericht")');
     page8.once('dialog', d => d.accept());
+    await page8.click('#noteMenuBtn');
     await page8.click('#deleteBtn');
     await page8.waitForFunction(() => document.querySelectorAll('#list li').length === 1);
     await waitSaved(page8);
@@ -573,6 +575,7 @@ async function main() {
     await page8.waitForFunction(() => document.querySelector('#listScope').value === 'live' && document.querySelectorAll('#list li').length === 2);
     await waitSaved(page8);
     page8.once('dialog', d => d.accept());
+    await page8.click('#noteMenuBtn');
     await page8.click('#deleteBtn');
     await page8.waitForFunction(() => document.querySelectorAll('#list li').length === 1);
     await page8.selectOption('#listScope', 'trash');
@@ -623,6 +626,7 @@ async function main() {
     await page9.fill('#tagInput', 'projekt');
     await page9.keyboard.press('Enter');
     await waitSaved(page9);
+    await page9.click('#noteMenuBtn');
     await page9.click('#childBtn');
     await page9.fill('#title', 'Budget');
     await page9.fill('#body', '? Was kostet es?\n! 20k');
@@ -1964,8 +1968,11 @@ async function main() {
     assert.equal(await p22.locator('#archiveBar').isVisible(), true);
     assert.equal(await p22.locator('#title').evaluate(e => e.readOnly), true);
     assert.equal(await p22.locator('#body').evaluate(e => e.readOnly), true);
+    await p22.click('#noteMenuBtn'); // im Menü «Notiz» fehlen die schreibenden Einträge
     assert.equal(await p22.locator('#archiveBtn').isHidden(), true);
     assert.equal(await p22.locator('#childBtn').isHidden(), true);
+    assert.equal(await p22.locator('#printBtn').isVisible(), true);
+    await p22.keyboard.press('Escape');
     assert.equal(await p22.locator('#trashBar').isHidden(), true);
     step('Archiv: Liste mit Bereich und Suche, archivierte Notiz schreibgeschützt mit Zurückholen-Knopf');
 

@@ -169,6 +169,7 @@ async function main() {
   // ---------- 5. Autor im Verlauf ----------
   await page.fill('#body', 'Anfang\nvon der anderen\nund von mir');
   await page.waitForFunction(SAVED);
+  await page.click('#noteMenuBtn');
   await page.click('#historyBtn');
   await page.waitForSelector('#historyDialog[open]');
   await page.waitForFunction(() => document.querySelectorAll('#historyList button').length >= 1);

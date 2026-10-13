@@ -98,8 +98,10 @@ async function main() {
   assert.equal(await page.locator('#title').evaluate(e => e.readOnly), true);
   assert.equal(await page.locator('#body').evaluate(e => e.readOnly), true);
   assert.equal(await page.locator('#tagInput').isVisible(), false);
+  await page.click('#noteMenuBtn'); // die Aktionen liegen im Menü «Notiz»
   for (const sel of ['#childBtn', '#archiveBtn', '#deleteBtn']) assert.equal(await page.locator(sel).isVisible(), false, sel + ' ist ausgeblendet');
   assert.equal(await page.locator('#historyBtn').isVisible(), true, 'den Verlauf darf man ansehen');
+  await page.keyboard.press('Escape');
   assert.equal(await page.locator('#body').inputValue(), '- [ ] Aufgabe eins\n? Wer macht das?\n\nText');
   const before = await page.evaluate(id => __ctx.backend.getNote(id).then(n => n.updated_at), ids.a);
   await page.focus('#body');

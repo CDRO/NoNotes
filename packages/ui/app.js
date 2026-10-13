@@ -58,7 +58,7 @@
   const el = {
     app: $('#app'), boot: $('#boot'), version: $('#version'), status: $('#status'),
     storageInfo: $('#storageInfo'), banner: $('#banner'),
-    menuBtn: $('#menuBtn'), menu: $('#menu'), menuHint: $('#menuHint'),
+    menuBtn: $('#menuBtn'), menu: $('#menu'), menuHint: $('#menuHint'), noteMenuBtn: $('#noteMenuBtn'), noteMenu: $('#noteMenu'),
     createFileBtn: $('#createFileBtn'), openFileBtn: $('#openFileBtn'), disconnectBtn: $('#disconnectBtn'),
     downloadBtn: $('#downloadBtn'), importBtn: $('#importBtn'), importInput: $('#importInput'),
     viewMapBtn: $('#viewMapBtn'), viewListBtn: $('#viewListBtn'), viewQuestionsBtn: $('#viewQuestionsBtn'),
@@ -841,7 +841,9 @@
     b.type = 'button';
     b.setAttribute('role', 'menuitem');
     b.dataset.plugin = entry.id;
-    b.textContent = item.label;
+    const icon = document.createElement('span');
+    icon.className = 'mi'; // leerer Platz, damit der Text mit den Einträgen der App bündig steht
+    b.append(icon, item.label);
     if (item.title) b.title = String(item.title);
     b.addEventListener('click', () => { closeMenu(); runPlugin(entry, () => item.action()); });
     el.pluginMenu.appendChild(b);
@@ -1753,25 +1755,47 @@
       : t('Erstellt {erstellt} · Geändert {geaendert}', { erstellt: fmtDate(createdAt), geaendert: fmtDate(updatedAt) });
   }
 
+  /** Pfad über der Notiz: Wurzel und Vorfahren, klickbar; die offene Notiz selbst steht als Titel darunter. */
   async function renderCrumbs(note) {
     const path = await B.getPath(note.id);
-    const frag = document.createDocumentFragment();
-    const add = (label, onClick) => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.textContent = label;
-      b.addEventListener('click', onClick);
-      frag.appendChild(b);
-      const sep = document.createElement('span');
-      sep.className = 'sep';
-      sep.textContent = '›';
-      frag.appendChild(sep);
-    };
-    add(await B.getMapTitle(), async () => {
+    const items = [{ label: await B.getMapTitle(), onClick: async () => {
       if (state.view === 'map') { await closeEditor(); state.mapSelection = 'root'; state.map.setSelected('root'); }
-    });
-    for (const p of path) add(p.title.trim() || t('Ohne Titel'), () => openNote(p.id));
-    el.crumbs.replaceChildren(frag);
+    } }];
+    for (const p of path) items.push({ label: p.title.trim() || t('Ohne Titel'), onClick: () => openNote(p.id) });
+    state.crumbItems = items;
+    fitCrumbs();
+  }
+
+  /** Zeichnet den Pfad; passt er nicht in die Zeile, fallen mittlere Glieder zu «…» zusammen (erstes und letztes bleiben). */
+  function fitCrumbs() {
+    const items = state.crumbItems || [];
+    const draw = hidden => {
+      const frag = document.createDocumentFragment();
+      const sep = () => { const x = document.createElement('span'); x.className = 'sep'; x.textContent = '›'; return x; };
+      items.forEach((it, i) => {
+        if (hidden && i >= 1 && i <= hidden) {
+          if (i === 1) {
+            const more = document.createElement('span');
+            more.className = 'more';
+            more.textContent = '…';
+            more.title = items.slice(1, hidden + 1).map(x => x.label).join(' › ');
+            frag.append(more, sep());
+          }
+          return;
+        }
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = it.label;
+        if (i === items.length - 1) b.className = 'last';
+        b.addEventListener('click', it.onClick);
+        frag.appendChild(b);
+        if (i < items.length - 1) frag.appendChild(sep());
+      });
+      el.crumbs.replaceChildren(frag);
+    };
+    draw(0);
+    const fits = () => el.crumbs.scrollWidth <= el.crumbs.clientWidth + 1;
+    for (let hidden = 1; !fits() && items.length - hidden > 2; hidden++) draw(hidden);
   }
 
   async function renderCount() {
@@ -1848,6 +1872,7 @@
   }
 
   async function closeEditor() {
+    closeNoteMenu();
     if (!isEditorOpen()) { showEditorView(false); return; }
     if (!(await ensureSaved())) return;
     state.sync = newSync(null);
@@ -3113,6 +3138,13 @@
   }
   function closeMenu() { toggleMenu(false); }
 
+  function toggleNoteMenu(force) {
+    const open = typeof force === 'boolean' ? force : el.noteMenu.hidden;
+    el.noteMenu.hidden = !open;
+    el.noteMenuBtn.setAttribute('aria-expanded', String(open));
+  }
+  function closeNoteMenu() { toggleNoteMenu(false); }
+
   // ---------- Tastatur in der Mindmap ----------
 
   async function onMapKeydown(e) {
@@ -3355,8 +3387,12 @@
     });
 
     el.menuBtn.addEventListener('click', () => toggleMenu());
+    el.noteMenuBtn.addEventListener('click', () => toggleNoteMenu());
+    el.noteMenu.addEventListener('click', e => { if (e.target.closest('button[role="menuitem"]')) closeNoteMenu(); });
+    window.addEventListener('resize', () => { if (isEditorOpen()) fitCrumbs(); });
     document.addEventListener('click', e => {
       if (!el.menu.hidden && !e.target.closest('.menu')) closeMenu();
+      if (!el.noteMenu.hidden && !e.target.closest('.note-menu')) closeNoteMenu();
       if (!el.contextMenu.hidden && !e.target.closest('.context-menu')) hideContextMenu();
     });
     document.addEventListener('contextmenu', e => {
@@ -3395,6 +3431,7 @@
         if (state.multi.size && !isEditorOpen() && el.menu.hidden && el.contextMenu.hidden) { clearMulti(); return; }
         if (!el.contextMenu.hidden) { hideContextMenu(); return; }
         if (!el.menu.hidden) { closeMenu(); return; }
+        if (!el.noteMenu.hidden) { closeNoteMenu(); return; }
         if (isEditorOpen()) { await closeEditor(); return; }
         if (isNarrow() && document.body.classList.contains('view-editor')) showEditorView(false);
       }

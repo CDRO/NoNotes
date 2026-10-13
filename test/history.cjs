@@ -266,6 +266,7 @@ async function main() {
     await page.fill('#body', 'Zeile eins\nZeile zwei geändert\nZeile drei\nZeile vier');
     await page.waitForFunction(SAVED);
 
+    await page.click('#noteMenuBtn');
     await page.click('#historyBtn');
     await page.waitForSelector('#historyDialog[open]');
     await page.waitForFunction(() => document.querySelectorAll('#historyList button').length === 2);
@@ -291,6 +292,7 @@ async function main() {
     assert.match(await page.locator('#status').innerText(), /Fassung vom .* wiederhergestellt/);
     await page.waitForFunction(SAVED);
     // der Stand vor dem Wiederherstellen ist als Fassung da
+    await page.click('#noteMenuBtn');
     await page.click('#historyBtn');
     await page.waitForSelector('#historyDialog[open]');
     await page.waitForFunction(() => document.querySelectorAll('#historyList button').length === 3);
@@ -315,11 +317,13 @@ async function main() {
     await jump(10 * MIN);
     await page.fill('#body', 'Zeile eins und mehr');
     await page.waitForFunction(SAVED);
+    await page.click('#noteMenuBtn');
     await page.click('#archiveBtn');
     await page.waitForFunction(() => !document.querySelector('#archiveBar').hidden || document.querySelectorAll('#list li').length === 0);
     await page.selectOption('#listScope', 'archive');
     await page.locator('#list li').first().click();
     await page.waitForSelector('#archiveBar:not([hidden])');
+    await page.click('#noteMenuBtn');
     await page.click('#historyBtn');
     await page.waitForSelector('#historyDialog[open]');
     await page.waitForFunction(() => document.querySelectorAll('#historyList button').length >= 1);
