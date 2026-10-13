@@ -26,11 +26,6 @@
         <button type="button" id="viewTasksBtn" role="tab" data-view="tasks" aria-selected="false">Aufgaben</button>
       </div>
 
-      <div class="status" id="status" aria-live="polite" data-state=""></div>
-      <div class="storage" id="storageInfo" title="">
-        <span class="dot" aria-hidden="true"></span>
-        <span class="label"></span>
-      </div>
       <div class="menu">
         <button type="button" id="menuBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="menu">Datenbank ▾</button>
         <div id="menu" class="menu-panel" role="menu" hidden>
@@ -69,6 +64,10 @@
     </header>
 
     <div id="banner" class="banner" role="status" hidden></div>
+    <div id="toast" class="banner banner-error" role="alert" hidden>
+      <span id="toastText"></span>
+      <div class="actions"><button type="button" id="toastCloseBtn" class="ghost" aria-label="Schliessen">×</button></div>
+    </div>
 
     <main class="layout">
       <!-- Mindmap -->
@@ -219,14 +218,12 @@
               <button type="button" id="questionBtn" data-cmd="question" title="Zeile als Frage markieren (Ctrl+Shift+F)" aria-label="Frage"><span class="tb-glyph tb-q">?</span></button>
               <button type="button" id="answerBtn" data-cmd="answer" title="Zeile als Antwort markieren (Ctrl+Shift+A)" aria-label="Antwort"><span class="tb-glyph tb-a">!</span></button>
             </div>
-            <span class="tools-hint" id="noteQuestions"></span>
             <div class="segmented small" id="modeSwitch" role="tablist" aria-label="Darstellung">
               <button type="button" role="tab" data-mode="edit" aria-selected="true" title="Bearbeiten (Ctrl+E)">Bearbeiten</button>
               <button type="button" role="tab" data-mode="split" aria-selected="false" title="Geteilt (Ctrl+E)">Geteilt</button>
               <button type="button" role="tab" data-mode="preview" aria-selected="false" title="Vorschau (Ctrl+E)">Vorschau</button>
             </div>
             <button type="button" id="helpBtn" class="help-btn" title="Hilfe: alles, was der Editor kann (F1)" aria-label="Hilfe">?</button>
-            <span class="meta" id="noteMeta"></span>
           </div>
           <div class="attachments" id="attachments" aria-label="Anhänge" hidden></div>
           <div class="editor-body" id="editorBody">
@@ -237,16 +234,29 @@
         </div>
       </section>
     </main>
+
+    <!-- Statusleiste: Zustand links (Ablage, Speichern), rechts die offene Notiz oder die Mehrfachauswahl -->
+    <footer class="statusbar" id="statusbar">
+      <div class="storage" id="storageInfo" title="">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="label"></span>
+      </div>
+      <span class="sb-sep" aria-hidden="true">·</span>
+      <div class="status" id="status" aria-live="polite" data-state=""></div>
+      <div class="sb-right">
+        <span class="sb-note meta" id="noteMeta"></span>
+        <span class="sb-note sb-counts" id="noteQuestions"></span>
+        <div id="multiBar" class="multi-bar" role="status" hidden>
+          <span id="multiCount"></span>
+          <button type="button" id="multiPrintBtn" class="primary">Drucken…</button>
+          <button type="button" id="multiArchiveBtn" data-write title="Ausgewählte Notizen samt Unternotizen archivieren">Archivieren…</button>
+          <button type="button" id="multiClearBtn">Auswahl aufheben</button>
+        </div>
+      </div>
+    </footer>
   </div>
 
   <div id="contextMenu" class="context-menu" role="menu" hidden></div>
-
-  <div id="multiBar" class="multi-bar" role="status" hidden>
-    <span id="multiCount"></span>
-    <button type="button" id="multiPrintBtn" class="primary">Drucken…</button>
-    <button type="button" id="multiArchiveBtn" data-write title="Ausgewählte Notizen samt Unternotizen archivieren">Archivieren…</button>
-    <button type="button" id="multiClearBtn">Auswahl aufheben</button>
-  </div>
 
   <dialog id="printDialog" class="dialog" aria-labelledby="printTitle">
     <form method="dialog" id="printForm">

@@ -127,6 +127,12 @@ Kalender importieren oder abonnieren lässt.
 
 ## Bedienung
 
+Die **Statusleiste** am unteren Rand zeigt links, wo die Daten liegen und ob alles gespeichert ist, rechts bei
+offener Notiz «Erstellt» und «Geändert» sowie die offenen Fragen und Aufgaben; bei einer Mehrfachauswahl in der
+Mindmap stehen dort die Anzahl und die Knöpfe dazu. Fehler erscheinen zusätzlich für einige Sekunden als Banner
+oben.
+
+
 ### Mindmap (Startansicht)
 
 Die Notizen bilden einen Baum um einen zentralen Knoten, dessen Titel du per Doppelklick

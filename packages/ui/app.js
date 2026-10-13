@@ -59,6 +59,7 @@
     app: $('#app'), boot: $('#boot'), version: $('#version'), status: $('#status'),
     storageInfo: $('#storageInfo'), banner: $('#banner'),
     menuBtn: $('#menuBtn'), menu: $('#menu'), menuHint: $('#menuHint'), noteMenuBtn: $('#noteMenuBtn'), noteMenu: $('#noteMenu'),
+    statusbar: $('#statusbar'), toast: $('#toast'), toastText: $('#toastText'), toastCloseBtn: $('#toastCloseBtn'),
     createFileBtn: $('#createFileBtn'), openFileBtn: $('#openFileBtn'), disconnectBtn: $('#disconnectBtn'),
     downloadBtn: $('#downloadBtn'), importBtn: $('#importBtn'), importInput: $('#importInput'),
     viewMapBtn: $('#viewMapBtn'), viewListBtn: $('#viewListBtn'), viewQuestionsBtn: $('#viewQuestionsBtn'),
@@ -183,9 +184,24 @@
     return (text || '').replace(/\s+/g, ' ').trim().slice(0, 140);
   }
 
+  /** Statusleiste unten; ein Fehler erscheint zusätzlich kurz als Banner oben. */
   function setStatus(text, stateName) {
     el.status.textContent = text;
     el.status.dataset.state = stateName || '';
+    if (stateName === 'error') showToast(text);
+  }
+
+  const TOAST_MS = 7000;
+  let toastTimer = null;
+  function showToast(text) {
+    el.toastText.textContent = text;
+    el.toast.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(hideToast, TOAST_MS);
+  }
+  function hideToast() {
+    clearTimeout(toastTimer);
+    el.toast.hidden = true;
   }
 
   function isAbort(e) { return e && e.name === 'AbortError'; }
@@ -1361,10 +1377,12 @@
       state.sync = newSync(null);
       el.editorPane.hidden = true;
       el.editorEmpty.hidden = false;
+      el.statusbar.classList.remove('has-note');
       return;
     }
     el.editorEmpty.hidden = true;
     el.editorPane.hidden = false;
+    el.statusbar.classList.add('has-note');
     syncEditorWith(note);
     renderMeta(note.created_at, note.updated_at, note.updated_by);
     await renderCrumbs(note);
@@ -3388,6 +3406,7 @@
 
     el.menuBtn.addEventListener('click', () => toggleMenu());
     el.noteMenuBtn.addEventListener('click', () => toggleNoteMenu());
+    el.toastCloseBtn.addEventListener('click', hideToast);
     el.noteMenu.addEventListener('click', e => { if (e.target.closest('button[role="menuitem"]')) closeNoteMenu(); });
     window.addEventListener('resize', () => { if (isEditorOpen()) fitCrumbs(); });
     document.addEventListener('click', e => {
