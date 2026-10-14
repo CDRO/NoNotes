@@ -27,7 +27,7 @@ Dailymotion `dailymotion.com/video/ID` (auch ältere Adressen mit Titel) und `da
 
 `NoNotesEmbeds.parse(url)` (`packages/core/embeds.js`) lässt nur zu, was Host **und** Kennung genau einem Anbieter zuordnet. Nicht erkannt werden zum Beispiel `youtube.com.boese.example`, `boese-youtube.com`,
 Adressen mit Zugangsdaten (`https://youtube.com@boese.example/…`), andere Ports und Schemata, Kennungen ausser Muster. Die Adresse zum Einbetten wird aus festen Bausteinen und der geprüften Kennung gebaut, nie aus Teilen der Eingabe.
-Alles andere bleibt ein gewöhnlicher Link. Getestet in `test/embeds.cjs` (Erkennung, Fälschungen, Markdown) und `test/embeds-ui.cjs` (Browser: keine Anfrage vor dem Klick, Rahmen nach dem Klick).
+Alles andere bleibt ein gewöhnlicher Link. Getestet in `test/core.cjs` (Erkennung, Fälschungen, Markdown) und `test/extend.cjs` (Browser: keine Anfrage vor dem Klick, Rahmen nach dem Klick).
 
 ## Einschränkungen
 
@@ -41,4 +41,4 @@ Alles andere bleibt ein gewöhnlicher Link. Getestet in `test/embeds.cjs` (Erken
 
 ## Weitere Anbieter
 
-Eine Funktion in `PARSERS` (`embeds.js`), die Hosts in `FRAME_HOSTS`, Tests in `test/embeds.cjs`. Anbieter mit eigenen Servern je Kunde (PeerTube) sind absichtlich nicht dabei: die Liste ist fest.
+Eine Funktion in `PARSERS` (`embeds.js`), die Hosts in `FRAME_HOSTS`, Tests in `test/core.cjs`. Anbieter mit eigenen Servern je Kunde (PeerTube) sind absichtlich nicht dabei: die Liste ist fest.

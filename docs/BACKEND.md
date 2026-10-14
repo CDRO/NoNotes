@@ -23,7 +23,7 @@ den Unterschied nicht.
    zeichnet danach synchron (Beispiele: `prefetchAttachments` und `wikiResolver()` in der Oberfläche,
    der Bildvorabruf in `print.js`).
 
-`NoNotesBackend.METHODS` ist die verbindliche Liste. `test/backend.cjs` prüft jedes Backend gegen den
+`NoNotesBackend.METHODS` ist die verbindliche Liste. `test/app.cjs` prüft jedes Backend gegen den
 Vertrag: Methoden vorhanden, Rückgaben JSON-sicher, Änderungen gemeldet, Fehlerkennungen.
 
 ## Methoden

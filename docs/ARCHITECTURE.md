@@ -18,7 +18,7 @@ editions/
 lang/           Sprachpakete (de.js ist die Quellsprache)
 plugins/        Erweiterungen: feste Liste (plugins.js, der Build stellt das Verzeichnis des Ordners voran), Anleitung, Beispiele; ausgeliefert neben der App
 tools/          build.cjs (Bau), i18n.cjs (Sprachwerkzeug)
-test/           smoke.cjs (Gesamtablauf), backend.cjs (Vertrag), i18n.cjs (Sprachen)
+test/           core.cjs (ohne Browser), app.cjs (Gesamtablauf, Vertrag), collab.cjs (Zusammenarbeit), extend.cjs (Erweiterungen, Sprachen), lib.cjs
 docs/           diese Dokumente
 vendor/         Fremdbestandteile (sql.js), siehe NOTICE
 ```
@@ -63,7 +63,7 @@ Dateien gibt man per Name ein. Programmcode kommt nie aus der Datenbankdatei, un
 ## Sprachen
 
 Alle Texte laufen über `t()`/`tn()` (Quelltext) und `translateDom()` (festes Markup). Siehe
-[LANGUAGES.md](LANGUAGES.md). Der Test `test/i18n.cjs` stellt die Pseudo-Sprache ein und führt die Seite
+[LANGUAGES.md](LANGUAGES.md). Der Test `test/extend.cjs` stellt die Pseudo-Sprache ein und führt die Seite
 durch alle Ansichten; `tools/i18n.cjs lint` findet deutschen Text, der am Sprachsystem vorbeiläuft.
 
 ## Bau und Auslieferung
@@ -89,6 +89,9 @@ allem, was in `plugins/` liegt.
 
 ## Tests
 
-`npm test` baut und führt der Reihe nach aus: `i18n lint`, `i18n check`, `test/backend.cjs`,
-`test/smoke.cjs`, `test/palette.cjs`, `test/plugins.cjs`, `test/history.cjs`, `test/links.cjs`, `test/i18n.cjs`. Getestet wird immer das Gebaute (`dist/NoNotes`) per `file://` in
-Chromium, also genau das, was der Benutzer bekommt.
+`npm test` baut und führt der Reihe nach aus: `i18n lint`, `i18n check`, dann vier Läufe: `test/core.cjs` (ohne Browser:
+Zusammenführen, Datenbank, Build, Videoadressen), `test/app.cjs` (Gesamtablauf und Backend-Vertrag), `test/collab.cjs`
+(Verlauf, gleichzeitiges Schreiben, Änderungen von aussen, Lesemodus) und `test/extend.cjs` (Erweiterungen, Hauptfarbe,
+Videos, Querverweise, Entscheide, Sprachen). Jeder Lauf teilt sich ein Chromium und druckt je Abschnitt eine Zeile; die
+Teilschritte bleiben still (`NONOTES_TEST_VERBOSE=1` zeigt sie) und der letzte wird beim Fehlschlag genannt (`test/lib.cjs`).
+Getestet wird immer das Gebaute (`dist/NoNotes`) per `file://` in Chromium, also genau das, was der Benutzer bekommt.

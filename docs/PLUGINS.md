@@ -185,7 +185,7 @@ anbieten will, wählt anhand von `ctx.language()` selbst aus.
 
 ## Stabilität
 
-- Die Namen in `ctx`, die Ereignisse und die Theme-Variablen sind für `api: 1` festgelegt. `test/plugins.cjs` prüft das.
+- Die Namen in `ctx`, die Ereignisse und die Theme-Variablen sind für `api: 1` festgelegt. `test/extend.cjs` prüft das.
 - Neue Fähigkeiten kommen als neue Namen dazu. Wer sie nutzen will, prüft ihr Vorhandensein
   (`if (ctx.ui.addSomething) …`).
 - Ein Bruch käme frühestens mit `api: 2` in NoNotes 2.0; die App meldet dann eine ältere Erweiterung

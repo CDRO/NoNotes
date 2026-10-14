@@ -1,135 +1,125 @@
-/* Smoke-Test: öffnet die App wie der Benutzer per file:// in Chromium und prüft den Kernablauf.
-   Ausführen: npm test (Playwright + Chromium müssen installiert sein). */
+/* App-Test: öffnet das Gebaute (dist/NoNotes) wie ein Benutzer per file:// in Chromium und prüft den ganzen Ablauf in
+   gebündelten Schritten; dazu der Vertrag der Backend-Schnittstelle. Ausführen: node test/app.cjs (nach tools/build.cjs) */
 'use strict';
 
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const vm = require('node:vm');
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
+const { suite } = require('./lib.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
-// Getestet wird das Gebaute (dist/NoNotes), also genau das, was im ZIP liegt. Vorher: node tools/build.cjs
-const APP_URL = 'file://' + path.join(ROOT, 'dist', 'NoNotes', 'index.html');
-
-function loadPlaywright() {
-  try { return require('playwright'); }
-  catch (e) {
-    const alt = process.env.PLAYWRIGHT_MODULE;
-    if (alt) return require(alt);
-    throw e;
-  }
-}
-
-const { chromium } = loadPlaywright();
+const DIST = path.join(ROOT, 'dist', 'NoNotes');
+const APP_URL = 'file://' + path.join(DIST, 'index.html');
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
-
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '14'; // muss zu js/db.js passen
+const SCHEMA_VERSION = '14'; // muss zu packages/data/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
-function watchErrors(page) {
-  const errors = [];
-  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
-  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
-  return errors;
-}
-
-async function openApp(ctx, view) {
-  const page = await ctx.newPage();
-  const errors = watchErrors(page);
-  await page.goto(APP_URL);
-  await page.waitForSelector(READY, { timeout: 30000 });
-  if (view === 'list') {
-    await page.click('#viewListBtn');
-    await page.waitForSelector('body.view-list');
+// ============================================================
+/* Smoke-Test: öffnet die App wie der Benutzer per file:// in Chromium und prüft den Kernablauf. */
+async function runSmoke(browser, part, step) {
+  function watchErrors(page) {
+    const errors = [];
+    page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+    page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+    return errors;
   }
-  return { page, errors };
-}
 
-const idOfNode = (page, title) => page.evaluate(t => {
-  const g = [...document.querySelectorAll('.mm-node')].find(n => n.querySelector('text').textContent === t);
-  return g ? g.dataset.id : null;
-}, title);
-
-const nodeBox = async (page, id) => page.locator(`.mm-node[data-id="${id}"] rect`).boundingBox();
-
-async function dragNode(page, fromId, toId, where) {
-  const a = await nodeBox(page, fromId);
-  const b = await nodeBox(page, toId);
-  const rel = where === 'before' ? 0.1 : where === 'after' ? 0.9 : 0.5;
-  await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(a.x + a.width / 2 + 20, a.y + a.height / 2 + 20, { steps: 4 });
-  await page.mouse.move(b.x + b.width / 2, b.y + b.height * rel, { steps: 12 });
-  await page.mouse.up();
-}
-
-async function newRootNote(page, title) {
-  await page.click('#mindmap', { position: { x: 30, y: 700 } });
-  await page.keyboard.press('Tab');
-  await page.waitForSelector('#renameInput:not([hidden])');
-  await page.keyboard.type(title);
-  await page.keyboard.press('Enter');
-  await page.waitForFunction(t => [...document.querySelectorAll('.mm-node text')].some(x => x.textContent === t), title);
-  return idOfNode(page, title);
-}
-
-
-/** Liest ein ZIP (Methode Store) und liefert { pfad: Buffer }. */
-function readZip(buf) {
-  let eocd = buf.length - 22;
-  while (eocd >= 0 && buf.readUInt32LE(eocd) !== 0x06054B50) eocd--;
-  assert.ok(eocd >= 0, 'ZIP-Endsignatur gefunden');
-  const count = buf.readUInt16LE(eocd + 10);
-  let cd = buf.readUInt32LE(eocd + 16);
-  const files = {};
-  for (let i = 0; i < count; i++) {
-    assert.equal(buf.readUInt32LE(cd), 0x02014B50, 'Zentralverzeichnis');
-    const nameLen = buf.readUInt16LE(cd + 28), extraLen = buf.readUInt16LE(cd + 30), commentLen = buf.readUInt16LE(cd + 32);
-    const size = buf.readUInt32LE(cd + 24);
-    const localOff = buf.readUInt32LE(cd + 42);
-    const name = buf.subarray(cd + 46, cd + 46 + nameLen).toString('utf8');
-    const lNameLen = buf.readUInt16LE(localOff + 26), lExtraLen = buf.readUInt16LE(localOff + 28);
-    const dataStart = localOff + 30 + lNameLen + lExtraLen;
-    files[name] = buf.subarray(dataStart, dataStart + size);
-    cd += 46 + nameLen + extraLen + commentLen;
+  async function openApp(ctx, view) {
+    const page = await ctx.newPage();
+    const errors = watchErrors(page);
+    await page.goto(APP_URL);
+    await page.waitForSelector(READY, { timeout: 30000 });
+    if (view === 'list') {
+      await page.click('#viewListBtn');
+      await page.waitForSelector('body.view-list');
+    }
+    return { page, errors };
   }
-  return files;
-}
 
-const PNG_MAGIC = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const idOfNode = (page, title) => page.evaluate(t => {
+    const g = [...document.querySelectorAll('.mm-node')].find(n => n.querySelector('text').textContent === t);
+    return g ? g.dataset.id : null;
+  }, title);
 
-/** Zerlegt eine .ics: Kopfzeilen, Ereignisse mit Eigenschaften (Schlüssel inkl. Parametern) und Erinnerungen.
-    Prüft dabei Zeilenenden, Faltung (höchstens 75 Oktette) und die Klammerung. */
-function parseIcs(text) {
-  assert.ok(text.startsWith('BEGIN:VCALENDAR\r\n'), 'beginnt mit VCALENDAR');
-  assert.ok(text.endsWith('END:VCALENDAR\r\n'), 'endet mit VCALENDAR');
-  for (const l of text.split('\r\n')) assert.ok(Buffer.byteLength(l, 'utf8') <= 75, `Zeile länger als 75 Oktette: ${l}`);
-  const lines = text.replace(/\r\n[ \t]/g, '').split('\r\n').filter(Boolean);
-  const head = {};
-  const events = [];
-  let ev = null;
-  let alarm = null;
-  for (const line of lines) {
-    if (line === 'BEGIN:VEVENT') { ev = { props: {}, alarms: [] }; continue; }
-    if (line === 'END:VEVENT') { events.push(ev); ev = null; continue; }
-    if (line === 'BEGIN:VALARM') { alarm = {}; continue; }
-    if (line === 'END:VALARM') { ev.alarms.push(alarm); alarm = null; continue; }
-    const i = line.indexOf(':');
-    (alarm || (ev ? ev.props : head))[line.slice(0, i)] = line.slice(i + 1);
+  const nodeBox = async (page, id) => page.locator(`.mm-node[data-id="${id}"] rect`).boundingBox();
+
+  async function dragNode(page, fromId, toId, where) {
+    const a = await nodeBox(page, fromId);
+    const b = await nodeBox(page, toId);
+    const rel = where === 'before' ? 0.1 : where === 'after' ? 0.9 : 0.5;
+    await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(a.x + a.width / 2 + 20, a.y + a.height / 2 + 20, { steps: 4 });
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height * rel, { steps: 12 });
+    await page.mouse.up();
   }
-  assert.equal(ev, null, 'VEVENT geschlossen');
-  return { head, events };
-}
 
-async function waitSaved(page) {
-  await page.waitForFunction(SAVED, null, { timeout: 10000 });
-}
+  async function newRootNote(page, title) {
+    await page.click('#mindmap', { position: { x: 30, y: 700 } });
+    await page.keyboard.press('Tab');
+    await page.waitForSelector('#renameInput:not([hidden])');
+    await page.keyboard.type(title);
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(t => [...document.querySelectorAll('.mm-node text')].some(x => x.textContent === t), title);
+    return idOfNode(page, title);
+  }
 
-async function main() {
-  const browser = await chromium.launch();
+  /** Liest ein ZIP (Methode Store) und liefert { pfad: Buffer }. */
+  function readZip(buf) {
+    let eocd = buf.length - 22;
+    while (eocd >= 0 && buf.readUInt32LE(eocd) !== 0x06054B50) eocd--;
+    assert.ok(eocd >= 0, 'ZIP-Endsignatur gefunden');
+    const count = buf.readUInt16LE(eocd + 10);
+    let cd = buf.readUInt32LE(eocd + 16);
+    const files = {};
+    for (let i = 0; i < count; i++) {
+      assert.equal(buf.readUInt32LE(cd), 0x02014B50, 'Zentralverzeichnis');
+      const nameLen = buf.readUInt16LE(cd + 28), extraLen = buf.readUInt16LE(cd + 30), commentLen = buf.readUInt16LE(cd + 32);
+      const size = buf.readUInt32LE(cd + 24);
+      const localOff = buf.readUInt32LE(cd + 42);
+      const name = buf.subarray(cd + 46, cd + 46 + nameLen).toString('utf8');
+      const lNameLen = buf.readUInt16LE(localOff + 26), lExtraLen = buf.readUInt16LE(localOff + 28);
+      const dataStart = localOff + 30 + lNameLen + lExtraLen;
+      files[name] = buf.subarray(dataStart, dataStart + size);
+      cd += 46 + nameLen + extraLen + commentLen;
+    }
+    return files;
+  }
+
+  const PNG_MAGIC = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+
+  /** Zerlegt eine .ics: Kopfzeilen, Ereignisse mit Eigenschaften (Schlüssel inkl. Parametern) und Erinnerungen.
+      Prüft dabei Zeilenenden, Faltung (höchstens 75 Oktette) und die Klammerung. */
+  function parseIcs(text) {
+    assert.ok(text.startsWith('BEGIN:VCALENDAR\r\n'), 'beginnt mit VCALENDAR');
+    assert.ok(text.endsWith('END:VCALENDAR\r\n'), 'endet mit VCALENDAR');
+    for (const l of text.split('\r\n')) assert.ok(Buffer.byteLength(l, 'utf8') <= 75, `Zeile länger als 75 Oktette: ${l}`);
+    const lines = text.replace(/\r\n[ \t]/g, '').split('\r\n').filter(Boolean);
+    const head = {};
+    const events = [];
+    let ev = null;
+    let alarm = null;
+    for (const line of lines) {
+      if (line === 'BEGIN:VEVENT') { ev = { props: {}, alarms: [] }; continue; }
+      if (line === 'END:VEVENT') { events.push(ev); ev = null; continue; }
+      if (line === 'BEGIN:VALARM') { alarm = {}; continue; }
+      if (line === 'END:VALARM') { ev.alarms.push(alarm); alarm = null; continue; }
+      const i = line.indexOf(':');
+      (alarm || (ev ? ev.props : head))[line.slice(0, i)] = line.slice(i + 1);
+    }
+    assert.equal(ev, null, 'VEVENT geschlossen');
+    return { head, events };
+  }
+
+  async function waitSaved(page) {
+    await page.waitForFunction(SAVED, null, { timeout: 10000 });
+  }
+
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nonotes-smoke-'));
-  const step = name => console.log('  ✓ ' + name);
 
   try {
     // ---------- 1. Anlegen, Suchen, Speichern, Neuladen, Herunterladen, Löschen ----------
@@ -137,7 +127,7 @@ async function main() {
     const { page, errors } = await openApp(ctx, 'list');
     assert.equal(await page.locator('#list li').count(), 0, 'frischer Kontext ist leer');
     assert.match(await page.locator('#version').innerText(), /\S/, 'Version wird angezeigt');
-    step('App startet per file:// und ist leer');
+    part('App startet per file:// und ist leer');
 
     await page.click('#newBtn');
     await page.fill('#title', 'Erste Notiz');
@@ -146,7 +136,7 @@ async function main() {
     assert.equal(await page.locator('#list li').count(), 1);
     assert.match(await page.locator('#list li .note-title').first().innerText(), /Erste Notiz/);
     assert.match(await page.locator('#count').innerText(), /^1 Notiz$/);
-    step('Notiz anlegen und bearbeiten');
+    part('Notiz anlegen und bearbeiten');
 
     await page.click('#newBtn');
     await page.fill('#title', 'Zweite');
@@ -164,13 +154,13 @@ async function main() {
     assert.equal(await page.locator('#listEmpty').isVisible(), true);
     await page.fill('#search', '');
     await page.waitForFunction(() => document.querySelectorAll('#list li').length === 2);
-    step('Suche (auch Umlaute, gross/klein)');
+    part('Suche (auch Umlaute, gross/klein)');
 
     await page.reload();
     await page.waitForSelector(READY);
     assert.equal(await page.locator('#list li').count(), 2, 'Notizen überleben das Neuladen');
     assert.match(await page.locator('#status').innerText(), /Browser-Speicher/);
-    step('Persistenz im Browser-Speicher über Neuladen');
+    part('Persistenz im Browser-Speicher über Neuladen');
 
     await page.click('#menuBtn');
     const [download] = await Promise.all([
@@ -188,7 +178,7 @@ async function main() {
     assert.deepEqual(db.exec('SELECT title FROM notes ORDER BY title')[0].values.map(r => r[0]), ['Erste Notiz', 'Zweite']);
     assert.equal(db.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], SCHEMA_VERSION);
     db.close();
-    step('Kopie herunterladen ergibt gültige SQLite-Datei mit beiden Notizen');
+    part('Kopie herunterladen ergibt gültige SQLite-Datei mit beiden Notizen');
 
     page.once('dialog', d => d.accept());
     await page.click('#list li:first-child');
@@ -197,7 +187,7 @@ async function main() {
     await page.waitForFunction(() => document.querySelectorAll('#list li').length === 1);
     await waitSaved(page);
     assert.match(await page.locator('#list li .note-title').first().innerText(), /Erste Notiz/);
-    step('Löschen mit Bestätigung');
+    part('Löschen mit Bestätigung');
 
     assert.deepEqual(errors, [], 'keine Konsolenfehler');
     await ctx.close();
@@ -212,7 +202,7 @@ async function main() {
     assert.match(await page2.locator('#status').innerText(), /importiert/);
     assert.deepEqual(errors2, []);
     await ctx2.close();
-    step('Import einer .sqlite-Datei');
+    part('Import einer .sqlite-Datei');
 
     // ---------- 3. Fremde SQLite-Datei wird abgelehnt ----------
     const foreign = new SQL.Database();
@@ -226,7 +216,7 @@ async function main() {
     await page3.waitForFunction(() => document.querySelector('#status').dataset.state === 'error');
     assert.match(await page3.locator('#status').innerText(), /nicht von NoNotes/);
     await ctx3.close();
-    step('Fremde SQLite-Datei wird abgelehnt');
+    part('Fremde SQLite-Datei wird abgelehnt');
 
     // ---------- 4. Datei-Anbindung (File System Access API, hier nachgebildet) ----------
     const ctx4 = await browser.newContext({ locale: 'de-CH' });
@@ -281,7 +271,9 @@ async function main() {
     db4.close();
     assert.deepEqual(errors4, []);
     await ctx4.close();
-    step('Direktes Schreiben in die Datenbankdatei');
+    part('Direktes Schreiben in die Datenbankdatei');
+
+    step('Datei: anlegen, suchen, speichern, neu laden, herunterladen, importieren, fremde Datei abgelehnt, direkt in die Datenbankdatei schreiben');
 
     // ---------- 5. Mindmap: Baum, Umbenennen, Vollbild-Editor, Ein-/Ausklappen, Umhängen, Löschen ----------
     const ctx5 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
@@ -313,7 +305,7 @@ async function main() {
     const bBox = await nodeBox(page5, budgetId);
     assert.ok(bBox.x > pBox.x + pBox.width, 'Unternotiz liegt rechts vom Elternknoten');
     assert.equal(await page5.locator('.mm-edge').count(), 3, 'drei Verbindungslinien');
-    step('Mindmap: Notizen per Tastatur anlegen und benennen');
+    part('Mindmap: Notizen per Tastatur anlegen und benennen');
 
     // Doppelklick öffnet den Vollbild-Editor
     await page5.dblclick(`.mm-node[data-id="${budgetId}"]`);
@@ -324,7 +316,7 @@ async function main() {
     await waitSaved(page5);
     await page5.keyboard.press('Escape');
     await page5.waitForSelector('body:not(.editor-open)');
-    step('Mindmap: Doppelklick öffnet Vollbild-Editor, Esc schliesst');
+    part('Mindmap: Doppelklick öffnet Vollbild-Editor, Esc schliesst');
 
     // Einklappen über das Kontextmenü, Ausklappen über den Knopf am Knoten
     await page5.click(`.mm-node[data-id="${projektId}"]`, { button: 'right' });
@@ -334,7 +326,7 @@ async function main() {
     assert.equal(await page5.locator(`.mm-node[data-id="${projektId}"] .mm-toggle text`).textContent(), '2');
     await page5.click(`.mm-node[data-id="${projektId}"] .mm-toggle`);
     await page5.waitForSelector(`.mm-node[data-id="${budgetId}"]`);
-    step('Mindmap: Ein- und Ausklappen');
+    part('Mindmap: Ein- und Ausklappen');
 
     // "Termine" auf die Wurzel ziehen
     await dragNode(page5, termineId, 'root');
@@ -342,7 +334,7 @@ async function main() {
     const tBox = await nodeBox(page5, termineId);
     const rBox = await nodeBox(page5, 'root');
     assert.ok(tBox.x + tBox.width < rBox.x || tBox.x > rBox.x + rBox.width, 'Termine hängt jetzt direkt an der Wurzel');
-    step('Mindmap: Umhängen per Drag & Drop');
+    part('Mindmap: Umhängen per Drag & Drop');
 
     // Wurzel umbenennen
     await page5.dblclick('.mm-node.mm-root');
@@ -350,7 +342,7 @@ async function main() {
     await page5.fill('#renameInput', 'Mein Projekt');
     await page5.keyboard.press('Enter');
     await page5.waitForFunction(() => document.querySelector('.mm-node.mm-root text').textContent === 'Mein Projekt');
-    step('Mindmap: Titel der Map ändern');
+    part('Mindmap: Titel der Map ändern');
 
     // Datenbankkopie prüfen: Elternbeziehungen und Titel
     await page5.click('#menuBtn');
@@ -366,7 +358,7 @@ async function main() {
     assert.equal(db5.exec("SELECT value FROM meta WHERE key='map_title'")[0].values[0][0], 'Mein Projekt');
     assert.equal(db5.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], SCHEMA_VERSION);
     db5.close();
-    step('Mindmap: Baum und Titel landen in der SQLite-Datei');
+    part('Mindmap: Baum und Titel landen in der SQLite-Datei');
 
     // Löschen: Unternotiz rückt auf
     page5.once('dialog', d => d.accept());
@@ -379,7 +371,7 @@ async function main() {
     await page5.waitForFunction(() => document.querySelectorAll('#list li').length === 2);
     assert.deepEqual(errors5, [], 'keine Konsolenfehler in der Mindmap');
     await ctx5.close();
-    step('Mindmap: Löschen lässt Unternotizen aufrücken');
+    part('Mindmap: Löschen lässt Unternotizen aufrücken');
 
     // ---------- 6. Migration einer Schema-v1-Datenbank ----------
     const old = new SQL.Database();
@@ -397,7 +389,9 @@ async function main() {
     await waitSaved(page6);
     assert.deepEqual(errors6, []);
     await ctx6.close();
-    step('Migration: Schema v1 wird geöffnet und als Baum gezeigt');
+    part('Migration: Schema v1 wird geöffnet und als Baum gezeigt');
+
+    step('Mindmap: Tastatur, Vollbild-Editor, Ein-/Ausklappen, Umhängen, Titel, Löschen; eine Datei mit Schema 1 wird als Baum geöffnet');
 
     // ---------- 7. Fragen: Syntax, zentrale Liste, Filter, Beantworten, Marke am Knoten ----------
     const ctx7 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
@@ -408,14 +402,14 @@ async function main() {
     await waitSaved(page7);
     assert.match(await page7.locator('#noteQuestions').innerText(), /1 offene Frage von 2/);
     assert.match(await page7.locator('#viewQuestionsBtn').innerText(), /Fragen\s*1/);
-    step('Fragen: Syntax wird erkannt und gezählt');
+    part('Fragen: Syntax wird erkannt und gezählt');
 
     // Marke am Knoten in der Mindmap
     await page7.click('#viewMapBtn');
     await page7.waitForSelector('body.view-map');
     const planungId = await idOfNode(page7, 'Planung');
     assert.equal(await page7.locator(`.mm-node[data-id="${planungId}"] .mm-badge text`).textContent(), '1');
-    step('Fragen: Anzahl offener Fragen am Mindmap-Knoten');
+    part('Fragen: Anzahl offener Fragen am Mindmap-Knoten');
 
     // Zentrale Liste
     await page7.click('#viewQuestionsBtn');
@@ -433,7 +427,7 @@ async function main() {
     await page7.waitForFunction(() => document.querySelectorAll('.q-item').length === 1, null, {}); // Entprellung durch
     await page7.click('#qFilter button[data-status="open"]');
     await page7.waitForFunction(() => document.querySelectorAll('.q-item').length === 1 && /Budget/.test(document.querySelector('.q-item .q-text').textContent));
-    step('Fragen: zentrale Liste mit Filter und Suche');
+    part('Fragen: zentrale Liste mit Filter und Suche');
 
     // Zentral beantworten schreibt die Antwort in die Notiz
     await page7.click('.q-item button:has-text("Beantworten")');
@@ -448,7 +442,7 @@ async function main() {
     await page7.locator('.q-item').first().locator('button:has-text("Zur Notiz")').click();
     await page7.waitForSelector('body.editor-open');
     assert.equal(await page7.inputValue('#body'), 'Intro\n? Wie hoch ist das Budget?\n! 20k CHF\n? Wer liefert?\n! Firma Muster\nEnde');
-    step('Fragen: zentral beantworten landet als "!"-Zeile in der Notiz');
+    part('Fragen: zentral beantworten landet als "!"-Zeile in der Notiz');
 
     // Editor-Knopf markiert die aktuelle Zeile als Frage und wieder zurück
     await page7.evaluate(() => { const b = document.querySelector('#body'); const pos = b.value.indexOf('Ende'); b.focus(); b.setSelectionRange(pos, pos); });
@@ -461,7 +455,7 @@ async function main() {
     await page7.keyboard.press('Escape');
     await page7.waitForSelector('body:not(.editor-open)');
     assert.equal(await page7.locator('body.view-questions').count(), 1, 'zurück in der Fragenansicht');
-    step('Fragen: Zeile per Knopf und Tastenkürzel markieren');
+    part('Fragen: Zeile per Knopf und Tastenkürzel markieren');
 
     // Index liegt in der Datenbank
     await page7.click('#menuBtn');
@@ -475,7 +469,7 @@ async function main() {
     db7.close();
     assert.deepEqual(errors7, [], 'keine Konsolenfehler in der Fragenansicht');
     await ctx7.close();
-    step('Fragen: Index steht in der SQLite-Datei');
+    part('Fragen: Index steht in der SQLite-Datei');
 
     // ---------- 8. Markdown-Vorschau, Tags, Papierkorb, Suche mit Hervorhebung ----------
     const ctx8 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
@@ -509,7 +503,7 @@ async function main() {
     await waitSaved(page8);
     await page8.click('#preview a.md-wiki');
     await page8.waitForFunction(() => document.querySelector('#title').value === 'Planung');
-    step('Markdown: Vorschau, geteilte Ansicht, [[Titel]]-Verweis');
+    part('Markdown: Vorschau, geteilte Ansicht, [[Titel]]-Verweis');
 
     // Tags
     await page8.fill('#tagInput', 'projekt');
@@ -537,7 +531,7 @@ async function main() {
     await page8.waitForFunction(() => document.querySelectorAll('.q-item').length === 1);
     await page8.click('#viewListBtn');
     await page8.waitForSelector('body.view-list');
-    step('Tags: Eingabe, Chips, Filter in Liste und Fragen');
+    part('Tags: Eingabe, Chips, Filter in Liste und Fragen');
 
     // Suche mit Hervorhebung in der Liste und in der Mindmap
     await page8.fill('#search', 'budget');
@@ -556,7 +550,7 @@ async function main() {
     await page8.waitForFunction(() => document.querySelectorAll('.mm-node.mm-match').length === 0);
     await page8.click('#viewListBtn');
     await page8.waitForFunction(() => document.querySelectorAll('#list li').length === 2);
-    step('Suche: Hervorhebung in Liste und Mindmap, Sprung zum Treffer');
+    part('Suche: Hervorhebung in Liste und Mindmap, Sprung zum Treffer');
 
     // Papierkorb: löschen, wiederherstellen, endgültig löschen
     await page8.click('#list li:has-text("Bericht")');
@@ -595,7 +589,9 @@ async function main() {
     db8.close();
     assert.deepEqual(errors8, [], 'keine Konsolenfehler in Stufe 3');
     await ctx8.close();
-    step('Papierkorb: verschieben, wiederherstellen, endgültig löschen');
+    part('Papierkorb: verschieben, wiederherstellen, endgültig löschen');
+
+    step('Fragen, Markdown-Vorschau, Tags, Suche mit Hervorhebung, Papierkorb');
 
     // ---------- 9. Export als Markdown: Ordner (nachgebildet) und ZIP ----------
     const ctx9 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
@@ -657,7 +653,7 @@ async function main() {
     const svg = text('mindmap.svg');
     assert.ok(svg.startsWith('<svg') && svg.includes('Planung') && svg.includes('Budget'), 'SVG enthält die Knoten');
     assert.ok(Buffer.from(exported['mindmap.png']).subarray(0, 8).equals(PNG_MAGIC), 'PNG hat gültige Signatur');
-    step('Export: Ordner mit index.md, Notizen, SVG und PNG');
+    part('Export: Ordner mit index.md, Notizen, SVG und PNG');
 
     await page9.click('#menuBtn');
     await page9.click('#exportBtn');
@@ -678,7 +674,7 @@ async function main() {
     assert.ok(zip['mindmap.svg'].toString('utf8').startsWith('<svg'));
     assert.deepEqual(errors9, [], 'keine Konsolenfehler beim Export');
     await ctx9.close();
-    step('Export: eine Datei mit Anhängen als ZIP');
+    part('Export: eine Datei mit Anhängen als ZIP');
 
     // ---------- 10. Umsortieren per Drag & Drop (vor/nach Geschwistern) ----------
     const ctx10 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
@@ -716,7 +712,7 @@ async function main() {
     assert.deepEqual(await orderOf(), [['Beta', null, 0], ['Gamma', null, 1], ['Alpha', Number(idB), 0]], 'Mitte bleibt Unternotiz');
     assert.deepEqual(errors10, []);
     await ctx10.close();
-    step('Mindmap: Umsortieren per Drag & Drop vor, nach und als Unternotiz');
+    part('Mindmap: Umsortieren per Drag & Drop vor, nach und als Unternotiz');
 
     // ---------- 11. Bild-Anhänge ----------
     const ctx11 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
@@ -763,7 +759,7 @@ async function main() {
     const widths = await page11.evaluate(() => [...document.querySelectorAll('#preview img.md-att')].map(i => i.naturalWidth));
     assert.deepEqual(widths, [40, 1600], 'kleines Bild bleibt, grosses wird auf 1600 Pixel verkleinert');
     await page11.click('#modeSwitch button[data-mode="edit"]');
-    step('Anhänge: Datei, Zwischenablage, Verkleinern, Vorschau');
+    part('Anhänge: Datei, Zwischenablage, Verkleinern, Vorschau');
 
     // Export nimmt Anhänge mit
     await page11.click('#menuBtn');
@@ -776,7 +772,7 @@ async function main() {
     assert.equal(attFiles.length, 2, 'beide Anhänge exportiert');
     const skizzen = await page11.evaluate(() => new TextDecoder().decode(new Uint8Array(window.__exported['notes/skizzen.md'])));
     assert.match(skizzen, /!\[klein\]\(\.\.\/attachments\/\d+-klein\.png\)/, 'Verweis zeigt auf den Anhangsordner');
-    step('Anhänge: Export in den Ordner attachments/');
+    part('Anhänge: Export in den Ordner attachments/');
 
     // Anhang entfernen
     page11.once('dialog', d => d.accept());
@@ -797,7 +793,7 @@ async function main() {
     db11.close();
     assert.deepEqual(errors11, [], 'keine Konsolenfehler bei Anhängen');
     await ctx11.close();
-    step('Anhänge: Löschen, fehlender Verweis, Ablage in SQLite');
+    part('Anhänge: Löschen, fehlender Verweis, Ablage in SQLite');
 
     // ---------- 12. Drucken: Teilbaum, Auswahl, alles, Fragen und Antworten ----------
     const ctx12 = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'de-CH' });
@@ -839,7 +835,7 @@ async function main() {
     assert.ok(!doc1.includes('Garten'), 'fremder Ast nicht enthalten');
     assert.ok(doc1.includes('md-q open') && doc1.includes('md-q answered'), 'Fragen gerendert');
     await page12.waitForFunction(() => !document.body.classList.contains('printing'));
-    step('Drucken: Notiz mit Unternotizen aus dem Kontextmenü');
+    part('Drucken: Notiz mit Unternotizen aus dem Kontextmenü');
 
     // Auswahl mit Ctrl+Klick
     await page12.click(`.mm-node[data-id="${idG}"]`, { modifiers: ['Control'] });
@@ -858,7 +854,7 @@ async function main() {
     await page12.click('#multiClearBtn');
     await page12.waitForFunction(() => document.getElementById('multiBar').hidden);
     assert.equal(await page12.locator('.mm-node.mm-multi').count(), 0);
-    step('Drucken: ausgewählte Notizen');
+    part('Drucken: ausgewählte Notizen');
 
     // Alles per Ctrl+P
     await page12.click('#mindmap', { position: { x: 30, y: 700 } });
@@ -869,7 +865,7 @@ async function main() {
     await page12.waitForFunction(() => window.__printed.length === 3);
     const doc3 = await printed(2);
     assert.ok(doc3.includes('print-toc') && doc3.includes('<h2>Projekt</h2>') && doc3.includes('<h3>Budget</h3>') && doc3.includes('<h2>Garten</h2>'), 'alle Notizen mit Inhaltsverzeichnis und Ebenen');
-    step('Drucken: alle Notizen per Ctrl+P');
+    part('Drucken: alle Notizen per Ctrl+P');
 
     // Fragen und Antworten
     await page12.click('#viewQuestionsBtn');
@@ -892,7 +888,9 @@ async function main() {
     assert.ok(doc5.includes('<h2>Budget</h2>'), 'nach Notiz gruppiert');
     assert.deepEqual(errors12, [], 'keine Konsolenfehler beim Drucken');
     await ctx12.close();
-    step('Drucken: Fragen und Antworten mit Filter');
+    part('Drucken: Fragen und Antworten mit Filter');
+
+    step('Export (Ordner, ZIP), Drag & Drop, Bild-Anhänge, Drucken');
 
     // ---------- 13. Toolleiste, Tastenkürzel, Hilfe, Links ohne Schema ----------
     const ctx13 = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'de-CH' });
@@ -935,7 +933,7 @@ async function main() {
     assert.equal(await page13.locator('#preview a').innerText(), 'Google');
     await page13.click('#modeSwitch button[data-mode="edit"]');
     await waitSaved(page13);
-    step('Toolleiste: Fett, Kursiv, Überschrift, Listen, Zitat, Link mit Schema-Ergänzung');
+    part('Toolleiste: Fett, Kursiv, Überschrift, Listen, Zitat, Link mit Schema-Ergänzung');
 
     await page13.click('#helpBtn');
     await page13.waitForSelector('#helpDialog[open]');
@@ -957,7 +955,7 @@ async function main() {
     await page13.keyboard.press('Escape');
     assert.deepEqual(errors13, [], 'keine Konsolenfehler in Toolleiste und Hilfe');
     await ctx13.close();
-    step('Hilfe: Reiter Editor, Tastenkürzel, Datenablage; F1 und Menü');
+    part('Hilfe: Reiter Editor, Tastenkürzel, Datenablage; F1 und Menü');
 
     // ---------- 14. Aufgaben: Syntax, zentrale Liste, Abhaken, Marker, Druck, Export, Suche per / ----------
     const ctx14 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
@@ -983,7 +981,7 @@ async function main() {
     const umbauId = await idOfNode(page14, 'Umbau');
     assert.equal(await page14.locator(`.mm-node[data-id="${umbauId}"] .mm-tbadge text`).textContent(), '2', 'Aufgaben-Marker am Knoten');
     assert.equal(await page14.locator(`.mm-node[data-id="${umbauId}"] .mm-badge text`).textContent(), '1', 'Fragen-Marker bleibt');
-    step('Aufgaben: Syntax erkannt, Zähler und Marker');
+    part('Aufgaben: Syntax erkannt, Zähler und Marker');
 
     await page14.click('#viewTasksBtn');
     await page14.waitForSelector('body.view-tasks');
@@ -1004,7 +1002,7 @@ async function main() {
     await page14.selectOption('#tSort', 'note');
     await page14.waitForFunction(() => document.querySelector('#tList .q-note button') && document.querySelector('#tList .q-note button').textContent === 'Umbau');
     await page14.selectOption('#tSort', 'due');
-    step('Aufgaben: Liste mit Filter, Gruppen nach Fälligkeit, Suche, Sortierung');
+    part('Aufgaben: Liste mit Filter, Gruppen nach Fälligkeit, Suche, Sortierung');
 
     // Abhaken in der Liste schreibt in den Text
     await page14.locator('.t-item', { hasText: 'Offerten einholen' }).locator('.t-check').click();
@@ -1026,7 +1024,7 @@ async function main() {
     await page14.keyboard.press('Escape');
     await page14.waitForSelector('body:not(.editor-open)');
     await page14.waitForFunction(() => document.querySelectorAll('.t-item').length === 1 && /Offerten/.test(document.querySelector('.t-item .q-text').textContent));
-    step('Aufgaben: Abhaken in Liste und Vorschau landet im Text');
+    part('Aufgaben: Abhaken in Liste und Vorschau landet im Text');
 
     // Suche per "/"
     await page14.keyboard.press('/');
@@ -1046,7 +1044,7 @@ async function main() {
     await page14.locator('body').click({ position: { x: 640, y: 780 } });
     await page14.keyboard.press('/');
     assert.equal(await page14.evaluate(() => document.activeElement && document.activeElement.id), 'search');
-    step('Suche per "/" in Aufgaben, Mindmap und Liste');
+    part('Suche per "/" in Aufgaben, Mindmap und Liste');
 
     // Druck als Checkliste
     await page14.click('#viewTasksBtn');
@@ -1063,7 +1061,7 @@ async function main() {
     await page14.keyboard.press('Control+p');
     await page14.waitForSelector('#taskPrintDialog[open]');
     await page14.keyboard.press('Escape');
-    step('Aufgaben: Druck als Checkliste, Ctrl+P');
+    part('Aufgaben: Druck als Checkliste, Ctrl+P');
 
     // Export mit offenen Aufgaben
     await page14.click('#menuBtn');
@@ -1083,7 +1081,7 @@ async function main() {
     db14.close();
     assert.deepEqual(errors14, [], 'keine Konsolenfehler bei Aufgaben');
     await ctx14.close();
-    step('Aufgaben: Export und Index in der SQLite-Datei');
+    part('Aufgaben: Export und Index in der SQLite-Datei');
 
     // ---------- 15. Fälligkeit bei Fragen ----------
     const ctx15 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
@@ -1107,7 +1105,7 @@ async function main() {
     assert.equal(await page15.locator('#preview .md-due').count(), 3);
     assert.match(await page15.locator('#preview .md-q.open .md-q-text').first().innerText(), /^Offerten da\?/, 'Termin nicht mehr im Fragetext');
     await page15.click('#modeSwitch button[data-mode="edit"]');
-    step('Fragen: Termin erkannt, Zähler und Vorschau');
+    part('Fragen: Termin erkannt, Zähler und Vorschau');
 
     await page15.click('#viewQuestionsBtn');
     await page15.waitForSelector('body.view-questions');
@@ -1135,7 +1133,7 @@ async function main() {
     assert.ok((await page15.inputValue('#body')).startsWith('? Offerten da? @01.01.2020\n! Ja, heute gekommen\n'));
     await page15.keyboard.press('Escape');
     await page15.waitForSelector('body:not(.editor-open)');
-    step('Fragen: Gruppen nach Fälligkeit, Sortierung, Beantworten behält den Termin');
+    part('Fragen: Gruppen nach Fälligkeit, Sortierung, Beantworten behält den Termin');
 
     // Druck nach Fälligkeit gruppiert
     await page15.click('#qPrintBtn');
@@ -1166,7 +1164,9 @@ async function main() {
     db15.close();
     assert.deepEqual(errors15, [], 'keine Konsolenfehler bei Fragen mit Termin');
     await ctx15.close();
-    step('Fragen: Druck nach Fälligkeit, Export, Index in SQLite');
+    part('Fragen: Druck nach Fälligkeit, Export, Index in SQLite');
+
+    step('Toolleiste, Hilfe, Aufgaben mit Fälligkeit, Fragen mit Termin');
 
     // ---------- 16. Listenfortführung, Ein-/Ausrücken, Termin-Abzeichen bei Aufgaben ----------
     const ctx16 = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'de-CH' });
@@ -1218,7 +1218,7 @@ async function main() {
     assert.notEqual(await page16.evaluate(() => document.activeElement && document.activeElement.id), 'body', 'Tab ausserhalb von Listen verlässt das Feld');
     assert.equal(await body(), 'abc');
     await waitSaved(page16);
-    step('Editor: Enter führt Listen weiter, Tab rückt ein und aus');
+    part('Editor: Enter führt Listen weiter, Tab rückt ein und aus');
 
     await setBody('- [ ] Offerte @01.01.2020\n- [x] Fertig @2030-01-01\n? Frage @01.01.2020');
     await page16.click('#modeSwitch button[data-mode="preview"]');
@@ -1231,7 +1231,7 @@ async function main() {
     await waitSaved(page16);
     assert.deepEqual(errors16, [], 'keine Konsolenfehler bei Listen');
     await ctx16.close();
-    step('Vorschau: Termine von Aufgaben und Fragen als Abzeichen');
+    part('Vorschau: Termine von Aufgaben und Fragen als Abzeichen');
 
     // ---------- 17. Uhrzeiten in Terminen ----------
     const ctx17 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
@@ -1260,7 +1260,7 @@ async function main() {
     assert.deepEqual(badges, [`überfällig · ${todayShort}, 00:01`, 'heute · 23:59', `heute · ${todayShort}`]);
     assert.equal(await page17.locator('#preview .md-q .md-due').innerText(), 'heute · 23:58');
     await page17.click('#modeSwitch button[data-mode="edit"]');
-    step('Zeiten: Erkennung, Überfällig nach Uhrzeit, Anzeige');
+    part('Zeiten: Erkennung, Überfällig nach Uhrzeit, Anzeige');
 
     await page17.click('#viewTasksBtn');
     await page17.waitForSelector('body.view-tasks');
@@ -1292,7 +1292,7 @@ async function main() {
     db17.close();
     assert.deepEqual(errors17, [], 'keine Konsolenfehler bei Zeiten');
     await ctx17.close();
-    step('Zeiten: Liste, Druck, Export, Ablage');
+    part('Zeiten: Liste, Druck, Export, Ablage');
 
     // ---------- 18. Kalenderexport (.ics) ----------
     const ctx18 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
@@ -1387,7 +1387,7 @@ async function main() {
     assert.equal(new Set(uids1).size, 6, 'UIDs eindeutig');
     for (const u of uids1) assert.match(u, /^nonotes-[0-9a-f]{16}-(task|question)-\d+@nonotes\.local$/);
     assert.ok(ics1.events.every(e => e.props.SEQUENCE === '1' && /^\d{8}T\d{6}Z$/.test(e.props.DTSTAMP)));
-    step('Kalender: .ics anlegen, Termine, Status, Erinnerungen, Faltung');
+    part('Kalender: .ics anlegen, Termine, Status, Erinnerungen, Faltung');
 
     // Termin verschieben, Aufgabe abhaken, Aufgabe umformulieren: gleiche UIDs, höhere SEQUENCE, Entferntes abgesagt.
     await page18.fill('#body', (await page18.inputValue('#body'))
@@ -1423,7 +1423,7 @@ async function main() {
     assert.equal(new Set(uids2).size, 7);
     assert.ok(uids1.every(u => uids2.includes(u)), 'alle bisherigen UIDs sind weiterhin enthalten');
     assert.ok(uids2.includes(e2['Aufgabe: Kurz'].props.UID) && !uids1.includes(e2['Aufgabe: Kurz'].props.UID), 'neuer Text, neue UID');
-    step('Kalender: erneuter Export aktualisiert statt zu duplizieren');
+    part('Kalender: erneuter Export aktualisiert statt zu duplizieren');
 
     // Herunterladen ohne Abgesagte und ohne Erinnerungen.
     await page18.click('#menuBtn');
@@ -1463,7 +1463,9 @@ async function main() {
     db18.close();
     assert.deepEqual(errors18, [], 'keine Konsolenfehler beim Kalenderexport');
     await ctx18.close();
-    step('Kalender: Herunterladen ohne Abgesagte, gemerkte Datei, Kennung in der Datenbank');
+    part('Kalender: Herunterladen ohne Abgesagte, gemerkte Datei, Kennung in der Datenbank');
+
+    step('Listenfortführung, Uhrzeiten in Terminen, Kalenderexport (.ics)');
 
     // ---------- 19. Listenarten, Listen in Antworten, Links in den zentralen Listen und im Druck ----------
     const ctx19 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
@@ -1479,7 +1481,7 @@ async function main() {
     assert.equal(await md19('- a\n  - b\n  1. c\n- d'), '<ul><li>a<ul><li>b</li></ul><ol><li>c</li></ol></li><li>d</li></ul>', 'Wechsel in verschachtelter Liste');
     assert.equal(await md19('1. eins\n2. zwei'), '<ol><li>eins</li><li>zwei</li></ol>', 'gleiche Art bleibt eine Liste');
     assert.equal(await md19('> - a\n> 1. b'), '<blockquote><ul><li>a</li></ul><ol><li>b</li></ol></blockquote>', 'auch im Zitat');
-    step('Markdown: Wechsel zwischen Bullet- und nummerierter Liste beginnt neue Liste');
+    part('Markdown: Wechsel zwischen Bullet- und nummerierter Liste beginnt neue Liste');
 
     await page19.click('#newBtn');
     await page19.fill('#title', 'Ziel');
@@ -1504,7 +1506,7 @@ async function main() {
     assert.equal(await page19.locator('#preview .md-a ol li').count(), 2, 'Liste in der Antwort der Vorschau');
     assert.equal(await page19.locator('#preview li.task a.md-wiki[data-note-id]').count(), 1);
     await page19.click('#modeSwitch button[data-mode="edit"]');
-    step('Vorschau: Liste in der Antwort, Verweis in der Aufgabe');
+    part('Vorschau: Liste in der Antwort, Verweis in der Aufgabe');
 
     await page19.click('#viewTasksBtn');
     await page19.waitForSelector('body.view-tasks');
@@ -1522,7 +1524,7 @@ async function main() {
     await page19.waitForFunction(() => document.querySelector('#title').value === 'Ziel');
     await page19.keyboard.press('Escape');
     await page19.waitForSelector('body:not(.editor-open)');
-    step('Aufgabenliste: Formatierung, Link, Verweis öffnet die Notiz');
+    part('Aufgabenliste: Formatierung, Link, Verweis öffnet die Notiz');
 
     await page19.click('#viewQuestionsBtn');
     await page19.waitForSelector('body.view-questions');
@@ -1536,7 +1538,7 @@ async function main() {
     await page19.waitForFunction(() => document.querySelector('#title').value === 'Ziel');
     await page19.keyboard.press('Escape');
     await page19.waitForSelector('body:not(.editor-open)');
-    step('Fragenliste: Verweis und Liste in der Antwort');
+    part('Fragenliste: Verweis und Liste in der Antwort');
 
     await page19.click('#qPrintBtn');
     await page19.waitForSelector('#qaPrintDialog[open]');
@@ -1554,7 +1556,7 @@ async function main() {
     const tDoc19 = await page19.evaluate(() => window.__printed[1]);
     assert.ok(tDoc19.includes('<a href="https://google.com" target="_blank" rel="noopener noreferrer">Google</a>'), 'Link in der gedruckten Checkliste');
     assert.ok(tDoc19.includes('<strong>Anhang</strong>'));
-    step('Druck: Markdown in Fragen und Antworten und in der Checkliste');
+    part('Druck: Markdown in Fragen und Antworten und in der Checkliste');
 
     await page19.click('#menuBtn');
     await page19.click('#exportBtn');
@@ -1569,7 +1571,7 @@ async function main() {
     assert.ok(quelle19.includes('> **Antwort:** Ja'), 'einzeilige Antwort bleibt in der Zeile');
     assert.deepEqual(errors19, [], 'keine Konsolenfehler bei Listen und Links');
     await ctx19.close();
-    step('Export: Listen in Antworten bleiben Listen');
+    part('Export: Listen in Antworten bleiben Listen');
 
     // ---------- 20. Geteilte Ansicht: synchrones Scrollen ----------
     const ctx20 = await browser.newContext({ viewport: { width: 1280, height: 700 }, locale: 'de-CH' });
@@ -1598,7 +1600,7 @@ async function main() {
     const editorBefore = await page20.evaluate(() => document.querySelector('#body').scrollTop);
     await page20.waitForTimeout(300);
     assert.equal(await page20.evaluate(() => document.querySelector('#body').scrollTop), editorBefore, 'Vorschau stösst den Editor nicht zurück');
-    step('Geteilt: Editor scrollt, Vorschau folgt zeilengenau');
+    part('Geteilt: Editor scrollt, Vorschau folgt zeilengenau');
 
     // Vorschau führt: Block von Quellzeile 40 an die Oberkante → Editor zeigt Zeile 40 oben.
     await page20.hover('#preview');
@@ -1629,7 +1631,7 @@ async function main() {
     assert.ok(anchor20 < 60, `Vorschau bleibt nach dem Tippen ausgerichtet (Abstand ${anchor20}px, Editor bei ${bodyTop}px, Zeile ${line20})`);
     assert.deepEqual(errors20, [], 'keine Konsolenfehler beim synchronen Scrollen');
     await ctx20.close();
-    step('Geteilt: Vorschau scrollt, Editor folgt; Ende an Ende; umbrochene Zeilen; nach Änderung ausgerichtet');
+    part('Geteilt: Vorschau scrollt, Editor folgt; Ende an Ende; umbrochene Zeilen; nach Änderung ausgerichtet');
 
     // ---------- 21. Unteraufgaben ----------
     const ctx21 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
@@ -1664,7 +1666,7 @@ async function main() {
     assert.deepEqual(logic21.reopened, ['- [ ] Haupt', '  - [ ] A', '    - [ ] Enkel', '  - [x] B'], 'Öffnen einer Unteraufgabe öffnet die Hauptaufgaben darüber');
     assert.deepEqual(logic21.dbl, ['completed', 'reopened', 'completed']);
     assert.equal(logic21.text, '1 Unteraufgabe ist noch offen / 3 Unteraufgaben sind noch offen');
-    step('Unteraufgaben: Hierarchie, Abschluss- und Öffnen-Regeln als Textfunktionen');
+    part('Unteraufgaben: Hierarchie, Abschluss- und Öffnen-Regeln als Textfunktionen');
 
     await page21.click('#newBtn');
     await page21.fill('#title', 'Projekt');
@@ -1682,7 +1684,7 @@ async function main() {
     assert.equal(await row21('Unter A').locator('.t-part').innerText(), 'Teil von „Haupt“');
     assert.equal(await row21('Enkel').locator('.t-part').innerText(), 'Teil von „Unter A“');
     assert.equal(await row21('Haupt').locator('.t-part').count(), 0);
-    step('Aufgabenliste: Fortschritt «0/3» und «Teil von …»');
+    part('Aufgabenliste: Fortschritt «0/3» und «Teil von …»');
 
     // Abhaken mit offenen Unteraufgaben wird verweigert
     await row21('Haupt').locator('.t-check').click();
@@ -1705,7 +1707,7 @@ async function main() {
     await row21('Haupt').locator('.t-check').click();
     await page21.waitForFunction(() => document.querySelectorAll('.t-item').length === 1);
     assert.equal(await row21('Einzel').count(), 1);
-    step('Aufgabenliste: Abhaken erst nach den Unteraufgaben');
+    part('Aufgabenliste: Abhaken erst nach den Unteraufgaben');
 
     // Doppelklick: alles erledigt → öffnet nur die Hauptaufgabe; ist etwas offen → schliesst die ganze Gruppe ab
     await page21.click('#tFilter button[data-status="all"]');
@@ -1733,7 +1735,7 @@ async function main() {
     await page21.waitForFunction(() => document.querySelectorAll('.t-item.done').length === 1);
     for (const t of ['Haupt', 'Unter A', 'Enkel']) assert.equal(await row21(t).evaluate(e => e.classList.contains('open')), true, `${t} ist offen`);
     assert.equal(await row21('Unter B').evaluate(e => e.classList.contains('done')), true, 'Geschwister bleibt erledigt');
-    step('Aufgabenliste: Doppelklick schliesst alles ab bzw. öffnet nur die Aufgabe, Öffnen wirkt nach oben');
+    part('Aufgabenliste: Doppelklick schliesst alles ab bzw. öffnet nur die Aufgabe, Öffnen wirkt nach oben');
 
     // Sortierung nach Notiz: eingerückt; von Hand getipptes [x] zeigt den Hinweis
     await page21.selectOption('#tSort', 'note');
@@ -1749,7 +1751,7 @@ async function main() {
     const hint21 = await row21('Haupt').locator('.t-progress.warn').innerText();
     assert.equal(hint21, '1/3 · Unteraufgaben offen', 'Haupt ist von Hand erledigt, Unteraufgaben sind offen');
     assert.equal(await row21('Haupt').evaluate(e => e.classList.contains('done')), true);
-    step('Aufgabenliste: Einrückung nach Notiz, Hinweis bei von Hand erledigter Hauptaufgabe');
+    part('Aufgabenliste: Einrückung nach Notiz, Hinweis bei von Hand erledigter Hauptaufgabe');
 
     // Vorschau: Kästchen verweigert, Fortschritt als Abzeichen, Doppelklick, Öffnen nach oben
     await page21.click('#viewListBtn');
@@ -1779,7 +1781,7 @@ async function main() {
     await page21.waitForFunction(() => document.querySelector('#body').value.includes('[x] Enkel'));
     await page21.click('#modeSwitch button[data-mode="edit"]');
     await waitSaved(page21);
-    step('Vorschau: Abzeichen, Kästchen verweigert, Doppelklick, Öffnen nach oben');
+    part('Vorschau: Abzeichen, Kästchen verweigert, Doppelklick, Öffnen nach oben');
 
     // Druck als Checkliste nach Notiz und Export
     await page21.fill('#body', ['- [ ] Haupt', '  - [x] Unter A', '- [ ] Einzel'].join('\n'));
@@ -1802,7 +1804,7 @@ async function main() {
     await page21.waitForFunction(() => /Export gespeichert/.test(document.querySelector('#status').textContent));
     const idx21 = await page21.evaluate(() => new TextDecoder().decode(new Uint8Array(window.__exported['index.md'])));
     assert.ok(idx21.includes('- [ ] Haupt — aus [Projekt]') && idx21.includes('- [ ] Einzel — aus [Projekt]'));
-    step('Unteraufgaben: Druck eingerückt, Export');
+    part('Unteraufgaben: Druck eingerückt, Export');
 
     // Datenbank: Spalten, und eine Schema-8-Datei wird beim Öffnen migriert
     await page21.click('#viewListBtn');
@@ -1843,7 +1845,9 @@ async function main() {
     assert.deepEqual(errors21b, [], 'keine Konsolenfehler bei der Migration auf Schema 9');
     await ctx21.close();
     await ctx21b.close();
-    step('Unteraufgaben: Schema 9 in der Datei, Migration einer Schema-8-Datei');
+    part('Unteraufgaben: Schema 9 in der Datei, Migration einer Schema-8-Datei');
+
+    step('Listenarten, geteilte Ansicht mit synchronem Scrollen, Unteraufgaben; Dateien mit Schema 8 und 9');
 
     // ---------- 22. Archiv ----------
     const ctx22 = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true, locale: 'de-CH' });
@@ -1905,7 +1909,7 @@ async function main() {
     const cal1 = await icsDownload22();
     const gamma1 = cal1.events.find(e => e.props.SUMMARY === 'Aufgabe: Gamma-Aufgabe');
     assert.ok(gamma1 && gamma1.props.STATUS === 'CONFIRMED', 'Aufgabe von Gamma steht im Kalender');
-    step('Archiv: Baum mit Aufgabe und Frage aufgebaut, Kalender vor dem Archivieren');
+    part('Archiv: Baum mit Aufgabe und Frage aufgebaut, Kalender vor dem Archivieren');
 
     // Beta archivieren: Rückfrage mit Anzahl, Unternotiz geht mit
     await node22('Beta').click({ button: 'right' });
@@ -1916,7 +1920,7 @@ async function main() {
     assert.match(await p22.locator('#status').innerText(), /2 Notizen archiviert/);
     await p22.waitForFunction(() => !document.querySelector('#viewTasksBtn .count') && !document.querySelector('#viewQuestionsBtn .count'));
     assert.equal(await p22.locator('#mapArchiveBtn').innerText(), 'Archiv anzeigen (2)');
-    step('Archiv: Archivieren per Kontextmenü mit Rückfrage, Unternotiz geht mit, Zähler fallen weg');
+    part('Archiv: Archivieren per Kontextmenü mit Rückfrage, Unternotiz geht mit, Zähler fallen weg');
 
     // Archiv anzeigen: blass und gestrichelt, Wahl bleibt nach dem Neuladen
     await p22.click('#mapArchiveBtn');
@@ -1931,7 +1935,7 @@ async function main() {
     await p22.waitForFunction(() => document.querySelectorAll('.mm-node.mm-archived').length === 2);
     await p22.click('#mapArchiveBtn');
     await p22.waitForFunction(() => document.querySelectorAll('.mm-node').length === 4);
-    step('Archiv: Schalter «Archiv anzeigen», Wahl wird gemerkt');
+    part('Archiv: Schalter «Archiv anzeigen», Wahl wird gemerkt');
 
     // Suche findet das Archiv immer: Treffer samt archivierten Vorfahren erscheinen
     await p22.fill('#mapSearch', 'Quokka');
@@ -1941,7 +1945,7 @@ async function main() {
     assert.equal(await node22('Gamma').evaluate(n => n.classList.contains('mm-match')), true);
     await p22.fill('#mapSearch', '');
     await p22.waitForFunction(() => document.querySelectorAll('.mm-node').length === 4);
-    step('Archiv: Suche findet Archivierte immer und blendet Treffer samt Vorfahren ein');
+    part('Archiv: Suche findet Archivierte immer und blendet Treffer samt Vorfahren ein');
 
     // Alpha archivieren: nur noch noch nicht archivierte werden gezählt
     await node22('Alpha').click({ button: 'right' });
@@ -1974,7 +1978,7 @@ async function main() {
     assert.equal(await p22.locator('#printBtn').isVisible(), true);
     await p22.keyboard.press('Escape');
     assert.equal(await p22.locator('#trashBar').isHidden(), true);
-    step('Archiv: Liste mit Bereich und Suche, archivierte Notiz schreibgeschützt mit Zurückholen-Knopf');
+    part('Archiv: Liste mit Bereich und Suche, archivierte Notiz schreibgeschützt mit Zurückholen-Knopf');
 
     // Zurückholen: Gamma holt Beta und Alpha mit, Delta bleibt im Archiv
     await p22.click('#unarchiveBtn');
@@ -1989,7 +1993,7 @@ async function main() {
     assert.deepEqual(await visible22(), ['Alpha', 'Beta', 'Epsilon', 'Gamma']);
     assert.equal(await p22.locator('#viewTasksBtn .count').innerText(), '1');
     assert.equal(await p22.locator('#viewQuestionsBtn .count').innerText(), '1');
-    step('Archiv: Zurückholen Blatt für Blatt, alle archivierten Eltern kommen mit, Unternotiz bleibt');
+    part('Archiv: Zurückholen Blatt für Blatt, alle archivierten Eltern kommen mit, Unternotiz bleibt');
 
     // Schutz: archivierte Notizen lassen sich nicht ändern, Rechtsklick bietet nur Passendes
     await p22.click('#mapArchiveBtn');
@@ -2006,7 +2010,7 @@ async function main() {
     assert.ok(menu22.some(t => t.startsWith('Zurückholen')) && menu22.some(t => t.startsWith('Öffnen')));
     assert.ok(!menu22.some(t => /Unternotiz anlegen|Umbenennen|Archivieren|Nach oben/.test(t)), `Menü archivierter Notizen: ${menu22.join(', ')}`);
     await p22.keyboard.press('Escape');
-    step('Archiv: archivierte Notizen sind geschützt, Kontextmenü passend');
+    part('Archiv: archivierte Notizen sind geschützt, Kontextmenü passend');
 
     // Archiv und Papierkorb sind unabhängig
     await node22('Delta').click({ button: 'right' });
@@ -2025,7 +2029,7 @@ async function main() {
     await p22.selectOption('#listScope', 'live');
     await p22.click('#viewMapBtn');
     await p22.waitForSelector('body.view-map');
-    step('Archiv: Papierkorb-Wiederherstellung behält den Archivstatus');
+    part('Archiv: Papierkorb-Wiederherstellung behält den Archivstatus');
 
     // Mehrere Notizen auf einmal (Archiv wieder ausblenden)
     if ((await p22.locator('#mapArchiveBtn').getAttribute('aria-pressed')) === 'true') await p22.click('#mapArchiveBtn');
@@ -2038,7 +2042,7 @@ async function main() {
     assert.ok(dialogs22.at(-1).startsWith('2 Notizen archivieren (mit Unternotizen insgesamt 3)?'), dialogs22.at(-1));
     assert.match(await p22.locator('#status').innerText(), /3 Notizen archiviert/);
     assert.deepEqual(await visible22(), ['Alpha']);
-    step('Archiv: Mehrfachauswahl archivieren');
+    part('Archiv: Mehrfachauswahl archivieren');
 
     // Kalender sagt archivierte Termine ab, ohne zu duplizieren
     const cal2 = await icsDownload22();
@@ -2095,7 +2099,7 @@ async function main() {
     assert.ok(idx2.includes('*(archiviert)*') && idx2.includes('Gamma-Aufgabe'), 'Inhaltsverzeichnis und Aufgabenliste');
     assert.ok(Buffer.from(ex2['mindmap.svg']).toString('utf8').includes('stroke-dasharray'), 'archivierte Knoten im Bild gestrichelt');
     assert.ok(!Buffer.from(ex1['index.md']).toString('utf8').includes('Gamma'), 'ohne Kästchen nicht im Index');
-    step('Archiv: Kalender sagt ab, Druck und Export nur mit «Archivierte Notizen mit einbeziehen»');
+    part('Archiv: Kalender sagt ab, Druck und Export nur mit «Archivierte Notizen mit einbeziehen»');
 
     // Datei: Spalte archived_at, Migration einer Schema-9-Datei
     await p22.waitForTimeout(100);
@@ -2129,17 +2133,176 @@ async function main() {
     assert.deepEqual(errors22b, [], 'keine Konsolenfehler bei der Migration auf das aktuelle Schema');
     await ctx22.close();
     await ctx22b.close();
-    step('Archiv: Spalte in der Datei, Migration einer Schema-9-Datei');
+    part('Archiv: Spalte in der Datei, Migration einer Schema-9-Datei');
 
-    console.log('\nSmoke-Test bestanden.');
+    step('Archiv: Kontextmenü, Schalter, Suche, Zurückholen, Papierkorb, Mehrfachauswahl, Kalender, Druck und Export; Datei mit Schema 9');
   } finally {
-    await browser.close();
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 }
 
-main().catch(e => {
-  console.error('\nSmoke-Test FEHLGESCHLAGEN');
-  console.error(e);
-  process.exit(1);
-});
+// ============================================================
+/* Vertragstest der Backend-Schnittstelle (NoNotesBackend) gegen das lokale Backend.
+   Jedes weitere Backend (selbst gehostet, SaaS) muss denselben Vertrag erfüllen: Methodenliste, nur
+   JSON-taugliche Rückgabewerte (ausser Bilddaten), Fehler mit Kennung, Meldung von Änderungen. */
+async function runBackend(browser, part, step) {
+  /** Läuft in der Seite. Gibt eine Liste von Befunden zurück (leer = in Ordnung). */
+  async function contract() {
+    const findings = [];
+    const fail = msg => findings.push(msg);
+    const SQL = await window.initSqlJs();
+    const DB = window.NoNotesDB;
+    const C = window.NoNotesBackend;
+    let db = DB.open(SQL, null);
+    const changes = [];
+    const B = window.NoNotesBackendLocal.create({ getDb: () => db, onChange: name => changes.push(name) });
+
+    // 1. Methodenliste
+    const miss = C.missing(B);
+    if (miss.length) fail('Methoden fehlen: ' + miss.join(', '));
+    // Jede Funktion in db.js, die mit db als erstem Argument arbeitet, ist Teil des Vertrags oder bewusst intern.
+    const INTERNAL = new Set(['open', 'exportBytes', 'configure', 'normalizeTag', 'syncQuestions', 'syncTasks', 'syncLinks', 'subtreeNoteIds']);
+    for (const [name, fn] of Object.entries(DB)) {
+      if (typeof fn !== 'function' || INTERNAL.has(name)) continue;
+      if (!C.METHODS.includes(name)) fail(`db.js-Funktion ${name} ist weder im Vertrag noch als intern vermerkt`);
+    }
+    for (const name of C.MUTATING) if (!C.METHODS.includes(name)) fail(`MUTATING enthält unbekannte Methode ${name}`);
+
+    // 2. Ablauf mit allen Arten von Daten; jede Rückgabe muss JSON-tauglich sein
+    const seen = [];
+    const call = async (name, ...args) => {
+      const before = changes.length;
+      const r = await B[name](...args);
+      const mutating = C.MUTATING.has(name);
+      if (mutating && changes.length === before) fail(`${name} ändert Daten, meldet aber keine Änderung`);
+      if (!mutating && changes.length !== before) fail(`${name} liest nur, meldet aber eine Änderung`);
+      if (name !== 'getAttachment' && name !== 'allAttachments') {
+        let round;
+        try { round = JSON.parse(JSON.stringify(r === undefined ? null : r)); } catch (e) { fail(`${name}: nicht serialisierbar`); return r; }
+        if (JSON.stringify(round) !== JSON.stringify(r === undefined ? null : r)) fail(`${name}: Rückgabe ist nicht JSON-sicher`);
+      }
+      seen.push(name);
+      return r;
+    };
+
+    const a = await call('createNote', null);
+    const b = await call('createNote', a);
+    await call('updateNote', a, 'Alpha', 'Text\n- [ ] Aufgabe @15.10.2026\n  - [ ] Unterpunkt\n? Frage? @16.10.2026\n[[Beta]]');
+    await call('renameNote', b, 'Beta');
+    // Verlauf: die Uhr der Seite um eine Pause vorstellen, damit eine Fassung entsteht
+    const RealDate = window.Date;
+    let skew = 0;
+    window.Date = class extends RealDate {
+      constructor(...args) { if (args.length === 0) super(RealDate.now() + skew); else super(...args); }
+      static now() { return RealDate.now() + skew; }
+    };
+    skew += 10 * 60 * 1000;
+    await call('updateNote', a, 'Alpha', 'Text geändert');
+    const history = await call('listHistory', a);
+    if (history.length !== 1) fail('listHistory: eine Fassung erwartet, ist ' + history.length);
+    const version = await call('getHistoryVersion', a, history[0].id);
+    if (!version || typeof version.body !== 'string' || typeof version.title !== 'string') fail('getHistoryVersion liefert title und body');
+    await call('restoreHistoryVersion', a, history[0].id);
+    await call('clearHistory', a);
+    window.Date = RealDate;
+    await call('setTags', a, ['x', 'y']);
+    await call('setMeta', 'testkey', 'wert');
+    await call('setMapTitle', 'Karte');
+    await call('getMeta', 'testkey');
+    await call('getMapTitle');
+    await call('getTree', {});
+    await call('getNote', a);
+    await call('getPath', b);
+    await call('listNotes', '', {});
+    await call('countNotes', {});
+    await call('findNoteByTitle', 'Beta');
+    const links = await call('getLinks');
+    if (!Array.isArray(links)) fail('getLinks liefert keine Liste');
+    const index = await call('titleIndex');
+    if (!Array.isArray(index) || !index.length || !Array.isArray(index[0]) || index[0].length !== 2) fail('titleIndex liefert keine Paare');
+    await call('getTags', a);
+    await call('listAllTags');
+    await call('listTasks', { status: 'all', sort: 'due' });
+    await call('countTasks', '2026-01-01');
+    const tasks = await B.listTasks({ status: 'all', sort: 'due' });
+    if (tasks.length) await call('getTask', tasks[0].id);
+    await call('listQuestions', { status: 'all', sort: 'due' });
+    await call('countQuestions', '2026-01-01');
+    await call('listPeople');
+    await call('listQuestions', { status: 'all', kind: 'decision', person: 'max1234' });
+    const qs = await B.listQuestions({ status: 'all' });
+    if (qs.length) { await call('getQuestion', qs[0].id); await call('answerQuestion', qs[0].id, 'Antwort'); }
+    await call('setCollapsed', a, true);
+    await call('setAllCollapsed', false);
+    await call('moveNote', b, a, 'after').catch(() => {});
+    await call('moveAmongSiblings', b, -1).catch(() => {});
+    await call('setParent', b, a).catch(() => {});
+    const att = await call('addAttachment', a, { name: 'x.png', mime: 'image/png', bytes: new Uint8Array([1, 2, 3]) });
+    await call('listAttachments', a);
+    const got = await call('getAttachment', att);
+    if (!(got && got.data && got.data.length === 3)) fail('getAttachment liefert die Bytes nicht');
+    await call('allAttachments', {});
+    await call('attachmentsSize');
+    await call('deleteAttachment', att);
+    await call('archiveCount', [b]);
+    await call('archiveNote', b);
+    await call('isArchived', b);
+    await call('countArchived');
+    await call('unarchiveNote', b);
+    const c = await call('createNote', null);
+    await call('deleteNote', c);
+    await call('countTrash');
+    await call('restoreNote', c);
+    await call('deleteNote', c);
+    await call('purgeNote', c);
+    await call('emptyTrash');
+
+    // 3. Fehler mit Kennung
+    await call('archiveNote', a);
+    const expect = async (code, fn) => {
+      try { await fn(); fail(`kein Fehler für ${code}`); }
+      catch (e) {
+        if (e.code !== code) fail(`Fehlerkennung ${e.code} statt ${code}`);
+        if (!window.NoNotesBackend.errorText(e)) fail(`kein Text zu ${code}`);
+      }
+    };
+    await expect('ARCHIVED_NO_CHILD', () => B.createNote(a));
+    await expect('ARCHIVED_NO_MOVE', () => B.setParent(b, null));
+    await expect('ARCHIVED_READONLY', () => B.restoreHistoryVersion(a, 1));
+    await call('unarchiveNote', a);
+    await expect('MOVE_INTO_SELF', () => B.setParent(a, a));
+    await expect('HISTORY_NOT_FOUND', () => B.getHistoryVersion(a, 999999));
+    const t2 = tasks.find(t => t.parent_id == null) || tasks[0];
+    if (t2) {
+      await B.setTaskDone(t2.id, true).then(() => fail('Hauptaufgabe mit offener Unteraufgabe abgehakt')).catch(e => { if (e.code !== 'SUBTASKS_OPEN') fail('SUBTASKS_OPEN erwartet, ' + e.code); else if (typeof e.open !== 'number') fail('SUBTASKS_OPEN ohne Anzahl open'); });
+    }
+
+    // 4. Abdeckung: der Ablauf hat jede Methode berührt
+    const unused = C.METHODS.filter(m => !seen.includes(m) && m !== 'setTaskDone' && m !== 'toggleTaskTree');
+    if (unused.length) fail('im Vertragstest nicht berührt: ' + unused.join(', '));
+
+    // 5. normalizeTag stimmt mit db.js überein
+    for (const s of ['  #Tag  ', 'a   b', '#', '', null, '##x', ' x ']) {
+      if (C.normalizeTag(s) !== DB.normalizeTag(s)) fail(`normalizeTag weicht ab für ${JSON.stringify(s)}`);
+    }
+    return findings;
+  }
+
+  try {
+    const page = await browser.newPage();
+    const errors = [];
+    page.on('pageerror', e => errors.push(String(e)));
+    await page.goto(APP_URL);
+    await page.waitForSelector('body[data-ready="true"]', { timeout: 30000 });
+    const findings = await page.evaluate(contract);
+    assert.deepEqual(findings, [], 'Vertrag verletzt:\n' + findings.join('\n'));
+    part('Backend-Vertrag: Methodenliste, JSON-sichere Rückgaben, Änderungsmeldung, Fehlerkennungen');
+    assert.deepEqual(errors, []);
+  } finally {
+  }
+}
+
+suite('App-Test', [
+  { name: null, run: runSmoke }, // druckt seine Gruppen selbst
+  { name: 'Backend-Vertrag: Methodenliste, JSON-sichere Rückgaben, Änderungsmeldung, Fehlerkennungen', run: runBackend },
+], { browser: true });

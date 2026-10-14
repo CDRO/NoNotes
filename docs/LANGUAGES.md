@@ -26,7 +26,7 @@ sind Dateien im Ordner `lang/` und lassen sich mit jedem Release ergänzen. Ausg
 - Zeitstempel (Erstellt, Geändert, Gedruckt, Gespeichert) folgen der Sprache (`Intl`). Fälligkeiten
   von Aufgaben und Fragen werden vorerst in jeder Sprache als `T.M.JJJJ` angezeigt; die Eingabe im Text
   (`@15.10.2026` oder `@2026-10-15`, optional mit Uhrzeit) ist Syntax und bleibt überall gleich.
-- Der Test `test/i18n.cjs` führt die Seite in `qps` und in `en` durch alle Ansichten, Dialoge und Rückfragen und
+- Der Test `test/extend.cjs` führt die Seite in `qps` und in `en` durch alle Ansichten, Dialoge und Rückfragen und
   schlägt fehl, sobald irgendwo deutscher Text stehen bleibt.
 - Die Entwicklungssprache `qps` umschliesst jeden Text mit `⟦ ⟧`. Wer sie einstellt
   (`localStorage.setItem('nonotes.lang', 'qps')`), sieht sofort jede Stelle, die nicht übersetzbar ist.

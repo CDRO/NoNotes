@@ -69,262 +69,139 @@
     db.run('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', [key, String(value)]);
   }
 
-  /** Legt das aktuelle Schema in einer leeren Datenbank an. */
+  /* Das Standardschema (Version 14). Eine neue Datei bekommt es ganz; eine bestehende Datei, gleich welchen Alters,
+     wird beim Öffnen in einem Schritt daran angeglichen (upgrade): fehlende Tabellen und Spalten kommen dazu, danach
+     werden die Indexe über die Texte (Fragen und Entscheide, Aufgaben, Querverweise) neu gefüllt. Es gibt keine
+     Schritt-für-Schritt-Migrationen mehr; die Versionsnummer sagt nur, ob eine Datei schon auf diesem Stand ist
+     oder von einer neueren App stammt. */
+  const SCHEMA = [
+    { name: 'notes', columns: [
+      ['id', 'INTEGER PRIMARY KEY AUTOINCREMENT'],
+      ['title', "TEXT NOT NULL DEFAULT ''"],
+      ['body', "TEXT NOT NULL DEFAULT ''"],
+      ['created_at', 'TEXT NOT NULL'],          // ISO 8601, UTC
+      ['updated_at', 'TEXT NOT NULL'],
+      ['parent_id', 'INTEGER'],                 // NULL = hängt an der Wurzel
+      ['sort_order', 'INTEGER NOT NULL DEFAULT 0'],
+      ['collapsed', 'INTEGER NOT NULL DEFAULT 0'],
+      ['deleted_at', 'TEXT'],                   // gesetzt = im Papierkorb
+      ['archived_at', 'TEXT'],                  // gesetzt = im Archiv (ausgeblendet, durchsuchbar, schreibgeschützt)
+      ['updated_by', 'TEXT'],                   // wer den heutigen Stand geschrieben hat (Anzeigename, leer = unbekannt)
+    ], indexes: [
+      'CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes (updated_at DESC)',
+      'CREATE INDEX IF NOT EXISTS idx_notes_parent ON notes (parent_id, sort_order)',
+    ] },
+    // schema_version, created_at, map_title, accent, theme, calendar_uid, calendar_sequence, calendar_known
+    { name: 'meta', columns: [['key', 'TEXT PRIMARY KEY'], ['value', 'TEXT NOT NULL']] },
+    // Index über die ?-, ?!-, !- und !!-Zeilen, aus dem Text abgeleitet (packages/core/questions.js)
+    { name: 'questions', columns: [
+      ['id', 'INTEGER PRIMARY KEY AUTOINCREMENT'],
+      ['note_id', 'INTEGER NOT NULL'],
+      ['text', 'TEXT NOT NULL'],
+      ['norm', 'TEXT NOT NULL'],                // normalisiert, zum Wiedererkennen nach Änderungen
+      ['answer', 'TEXT'],                       // NULL = offen
+      ['line_no', 'INTEGER NOT NULL'],
+      ['created_at', 'TEXT NOT NULL'],
+      ['answered_at', 'TEXT'],
+      ['due', 'TEXT'],                          // Fälligkeit aus "@Datum [Zeit]": YYYY-MM-DD oder YYYY-MM-DDTHH:MM
+      ['kind', "TEXT NOT NULL DEFAULT 'question'"], // 'question' oder 'decision'
+      ['decided', 'TEXT'],                      // Tag des Entscheids aus dem Text, YYYY-MM-DD
+      ['people', 'TEXT'],                       // JSON [{ handle, optional }] aus "@kürzel" und "(@kürzel)"
+    ], indexes: ['CREATE INDEX IF NOT EXISTS idx_questions_note ON questions (note_id)'] },
+    { name: 'tags', columns: [['id', 'INTEGER PRIMARY KEY AUTOINCREMENT'], ['name', 'TEXT NOT NULL UNIQUE COLLATE NOCASE']] },
+    { name: 'note_tags', columns: [['note_id', 'INTEGER NOT NULL'], ['tag_id', 'INTEGER NOT NULL']], constraint: 'PRIMARY KEY (note_id, tag_id)' },
+    { name: 'attachments', columns: [
+      ['id', 'INTEGER PRIMARY KEY AUTOINCREMENT'],
+      ['note_id', 'INTEGER NOT NULL'],
+      ['name', 'TEXT NOT NULL'],
+      ['mime', 'TEXT NOT NULL'],
+      ['size', 'INTEGER NOT NULL'],
+      ['data', 'BLOB NOT NULL'],
+      ['created_at', 'TEXT NOT NULL'],
+    ], indexes: ['CREATE INDEX IF NOT EXISTS idx_attachments_note ON attachments (note_id)'] },
+    // Index über die Aufgabenzeilen "- [ ]", aus dem Text abgeleitet (packages/core/tasks.js)
+    { name: 'tasks', columns: [
+      ['id', 'INTEGER PRIMARY KEY AUTOINCREMENT'],
+      ['note_id', 'INTEGER NOT NULL'],
+      ['text', 'TEXT NOT NULL'],
+      ['norm', 'TEXT NOT NULL'],
+      ['done', 'INTEGER NOT NULL DEFAULT 0'],
+      ['due', 'TEXT'],
+      ['line_no', 'INTEGER NOT NULL'],
+      ['created_at', 'TEXT NOT NULL'],
+      ['done_at', 'TEXT'],
+      ['parent_id', 'INTEGER'],                 // Hauptaufgabe einer Unteraufgabe
+      ['depth', 'INTEGER NOT NULL DEFAULT 0'],
+    ], indexes: ['CREATE INDEX IF NOT EXISTS idx_tasks_note ON tasks (note_id)'] },
+    // Verlauf: pro Fassung ein Rückwärts-Patch zur nächstneueren (packages/core/history.js)
+    { name: 'note_history', columns: [
+      ['id', 'INTEGER PRIMARY KEY AUTOINCREMENT'],
+      ['note_id', 'INTEGER NOT NULL'],
+      ['at', 'TEXT NOT NULL'],                  // Zeitpunkt der letzten Änderung dieser Fassung
+      ['started_at', 'TEXT NOT NULL'],          // Beginn der Arbeitsphase, die auf diese Fassung folgte
+      ['open', 'INTEGER NOT NULL DEFAULT 0'],   // 1 = die Arbeitsphase läuft noch, der Patch wird bei jeder Änderung nachgeführt
+      ['title', 'TEXT NOT NULL'],               // Titel dieser Fassung
+      ['p', 'INTEGER NOT NULL'],                // gemeinsamer Anfang mit der nächstneueren Fassung
+      ['s', 'INTEGER NOT NULL'],                // gemeinsames Ende
+      ['r', 'TEXT NOT NULL'],                   // der Teil dazwischen, wie er in dieser Fassung steht
+      ['author', 'TEXT'],                       // wer diese Fassung geschrieben hat (Anzeigename, leer = unbekannt)
+    ], indexes: ['CREATE INDEX IF NOT EXISTS idx_history_note ON note_history (note_id, id)'] },
+    // Querverweise [[Titel*]] je Notiz (packages/core/links.js); Ziele werden beim Lesen über den Titel aufgelöst
+    { name: 'note_links', columns: [
+      ['id', 'INTEGER PRIMARY KEY AUTOINCREMENT'],
+      ['note_id', 'INTEGER NOT NULL'],
+      ['title', 'TEXT NOT NULL'],
+      ['key', 'TEXT NOT NULL'],
+      ['line_no', 'INTEGER NOT NULL'],
+    ], indexes: ['CREATE INDEX IF NOT EXISTS idx_note_links_note ON note_links (note_id)'] },
+  ];
+
+  function createTableSql(t) {
+    const cols = t.columns.map(([name, ddl]) => `${name} ${ddl}`);
+    if (t.constraint) cols.push(t.constraint);
+    return `CREATE TABLE IF NOT EXISTS ${t.name} (${cols.join(', ')})`;
+  }
+
+  function columnsOf(db, table) {
+    return selectAll(db, `PRAGMA table_info(${table})`).map(c => c.name);
+  }
+
+  /** Spaltendefinition für ALTER TABLE ADD COLUMN: NOT NULL geht dort nur mit Vorgabewert. */
+  function addableDdl(ddl) {
+    return /\bDEFAULT\b/.test(ddl) ? ddl : ddl.replace(/\s*NOT NULL\b/, '');
+  }
+
+  /** Legt alle Tabellen und Indexe des Standardschemas an (neue Datei). */
   function createSchema(db) {
-    db.exec(`
-      CREATE TABLE notes (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        title      TEXT NOT NULL DEFAULT '',
-        body       TEXT NOT NULL DEFAULT '',
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        parent_id  INTEGER,
-        sort_order INTEGER NOT NULL DEFAULT 0,
-        collapsed  INTEGER NOT NULL DEFAULT 0,
-        deleted_at TEXT,
-        archived_at TEXT,
-        -- updated_by: wer den heutigen Stand geschrieben hat (Anzeigename, leer = unbekannt)
-        updated_by TEXT
-      );
-      CREATE INDEX idx_notes_updated ON notes (updated_at DESC);
-      CREATE INDEX idx_notes_parent ON notes (parent_id, sort_order);
-      CREATE TABLE meta (
-        key   TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      );
-      CREATE TABLE questions (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        note_id     INTEGER NOT NULL,
-        text        TEXT NOT NULL,
-        norm        TEXT NOT NULL,
-        answer      TEXT,
-        line_no     INTEGER NOT NULL,
-        created_at  TEXT NOT NULL,
-        answered_at TEXT,
-        due         TEXT,
-        kind        TEXT NOT NULL DEFAULT 'question',
-        decided     TEXT,
-        people      TEXT
-      );
-      CREATE INDEX idx_questions_note ON questions (note_id);
-      CREATE TABLE tags (
-        id   INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE COLLATE NOCASE
-      );
-      CREATE TABLE note_tags (
-        note_id INTEGER NOT NULL,
-        tag_id  INTEGER NOT NULL,
-        PRIMARY KEY (note_id, tag_id)
-      );
-      CREATE TABLE attachments (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        note_id    INTEGER NOT NULL,
-        name       TEXT NOT NULL,
-        mime       TEXT NOT NULL,
-        size       INTEGER NOT NULL,
-        data       BLOB NOT NULL,
-        created_at TEXT NOT NULL
-      );
-      CREATE INDEX idx_attachments_note ON attachments (note_id);
-      CREATE TABLE tasks (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        note_id    INTEGER NOT NULL,
-        text       TEXT NOT NULL,
-        norm       TEXT NOT NULL,
-        done       INTEGER NOT NULL DEFAULT 0,
-        due        TEXT,
-        line_no    INTEGER NOT NULL,
-        created_at TEXT NOT NULL,
-        done_at    TEXT,
-        parent_id  INTEGER,
-        depth      INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE INDEX idx_tasks_note ON tasks (note_id);
-    `);
-    createHistoryTable(db);
-    createLinksTable(db);
+    for (const t of SCHEMA) db.exec(createTableSql(t));
+    for (const t of SCHEMA) for (const sql of t.indexes || []) db.exec(sql);
     setMeta(db, 'schema_version', SCHEMA_VERSION);
     setMeta(db, 'created_at', nowIso());
     setMeta(db, 'map_title', defaultMapTitle);
   }
 
-  /** Verlauf: pro Fassung ein Rückwärts-Patch zur nächstneueren (siehe packages/core/history.js). */
-  function createHistoryTable(db) {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS note_history (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        note_id    INTEGER NOT NULL,
-        at         TEXT NOT NULL,       -- Zeitpunkt der letzten Änderung dieser Fassung
-        started_at TEXT NOT NULL,       -- Beginn der Arbeitsphase, die auf diese Fassung folgte
-        open       INTEGER NOT NULL DEFAULT 0,  -- 1 = die Arbeitsphase läuft noch, der Patch wird bei jeder Änderung nachgeführt
-        title      TEXT NOT NULL,       -- Titel dieser Fassung
-        p          INTEGER NOT NULL,    -- gemeinsamer Anfang mit der nächstneueren Fassung
-        s          INTEGER NOT NULL,    -- gemeinsames Ende
-        r          TEXT NOT NULL,       -- der Teil dazwischen, wie er in dieser Fassung steht
-        -- author: wer diese Fassung geschrieben hat (Anzeigename, leer = unbekannt)
-        author     TEXT
-      );
-      CREATE INDEX IF NOT EXISTS idx_history_note ON note_history (note_id, id);
-    `);
-  }
-
-  /** Fügt der Aufgabentabelle die Spalten für Unteraufgaben hinzu, falls sie fehlen (ältere Datenbanken). */
-  function ensureTaskTreeColumns(db) {
-    if (!hasTable(db, 'tasks')) return;
-    const cols = selectAll(db, 'PRAGMA table_info(tasks)').map(c => c.name);
-    if (!cols.includes('parent_id')) db.exec('ALTER TABLE tasks ADD COLUMN parent_id INTEGER');
-    if (!cols.includes('depth')) db.exec('ALTER TABLE tasks ADD COLUMN depth INTEGER NOT NULL DEFAULT 0');
-  }
-
-  /** Hebt eine bestehende Datenbank Schritt für Schritt auf das aktuelle Schema. */
-  function migrate(db) {
-    if (!hasTable(db, 'meta')) {
-      db.exec('CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
-      setMeta(db, 'schema_version', 1);
+  /** Gleicht eine bestehende Datei in einem Schritt an das Standardschema an. Dateien jeder bisherigen Version (1 bis 13)
+   *  kommen so auf den heutigen Stand; was schon da ist, bleibt unberührt. */
+  function upgrade(db) {
+    const hadTree = hasTable(db, 'notes') && columnsOf(db, 'notes').includes('sort_order');
+    for (const t of SCHEMA) {
+      if (!hasTable(db, t.name)) { db.exec(createTableSql(t)); continue; }
+      const have = columnsOf(db, t.name);
+      for (const [name, ddl] of t.columns) if (!have.includes(name)) db.exec(`ALTER TABLE ${t.name} ADD COLUMN ${name} ${addableDdl(ddl)}`);
     }
-    let version = Number(getMeta(db, 'schema_version') || 1);
-
-    if (version < 2) {
-      db.exec(`
-        ALTER TABLE notes ADD COLUMN parent_id INTEGER;
-        ALTER TABLE notes ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE notes ADD COLUMN collapsed INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE notes ADD COLUMN deleted_at TEXT;
-        CREATE INDEX IF NOT EXISTS idx_notes_parent ON notes (parent_id, sort_order);
-      `);
-      // Bestehende Notizen hängen an der Wurzel, in der Reihenfolge ihres Entstehens.
-      selectAll(db, 'SELECT id FROM notes ORDER BY created_at, id')
-        .forEach((row, i) => db.run('UPDATE notes SET sort_order = ? WHERE id = ?', [i, row.id]));
-      if (getMeta(db, 'map_title') == null) setMeta(db, 'map_title', defaultMapTitle);
-      version = 2;
+    for (const t of SCHEMA) for (const sql of t.indexes || []) db.exec(sql);
+    if (!hadTree) {
+      // Dateien von vor dem Baum (Schema 1): alle Notizen hängen an der Wurzel, in der Reihenfolge ihres Entstehens.
+      selectAll(db, 'SELECT id FROM notes ORDER BY created_at, id').forEach((row, i) => db.run('UPDATE notes SET sort_order = ? WHERE id = ?', [i, row.id]));
     }
-
-    if (version < 3) {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS questions (
-          id          INTEGER PRIMARY KEY AUTOINCREMENT,
-          note_id     INTEGER NOT NULL,
-          text        TEXT NOT NULL,
-          norm        TEXT NOT NULL,
-          answer      TEXT,
-          line_no     INTEGER NOT NULL,
-          created_at  TEXT NOT NULL,
-          answered_at TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_questions_note ON questions (note_id);
-      `);
-      for (const row of selectAll(db, 'SELECT id, body FROM notes')) syncQuestions(db, row.id, row.body);
-      version = 3;
+    if (getMeta(db, 'map_title') == null) setMeta(db, 'map_title', defaultMapTitle);
+    // Die Indexe aus den Texten neu füllen: so gelten die heutigen Regeln (Termine mit Uhrzeit, Unteraufgaben, Entscheide,
+    // Personen, Querverweise) auch für Texte, die mit einer älteren Version geschrieben wurden.
+    for (const row of selectAll(db, 'SELECT id, body, deleted_at FROM notes')) {
+      syncQuestions(db, row.id, row.body);
+      syncTasks(db, row.id, row.body);
+      if (!row.deleted_at) syncLinks(db, row.id, row.body);
     }
-
-    if (version < 4) {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS tags (
-          id   INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT NOT NULL UNIQUE COLLATE NOCASE
-        );
-        CREATE TABLE IF NOT EXISTS note_tags (
-          note_id INTEGER NOT NULL,
-          tag_id  INTEGER NOT NULL,
-          PRIMARY KEY (note_id, tag_id)
-        );
-      `);
-      version = 4;
-    }
-
-    if (version < 5) {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS attachments (
-          id         INTEGER PRIMARY KEY AUTOINCREMENT,
-          note_id    INTEGER NOT NULL,
-          name       TEXT NOT NULL,
-          mime       TEXT NOT NULL,
-          size       INTEGER NOT NULL,
-          data       BLOB NOT NULL,
-          created_at TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_attachments_note ON attachments (note_id);
-      `);
-      version = 5;
-    }
-
-    if (version < 6) {
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS tasks (
-          id         INTEGER PRIMARY KEY AUTOINCREMENT,
-          note_id    INTEGER NOT NULL,
-          text       TEXT NOT NULL,
-          norm       TEXT NOT NULL,
-          done       INTEGER NOT NULL DEFAULT 0,
-          due        TEXT,
-          line_no    INTEGER NOT NULL,
-          created_at TEXT NOT NULL,
-          done_at    TEXT,
-          parent_id  INTEGER,
-          depth      INTEGER NOT NULL DEFAULT 0
-        );
-        CREATE INDEX IF NOT EXISTS idx_tasks_note ON tasks (note_id);
-      `);
-      for (const row of selectAll(db, 'SELECT id, body FROM notes')) syncTasks(db, row.id, row.body);
-      version = 6;
-    }
-
-    if (version < 7) {
-      db.exec('ALTER TABLE questions ADD COLUMN due TEXT');
-      for (const row of selectAll(db, 'SELECT id, body FROM notes')) syncQuestions(db, row.id, row.body);
-      version = 7;
-    }
-
-    if (version < 8) {
-      // Uhrzeiten in Terminen: alle Notizen neu indexieren, damit "@Datum Zeit" erkannt wird.
-      ensureTaskTreeColumns(db);
-      for (const row of selectAll(db, 'SELECT id, body FROM notes')) { syncQuestions(db, row.id, row.body); syncTasks(db, row.id, row.body); }
-      version = 8;
-    }
-
-    if (version < 9) {
-      // Unteraufgaben: Verweis auf die Hauptaufgabe und Tiefe, alle Notizen neu indexieren.
-      ensureTaskTreeColumns(db);
-      for (const row of selectAll(db, 'SELECT id, body FROM notes')) syncTasks(db, row.id, row.body);
-      version = 9;
-    }
-
-    if (version < 10) {
-      // Archiv: archivierte Notizen behalten ihren Platz im Baum und sind nur ausgeblendet.
-      const cols = selectAll(db, 'PRAGMA table_info(notes)').map(c => c.name);
-      if (!cols.includes('archived_at')) db.exec('ALTER TABLE notes ADD COLUMN archived_at TEXT');
-      version = 10;
-    }
-
-    if (version < 11) {
-      // Verlauf pro Notiz
-      createHistoryTable(db);
-      version = 11;
-    }
-
-    if (version < 12) {
-      // Wer hat geschrieben: Spalte an der Notiz (heutiger Stand) und im Verlauf (jede Fassung)
-      const noteCols = selectAll(db, 'PRAGMA table_info(notes)').map(c => c.name);
-      if (!noteCols.includes('updated_by')) db.exec('ALTER TABLE notes ADD COLUMN updated_by TEXT');
-      const histCols = selectAll(db, 'PRAGMA table_info(note_history)').map(c => c.name);
-      if (!histCols.includes('author')) db.exec('ALTER TABLE note_history ADD COLUMN author TEXT');
-      version = 12;
-    }
-
-    if (version < 13) {
-      // Querverweise [[Titel*]]: Index je Notiz, aus den bestehenden Texten gefüllt
-      createLinksTable(db);
-      for (const row of selectAll(db, 'SELECT id, body FROM notes WHERE deleted_at IS NULL')) syncLinks(db, row.id, row.body);
-      version = 13;
-    }
-
-    if (version < 14) {
-      // Entscheide ("?!"-Zeilen), Tag des Entscheids und Personen ("@kürzel"): Spalten am Index, aus den Texten gefüllt
-      ensureQuestionColumns(db);
-      for (const row of selectAll(db, 'SELECT id, body FROM notes')) syncQuestions(db, row.id, row.body);
-      version = 14;
-    }
-
     setMeta(db, 'schema_version', SCHEMA_VERSION);
   }
 
@@ -344,7 +221,7 @@
         if (version > SCHEMA_VERSION) {
           throw fail('SCHEMA_TOO_NEW', `Diese Datenbank hat Schema-Version ${version}, diese App versteht nur bis ${SCHEMA_VERSION}. Bitte App aktualisieren.`, { version, unterstuetzt: SCHEMA_VERSION });
         }
-        if (version < SCHEMA_VERSION) migrate(db);
+        if (version < SCHEMA_VERSION) upgrade(db);
       }
       registerFunctions(db);
       return db;
@@ -813,28 +690,6 @@
   }
 
   // ---------- Querverweise ----------
-
-  /** Querverweise [[Titel*]] je Notiz (Schema 13); das Ziel wird beim Lesen über den Titel aufgelöst. */
-  /** Spalten für Entscheide und Personen am Index (Schema 14), auch auf alten Dateien. */
-  function ensureQuestionColumns(db) {
-    const cols = selectAll(db, 'PRAGMA table_info(questions)').map(c => c.name);
-    if (!cols.includes('kind')) db.exec("ALTER TABLE questions ADD COLUMN kind TEXT NOT NULL DEFAULT 'question'");
-    if (!cols.includes('decided')) db.exec('ALTER TABLE questions ADD COLUMN decided TEXT');
-    if (!cols.includes('people')) db.exec('ALTER TABLE questions ADD COLUMN people TEXT');
-  }
-
-  function createLinksTable(db) {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS note_links (
-        id      INTEGER PRIMARY KEY AUTOINCREMENT,
-        note_id INTEGER NOT NULL,
-        title   TEXT NOT NULL,
-        key     TEXT NOT NULL,
-        line_no INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_note_links_note ON note_links (note_id);
-    `);
-  }
 
   /** Gleicht die Querverweise einer Notiz mit ihrem Text ab (packages/core/links.js liest sie). */
   function syncLinks(db, noteId, body) {

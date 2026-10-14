@@ -373,7 +373,7 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | --- | --- |
 | Oberfläche | `index.html`, `css/app.css`, `js/app.js` (`packages/ui/`) – reines HTML/CSS/JS, keine Frameworks; der Build kopiert nur |
 | Mindmap | `packages/ui/mindmap.js`: eigenes Layout (links/rechts ausbalanciert), SVG, Zoom, Ziehen, Tastatur; archivierte Knoten blass und gestrichelt |
-| Fragen und Entscheide | `packages/core/questions.js`: ein Parser für `?`-, `?!`-, `!`- und `!!`-Zeilen samt Datum und `@kürzel` (`parseBlock` nutzen auch Vorschau und Export); Index in der Tabelle `questions` mit `kind`, `decided`, `people` (Schema 14), bei jeder Änderung abgeglichen; Vorschläge für Kürzel über `packages/core/mentions.js`; Test `test/decisions.cjs` |
+| Fragen und Entscheide | `packages/core/questions.js`: ein Parser für `?`-, `?!`-, `!`- und `!!`-Zeilen samt Datum und `@kürzel` (`parseBlock` nutzen auch Vorschau und Export); Index in der Tabelle `questions` mit `kind`, `decided`, `people` (Schema 14), bei jeder Änderung abgeglichen; Vorschläge für Kürzel über `packages/core/mentions.js`; Test `test/extend.cjs` |
 | Aufgaben | `packages/core/tasks.js`: Parser für `- [ ]`-Zeilen mit `@Datum`, Unteraufgaben über die Einrückung, Abschluss-Regeln als reine Textfunktionen; Index in der Tabelle `tasks`, gleiches Prinzip |
 | Termine | `packages/core/dates.js`: gemeinsame Logik für `@TT.MM.JJJJ` bzw. `@JJJJ-MM-TT`, Dringlichkeit, Anzeige |
 | Markdown | `packages/core/markdown.js`: eigener Renderer, escaped allen Text, erlaubt nur sichere Link-Schemata |
@@ -383,9 +383,9 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | Scroll-Sync | `packages/ui/scrollsync.js`: Spiegel des Textes misst Zeilenhöhen, Vorschau-Blöcke tragen `data-line`, lineare Interpolation dazwischen |
 | Erweiterungen | `packages/core/plugins.js` (Verzeichnis, Lader, Schalter, Ereignisse) und die Anbindung in `packages/ui/app.js`; Ordner `plugins/` mit Liste, Anleitung und Beispielen; das Verzeichnis des Ordners erzeugt `tools/build.cjs` (siehe [docs/PLUGINS.md](docs/PLUGINS.md)) |
 | Verlauf | `packages/core/history.js` (Patches und Zeilenvergleich als reine Textfunktionen); Fassungen und Aufbewahrung in `packages/data/db.js`, Dialog in `packages/ui/app.js`; wer eine Fassung geschrieben hat, steht in `author` (nur wenn ein Backend einen Namen liefert) |
-| Videos | `packages/core/embeds.js` erkennt Adressen von YouTube, Vimeo und Dailymotion (nur genau passende Hosts und Kennungen); `markdown.js` macht aus einer Adresse allein auf einer Zeile eine Karte, die Vorschau baut den Rahmen erst nach dem Klick (siehe [docs/EMBEDS.md](docs/EMBEDS.md)); Tests `test/embeds.cjs`, `test/embeds-ui.cjs` |
-| Querverweise | `[[Titel*]]` im Text: `packages/core/links.js` liest sie, `db.js` führt den Index `note_links` (Schema 13) beim Speichern nach und löst Ziele über den Titel auf (`getLinks`); die Mindmap zeichnet gestrichelte Linien mit Pfeil zwischen sichtbaren Knoten, auch im SVG für Export und Druck; Schalter «Verweise» in der Leiste (je Browser gemerkt); Test `test/links.cjs` |
-| Lesemodus | Meldet die Hülle `readOnly` (siehe [docs/BACKEND.md](docs/BACKEND.md)), sperrt `packages/ui/app.js` alle Schreibwege (`data-write`, `denyWrite()`) und `readOnlyBackend` lehnt schreibende Aufrufe mit `READ_ONLY` ab; Test `test/readonly.cjs` |
+| Videos | `packages/core/embeds.js` erkennt Adressen von YouTube, Vimeo und Dailymotion (nur genau passende Hosts und Kennungen); `markdown.js` macht aus einer Adresse allein auf einer Zeile eine Karte, die Vorschau baut den Rahmen erst nach dem Klick (siehe [docs/EMBEDS.md](docs/EMBEDS.md)); Tests `test/core.cjs` und `test/extend.cjs` |
+| Querverweise | `[[Titel*]]` im Text: `packages/core/links.js` liest sie, `db.js` führt den Index `note_links` beim Speichern nach und löst Ziele über den Titel auf (`getLinks`); die Mindmap zeichnet gestrichelte Linien mit Pfeil zwischen sichtbaren Knoten, auch im SVG für Export und Druck; Schalter «Verweise» in der Leiste (je Browser gemerkt); Test `test/extend.cjs` |
+| Lesemodus | Meldet die Hülle `readOnly` (siehe [docs/BACKEND.md](docs/BACKEND.md)), sperrt `packages/ui/app.js` alle Schreibwege (`data-write`, `denyWrite()`) und `readOnlyBackend` lehnt schreibende Aufrufe mit `READ_ONLY` ab; Test `test/collab.cjs` |
 | Zusammenführen | `packages/core/merge.js`: zeilenweiser Dreiwege-Vergleich (Myers) für gleichzeitige Änderungen derselben Notiz; Speichern mit `baseUpdatedAt`, Konfliktdialog in `packages/ui/app.js` |
 | Hauptfarbe | `packages/core/palette.js`: acht Farben mit heller und dunkler Fassung (Fläche, Schrift auf der Fläche, Farbe als Schrift, Tönung); die Seite setzt sie über CSS-Variablen, Export und Druck über `toSvgString` |
 | Kalender | `packages/core/ical.js`: iCalendar nach RFC 5545 mit festen UIDs, SEQUENCE, VALARM, Zeilenfaltung; gemerkte Kennungen in `meta` |
@@ -401,24 +401,29 @@ Language Mode zur Verfügung. Dort sind weder `HttpListener` noch der Zugriff au
 File System Access API alles mit, um direkt in die Datenbankdatei zu schreiben, und
 sql.js liefert SQLite als reines JavaScript.
 
-Schema (Version 11). Ältere Datenbanken werden beim Öffnen automatisch migriert.
+Das **Standardschema** (Version 14) steht als Liste in `packages/data/db.js`: eine neue Datei bekommt es ganz,
+eine bestehende Datei wird beim Öffnen **in einem Schritt** daran angeglichen, gleich aus welcher Version sie stammt:
+fehlende Tabellen und Spalten kommen dazu, danach werden die Indexe (Fragen und Entscheide, Aufgaben, Querverweise)
+aus den Texten neu gefüllt. Schritt-für-Schritt-Migrationen gibt es seit v2.0.0 nicht mehr; die Versionsnummer sagt
+nur, ob eine Datei schon auf diesem Stand ist oder von einer neueren App stammt (dann «App aktualisieren»).
 
 ```sql
 CREATE TABLE notes (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  title      TEXT NOT NULL DEFAULT '',
-  body       TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL,   -- ISO 8601, UTC
-  updated_at TEXT NOT NULL,
-  parent_id  INTEGER,         -- NULL = hängt an der Wurzel
-  sort_order INTEGER NOT NULL DEFAULT 0,
-  collapsed  INTEGER NOT NULL DEFAULT 0,
-  deleted_at TEXT,            -- gesetzt = im Papierkorb
-  archived_at TEXT            -- gesetzt = im Archiv (ausgeblendet, durchsuchbar, schreibgeschützt)
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  title       TEXT NOT NULL DEFAULT '',
+  body        TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL,   -- ISO 8601, UTC
+  updated_at  TEXT NOT NULL,
+  parent_id   INTEGER,         -- NULL = hängt an der Wurzel
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  collapsed   INTEGER NOT NULL DEFAULT 0,
+  deleted_at  TEXT,            -- gesetzt = im Papierkorb
+  archived_at TEXT,            -- gesetzt = im Archiv (ausgeblendet, durchsuchbar, schreibgeschützt)
+  updated_by  TEXT             -- wer den heutigen Stand geschrieben hat (nur mit einem Backend, das Namen liefert)
 );
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);  -- schema_version, created_at, map_title, accent, theme,
                                                                 -- calendar_uid, calendar_sequence, calendar_known
-CREATE TABLE questions (          -- Index über die ?/!-Zeilen, wird aus dem Text abgeleitet
+CREATE TABLE questions (          -- Index über die ?-, ?!-, !- und !!-Zeilen, wird aus dem Text abgeleitet
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   note_id     INTEGER NOT NULL,
   text        TEXT NOT NULL,
@@ -427,7 +432,10 @@ CREATE TABLE questions (          -- Index über die ?/!-Zeilen, wird aus dem Te
   line_no     INTEGER NOT NULL,
   created_at  TEXT NOT NULL,
   answered_at TEXT,
-  due         TEXT                -- Fälligkeit aus "@Datum [Zeit]": YYYY-MM-DD oder YYYY-MM-DDTHH:MM
+  due         TEXT,               -- Fälligkeit aus "@Datum [Zeit]": YYYY-MM-DD oder YYYY-MM-DDTHH:MM
+  kind        TEXT NOT NULL DEFAULT 'question',  -- 'question' oder 'decision'
+  decided     TEXT,               -- Tag des Entscheids aus dem Text, YYYY-MM-DD
+  people      TEXT                -- JSON [{ handle, optional }] aus "@kürzel" und "(@kürzel)"
 );
 CREATE TABLE tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE);
 CREATE TABLE note_tags (note_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMARY KEY (note_id, tag_id));
@@ -444,7 +452,11 @@ CREATE TABLE note_history (          -- Verlauf: pro Fassung ein Rückwärts-Pat
   open INTEGER NOT NULL DEFAULT 0,  -- 1 = Arbeitsphase läuft noch (Patch wird nachgeführt)
   title TEXT NOT NULL,              -- Titel dieser Fassung
   p INTEGER NOT NULL, s INTEGER NOT NULL,   -- gemeinsamer Anfang und Ende mit der neueren Fassung (Zeichen)
-  r TEXT NOT NULL                   -- der Teil dazwischen, wie er in dieser Fassung steht
+  r TEXT NOT NULL,                  -- der Teil dazwischen, wie er in dieser Fassung steht
+  author TEXT                       -- wer diese Fassung geschrieben hat
+);
+CREATE TABLE note_links (            -- Querverweise [[Titel*]] je Notiz; Ziele werden beim Lesen über den Titel aufgelöst
+  id INTEGER PRIMARY KEY AUTOINCREMENT, note_id INTEGER NOT NULL, title TEXT NOT NULL, key TEXT NOT NULL, line_no INTEGER NOT NULL
 );
 CREATE TABLE attachments (          -- Bilder, im Text als ![Name](att:ID) referenziert
   id INTEGER PRIMARY KEY AUTOINCREMENT, note_id INTEGER NOT NULL, name TEXT NOT NULL,
@@ -462,14 +474,17 @@ auslieferbare Form entsteht mit
 npm run build        # schreibt dist/NoNotes
 ```
 
-Der Test baut zuerst, öffnet dann das Gebaute wie ein Benutzer per `file://` in headless Chromium
-und prüft Anlegen, Suchen, Speichern, Neuladen, Herunterladen, Importieren, Löschen, das Schreiben
-in die Datenbankdatei, die Mindmap-Bedienung, Fragen, Markdown-Vorschau, Tags, Papierkorb, Suche,
-Umsortieren per Drag & Drop, Bild-Anhänge, den Export (Ordner und ZIP), das Drucken (mit gestubbtem
-`window.print`), Toolleiste und Hilfe, Aufgaben, Termine mit Uhrzeit, den Kalenderexport, das synchrone
-Scrollen der geteilten Ansicht, Unteraufgaben, das Archiv und die Migration alter Datenbanken. Dazu
-kommen der Vertrag der Backend-Schnittstelle (`test/backend.cjs`), die Datenbankschicht mit Schema 14, Konflikterkennung, Autor, Querverweise und Entscheide (`test/db.cjs`), die Entscheide in der Oberfläche (`test/decisions.cjs`), das Zusammenführen (`test/merge.cjs`), gleichzeitiges Arbeiten und Änderungen von aussen (`test/conflict.cjs`, `test/external.cjs`), der Build fremder Ausprägungen (`test/build.cjs`), die Hauptfarbe (`test/palette.cjs`), die Erweiterungs-Schnittstelle (`test/plugins.cjs`), den Verlauf (`test/history.cjs`) und die
-Sprachprüfungen (`test/i18n.cjs`, `tools/i18n.cjs lint` und `check`):
+`npm test` baut zuerst und führt dann vier Läufe aus, jeder druckt wenige Schritte, die je mehrere Dinge prüfen
+(die Teilschritte darin bleiben still; `NONOTES_TEST_VERBOSE=1` zeigt sie, beim Fehlschlag wird der letzte genannt):
+
+| Lauf | Prüft |
+| --- | --- |
+| `test/core.cjs` (ohne Browser) | Zusammenführen, Datenbankschicht (Standardschema, Angleichen alter Dateien, Konflikte, Autor, Querverweise, Entscheide), Build fremder Ausprägungen, Videoadressen |
+| `test/app.cjs` | das Gebaute wie ein Benutzer per `file://` in headless Chromium: Datei und Speicher, Mindmap, Fragen, Markdown, Tags, Suche, Papierkorb, Export, Drag & Drop, Anhänge, Drucken, Toolleiste, Hilfe, Aufgaben, Termine, Kalender, Listen, geteilte Ansicht, Unteraufgaben, Archiv, alte Dateien; der Vertrag der Backend-Schnittstelle |
+| `test/collab.cjs` | Verlauf pro Notiz, gleichzeitiges Schreiben, Änderungen von aussen (Datei, anderer Tab), Lesemodus |
+| `test/extend.cjs` | Erweiterungen und Designs, Hauptfarbe, Videos in der Vorschau, Querverweise, Entscheide und Personen, Sprachen (Pseudo-Sprache, Englisch, Testpaket) |
+
+Dazu kommen `tools/i18n.cjs lint` und `check` (Texte und Sprachpakete):
 
 ```bash
 npm install

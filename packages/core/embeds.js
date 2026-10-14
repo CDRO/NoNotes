@@ -8,7 +8,7 @@
    frameHosts()  → Liste der Hosts, die ein Schutzkopf (frame-src) für das Einbetten zulassen muss
    providers     → Namen der Anbieter
 
-   Ergänzen: eine Funktion in PARSERS und die Hosts in FRAME_HOSTS; Tests in test/embeds.cjs. */
+   Ergänzen: eine Funktion in PARSERS und die Hosts in FRAME_HOSTS; Tests in test/core.cjs und test/extend.cjs. */
 (function (global) {
   'use strict';
 
