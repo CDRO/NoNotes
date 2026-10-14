@@ -1505,8 +1505,10 @@ async function runI18n(browser, part, step) {
     await ctx.addInitScript(() => { try { if (!localStorage.getItem('nonotes.lang')) localStorage.setItem('nonotes.lang', 'tt'); } catch (e) { /* egal */ } });
     const page = await ctx.newPage();
     const errors = [];
+    const dialogs = [];
     page.on('pageerror', e => errors.push('pageerror: ' + e.message));
     page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+    page.on('dialog', d => { dialogs.push(d.message()); d.accept(); }); // eine Rückfrage wäre ein Fehler, soll den Lauf aber nicht hängen lassen
     await page.goto(url);
     await page.waitForSelector(READY, { timeout: 30000 });
 
@@ -1541,7 +1543,8 @@ async function runI18n(browser, part, step) {
     // Wechsel auf Deutsch: gemerkt, nach dem Neuladen deutsch. Dabei steht noch eine Eingabe aus (kein Warten auf «gespeichert»):
     // der Wechsel sichert sie selbst, statt an der Rückfrage «ungespeicherte Änderungen» hängen zu bleiben.
     await page.click('#newBtn');
-    await page.waitForSelector('#editorPane:not([hidden])');
+    // Erst wenn die neue, leere Notiz offen ist und den Fokus hat (dann ist newNote durch); sonst trifft die Eingabe noch die alte Notiz
+    await page.waitForFunction(() => !document.querySelector('#editorPane').hidden && document.querySelector('#title').value === '' && document.activeElement === document.querySelector('#title'));
     await page.evaluate(() => { // Eingabe und Sprachwechsel im selben Augenblick: das Speichern der Eingabe ist noch nicht ausgelöst
       const title = document.querySelector('#title');
       title.value = 'Three';
@@ -1556,6 +1559,7 @@ async function runI18n(browser, part, step) {
     assert.equal(await page.locator('#viewMapBtn').innerText(), 'Mindmap');
     assert.equal(await page.locator('#count').innerText(), '3 Notizen', 'Daten bleiben beim Sprachwechsel erhalten, auch die Eingabe, die noch aussteht');
     assert.ok((await page.locator('#list .note-title').allInnerTexts()).includes('Three'), 'der Titel wurde vor dem Neuladen gesichert');
+    assert.deepEqual(dialogs, [], 'keine Rückfrage beim Sprachwechsel');
     part('Sprachwechsel: gespeichert, Seite neu geladen, Daten bleiben');
 
     // Standardtitel einer neuen Mindmap folgt der Sprache
