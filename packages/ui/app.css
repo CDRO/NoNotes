@@ -352,7 +352,7 @@ button.danger { color: var(--danger); }
 /* ---------- Ansichten ---------- */
 
 body:not(.view-map) .map-view { display: none; }
-body:not(.view-questions) .questions-view:not(.tasks-view) { display: none; }
+body:not(.view-questions):not(.view-decisions) .questions-view:not(.tasks-view) { display: none; }
 body:not(.view-list) .sidebar { display: none; }
 body:not(.view-list) .layout { grid-template-columns: 1fr; }
 body:not(.view-list) .editor { display: none; }
@@ -388,7 +388,8 @@ body:not(.view-list).editor-open #editorPane { max-width: 1000px; }
 .q-item { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
 .q-head { display: flex; gap: 10px; align-items: flex-start; }
 .q-mark { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 14px; background: var(--warn); color: #fff; }
-.q-item.answered .q-mark { background: var(--ok); }
+.q-item.decision .q-mark { background: var(--accent); color: var(--accent-contrast); font-size: 11px; letter-spacing: -1px; }
+.q-item.answered .q-mark { background: var(--ok); color: #fff; letter-spacing: 0; font-size: 14px; }
 .q-text { font-weight: 600; line-height: 1.45; white-space: pre-wrap; }
 .q-answer { margin-left: 34px; padding: 8px 12px; border-left: 3px solid var(--ok); background: var(--bg); border-radius: 0 8px 8px 0; }
 .q-answer p, .md-a p { margin: 0; }
@@ -582,7 +583,19 @@ body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-
 .q-item a.md-wiki.missing::after { content: " ?"; opacity: .7; }
 .md-q { display: flex; gap: 10px; align-items: flex-start; margin: .6em 0; padding: 8px 12px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border); }
 .md-q .md-mark { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px; background: var(--warn); color: #fff; }
-.md-q.answered .md-mark { background: var(--ok); }
+.md-q.md-decision .md-mark { background: var(--accent); color: var(--accent-contrast); font-size: 10px; letter-spacing: -1px; }
+.md-q.answered .md-mark { background: var(--ok); color: #fff; letter-spacing: 0; font-size: 13px; }
+.md-decided { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
+/* Personen (@kürzel) in Fragen und Entscheiden */
+.md-person { display: inline-block; padding: 0 7px; border-radius: 999px; background: var(--hover); border: 1px solid var(--border); color: var(--accent-ink); font-size: .85em; font-weight: 600; line-height: 1.6; white-space: nowrap; }
+.md-person.optional { border-style: dashed; font-weight: 500; color: var(--muted); }
+/* Vorschläge für @kürzel im Editor */
+.mention-popup { position: absolute; z-index: 20; min-width: 180px; max-width: 280px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, .15); padding: 4px; display: flex; flex-direction: column; }
+.mention-popup[hidden] { display: none; }
+.mention-popup button { border: 0; background: none; text-align: left; padding: 6px 10px; border-radius: 6px; display: flex; gap: 8px; align-items: baseline; color: var(--text); }
+.mention-popup button[aria-selected="true"], .mention-popup button:hover { background: var(--hover); }
+.mention-handle { font-weight: 600; }
+.mention-name { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
 .md-q-body { flex: 1; min-width: 0; }
 .md-q-text { font-weight: 600; }
 .md-a { margin-top: 6px; padding: 6px 10px; border-left: 3px solid var(--ok); background: var(--panel); border-radius: 0 6px 6px 0; }
@@ -682,6 +695,8 @@ body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-
   #printArea .md-q { border: 1px solid #bbb; background: #fafafa; break-inside: avoid; }
   #printArea .md-q .md-mark { background: #b45309; color: #fff; }
   #printArea .md-q.answered .md-mark { background: #15803d; }
+  #printArea .md-q.md-decision:not(.answered) .md-mark { background: #1d4ed8; }
+  #printArea .md-person { border: 1px solid #999; background: #f3f3f3; color: inherit; }
   #printArea .md-a { background: #fff; border-left-color: #15803d; }
   #printArea a.md-wiki { border-bottom: 1px dashed #666; }
   #printArea a.md-wiki.plain { border: 0; }
@@ -692,6 +707,7 @@ body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-
   #printArea .print-q { display: flex; gap: 8pt; align-items: flex-start; padding: 6pt 0; border-top: 1px solid #ddd; break-inside: avoid; }
   #printArea .print-mark { flex: none; width: 16pt; height: 16pt; border-radius: 50%; background: #b45309; color: #fff; font-weight: 700; font-size: 10pt; display: flex; align-items: center; justify-content: center; }
   #printArea .print-q.answered .print-mark { background: #15803d; }
+  #printArea .print-q.decision:not(.answered) .print-mark { background: #1d4ed8; font-size: 8pt; letter-spacing: -.5pt; }
   #printArea .print-q-body { flex: 1; }
   #printArea .print-q-text { font-weight: 600; }
   #printArea .print-a { margin-top: 3pt; padding: 3pt 8pt; border-left: 2pt solid #15803d; }
@@ -722,6 +738,7 @@ body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-
 .tb-quote { font-size: 20px; font-family: Georgia, serif; line-height: 0; position: relative; top: 4px; }
 .tb-q { color: var(--warn); font-size: 15px; }
 .tb-a { color: var(--ok); font-size: 15px; }
+.tb-d { color: var(--accent-ink); font-size: 13px; letter-spacing: -1px; }
 .tb-sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
 .tb-select { padding: 3px 6px; font-size: 12px; height: 28px; border-radius: 6px; max-width: 130px; }
 .help-btn {
@@ -810,6 +827,8 @@ body:not(.view-tasks) .tasks-view { display: none; }
 .md-due { margin-left: 8px; font-weight: 500; vertical-align: middle; }
 .q-item .q-head .due { margin-left: auto; }
 .segmented .count.q-overdue { background: var(--danger); }
+.segmented .count.decisions { background: var(--text); color: var(--panel); }
+.segmented .count.decisions.overdue { background: var(--danger); color: #fff; }
 @media print {
   #printArea .print-q-text .due, #printArea .md-due { font-size: 8.5pt; border: 1px solid #999; border-radius: 999px; padding: 1pt 5pt; margin-left: 6pt; color: #333; background: none; font-weight: 500; }
   #printArea .due.overdue { color: #b00; border-color: #b00; font-weight: 600; }

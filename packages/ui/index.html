@@ -23,6 +23,7 @@
         <button type="button" id="viewMapBtn" role="tab" data-view="map" aria-selected="true">Mindmap</button>
         <button type="button" id="viewListBtn" role="tab" data-view="list" aria-selected="false">Liste</button>
         <button type="button" id="viewQuestionsBtn" role="tab" data-view="questions" aria-selected="false">Fragen</button>
+        <button type="button" id="viewDecisionsBtn" role="tab" data-view="decisions" aria-selected="false" hidden>Entscheide</button>
         <button type="button" id="viewTasksBtn" role="tab" data-view="tasks" aria-selected="false">Aufgaben</button>
       </div>
 
@@ -88,13 +89,13 @@
         <input type="text" id="renameInput" class="rename-input" aria-label="Titel bearbeiten" hidden>
       </section>
 
-      <!-- Fragen -->
+      <!-- Fragen und Entscheide (dieselbe Leiste und Liste; app.js beschriftet sie je nach Ansicht) -->
       <section class="questions-view" id="questionsView" aria-label="Fragen">
         <div class="q-toolbar">
           <div class="segmented" id="qFilter" role="tablist" aria-label="Filter">
             <button type="button" role="tab" data-status="open" aria-selected="true">Offen</button>
             <button type="button" role="tab" data-status="all" aria-selected="false">Alle</button>
-            <button type="button" role="tab" data-status="answered" aria-selected="false">Beantwortet</button>
+            <button type="button" id="qAnsweredBtn" role="tab" data-status="answered" aria-selected="false">Beantwortet</button>
           </div>
           <select id="qSort" aria-label="Sortierung">
             <option value="due">Nach Fälligkeit</option>
@@ -102,6 +103,7 @@
           </select>
           <input type="search" id="qSearch" placeholder="Fragen durchsuchen…" aria-label="Fragen durchsuchen" autocomplete="off">
           <select id="qTagFilter" aria-label="Nach Tag filtern"><option value="">Alle Tags</option></select>
+          <select id="qPersonFilter" aria-label="Nach Person filtern" hidden><option value="">Alle Personen</option></select>
           <button type="button" id="qPrintBtn" title="Fragen und Antworten drucken (Ctrl+P)">Drucken…</button>
           <span class="q-count" id="qCount"></span>
         </div>
@@ -217,6 +219,7 @@
               <span class="tb-sep" aria-hidden="true"></span>
               <button type="button" id="questionBtn" data-cmd="question" title="Zeile als Frage markieren (Ctrl+Shift+F)" aria-label="Frage"><span class="tb-glyph tb-q">?</span></button>
               <button type="button" id="answerBtn" data-cmd="answer" title="Zeile als Antwort markieren (Ctrl+Shift+A)" aria-label="Antwort"><span class="tb-glyph tb-a">!</span></button>
+              <button type="button" id="decisionBtn" data-cmd="decision" title="Zeile als Entscheid markieren (Ctrl+Shift+D)" aria-label="Entscheid"><span class="tb-glyph tb-d">?!</span></button>
             </div>
             <div class="segmented small" id="modeSwitch" role="tablist" aria-label="Darstellung">
               <button type="button" role="tab" data-mode="edit" aria-selected="true" title="Bearbeiten (Ctrl+E)">Bearbeiten</button>
@@ -227,9 +230,10 @@
           </div>
           <div class="attachments" id="attachments" aria-label="Anhänge" hidden></div>
           <div class="editor-body" id="editorBody">
-            <textarea id="body" class="body" placeholder="Notiz… (Markdown; Zeile mit ? = Frage, darunter Zeilen mit ! = Antwort; [[Titel]] verweist auf eine Notiz)" aria-label="Inhalt" spellcheck="true"></textarea>
+            <textarea id="body" class="body" placeholder="Notiz… (Markdown; Zeile mit ? = Frage, ?! = Entscheid, darunter Zeilen mit ! = Antwort; [[Titel]] verweist auf eine Notiz)" aria-label="Inhalt" spellcheck="true"></textarea>
             <div id="preview" class="preview md" aria-label="Vorschau" tabindex="0"></div>
             <div id="bodyMirror" class="body body-mirror" aria-hidden="true"></div>
+            <div id="mentionPopup" class="mention-popup" role="listbox" aria-label="Personen" hidden></div>
           </div>
         </div>
       </section>
@@ -290,9 +294,9 @@
       <fieldset class="dialog-fieldset">
         <legend>Umfang</legend>
         <label class="option compact"><input type="radio" name="qaScope" value="filtered" checked><span id="qaScopeFiltered">Wie angezeigt</span></label>
-        <label class="option compact"><input type="radio" name="qaScope" value="open"><span>Nur offene Fragen</span></label>
-        <label class="option compact"><input type="radio" name="qaScope" value="answered"><span>Nur beantwortete Fragen</span></label>
-        <label class="option compact"><input type="radio" name="qaScope" value="all"><span>Alle Fragen</span></label>
+        <label class="option compact"><input type="radio" name="qaScope" value="open"><span id="qaScopeOpen">Nur offene Fragen</span></label>
+        <label class="option compact"><input type="radio" name="qaScope" value="answered"><span id="qaScopeAnswered">Nur beantwortete Fragen</span></label>
+        <label class="option compact"><input type="radio" name="qaScope" value="all"><span id="qaScopeAll">Alle Fragen</span></label>
       </fieldset>
       <fieldset class="dialog-fieldset">
         <legend>Gruppierung</legend>
@@ -302,7 +306,7 @@
       </fieldset>
       <fieldset class="dialog-fieldset">
         <legend>Darstellung</legend>
-        <label class="suboption"><input type="checkbox" id="qaLines" checked> Linien für handschriftliche Antworten bei offenen Fragen</label>
+        <label class="suboption"><input type="checkbox" id="qaLines" checked> <span id="qaLinesLabel">Linien für handschriftliche Antworten bei offenen Fragen</span></label>
       </fieldset>
       <div class="row">
         <button type="button" id="qaPrintGoBtn" class="primary">Drucken</button>
@@ -447,6 +451,9 @@
           <tbody>
             <tr><td>Frage</td><td>Zeile beginnt mit <code>?</code>: <code>? Wie hoch ist das Budget?</code>, Termin am Ende: <code>? Offerte da? @15.10.2026</code> oder <code>@15.10.2026 14:30</code></td><td>Erscheint in der Ansicht «Fragen» und als Marker am Knoten; mit Termin sortiert nach Fälligkeit, überfällig wird markiert.</td></tr>
             <tr><td>Antwort</td><td>Zeilen direkt darunter mit <code>!</code>: <code>! 20'000 CHF</code></td><td>Die Frage gilt als beantwortet. Leer lassen macht sie wieder offen.</td></tr>
+            <tr><td>Entscheid</td><td>Zeile beginnt mit <code>?!</code>: <code>?! Variante B oder C? @lea1234</code>, Termin am Ende wie bei Fragen</td><td>Erscheint in der Ansicht «Entscheide» (der Reiter zeigt sich, sobald es welche gibt) und zählt in der Marke am Knoten mit.</td></tr>
+            <tr><td>Getroffener Entscheid</td><td>Zeilen direkt darunter mit <code>!!</code>, die erste mit dem Datum: <code>!! 14.10.2026: Variante B, weil …</code></td><td>Der Entscheid gilt als getroffen, das Datum steht im Text. «Entscheiden» in der Ansicht schreibt beides. Unter <code>?!</code> zählt auch <code>!</code>, unter <code>?</code> auch <code>!!</code>: die erste Zeile bestimmt die Art.</td></tr>
+            <tr><td>Person</td><td><code>@kürzel</code> im Text einer Frage oder eines Entscheids, <code>(@kürzel)</code> für jemanden, der wahlweise dabei ist</td><td>Wer antworten oder entscheiden soll. Beim Tippen von <code>@</code> schlägt der Editor bekannte Kürzel vor; die Ansichten «Fragen» und «Entscheide» filtern nach Person.</td></tr>
             <tr><td>Verweis</td><td><code>[[Titel einer Notiz]]</code></td><td>Klick in der Vorschau öffnet die Notiz; fehlt sie, wird sie auf Wunsch als Unternotiz angelegt.</td></tr>
             <tr><td>Querverweis</td><td><code>[[Titel einer Notiz*]]</code> (Stern am Ende)</td><td>Wie ein Verweis, dazu zieht die Mindmap eine gestrichelte Linie zu dieser Notiz, quer zur Hierarchie. Der Schalter «Verweise» in der Mindmap-Leiste blendet alle Linien ein oder aus.</td></tr>
             <tr><td>Bild aus der Datenbank</td><td><code>![Name](att:ID)</code>, entsteht beim Einfügen über den Bild-Knopf, per <code>Ctrl+V</code> oder Ablegen</td><td>Das Bild liegt in der SQLite-Datei und wird mitexportiert.</td></tr>
@@ -468,6 +475,8 @@
               <dt><kbd>Ctrl</kbd>+<kbd>K</kbd></dt><dd>Link einfügen</dd>
               <dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></dt><dd>Zeile als Frage</dd>
               <dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd></dt><dd>Zeile als Antwort</dd>
+              <dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd></dt><dd>Zeile als Entscheid</dd>
+              <dt><kbd>@</kbd> beim Schreiben</dt><dd>Vorschläge für Kürzel; <kbd>↑</kbd> <kbd>↓</kbd> wählen, <kbd>Enter</kbd> oder <kbd>Tab</kbd> übernimmt, <kbd>Esc</kbd> schliesst</dd>
               <dt><kbd>Ctrl</kbd>+<kbd>E</kbd></dt><dd>Darstellung wechseln</dd>
               <dt><kbd>Ctrl</kbd>+<kbd>V</kbd></dt><dd>Bild aus der Zwischenablage einfügen</dd>
               <dt>Doppelklick auf eine Aufgabe</dt><dd>Schliesst die Aufgabe samt Unteraufgaben ab (in Vorschau und Aufgabenliste); ist schon alles erledigt, öffnet er die Aufgabe wieder</dd>
@@ -480,7 +489,7 @@
             <h3>Allgemein</h3>
             <dl class="help-keys">
               <dt><kbd>Ctrl</kbd>+<kbd>S</kbd></dt><dd>Sofort speichern</dd>
-              <dt><kbd>Ctrl</kbd>+<kbd>P</kbd></dt><dd>Drucken (in «Fragen»: Fragen und Antworten)</dd>
+              <dt><kbd>Ctrl</kbd>+<kbd>P</kbd></dt><dd>Drucken (in «Fragen»: Fragen und Antworten, in «Entscheide»: die Entscheide)</dd>
               <dt><kbd>Alt</kbd>+<kbd>N</kbd></dt><dd>Neue Notiz</dd>
               <dt><kbd>/</kbd></dt><dd>Suche der aktuellen Ansicht starten</dd>
               <dt><kbd>F1</kbd></dt><dd>Diese Hilfe</dd>
@@ -569,6 +578,7 @@
   <script src="../core/merge.js"></script>
   <script src="../core/dates.js"></script>
   <script src="../core/questions.js"></script>
+  <script src="../core/mentions.js"></script>
   <script src="../core/tasks.js"></script>
   <script src="../core/links.js"></script>
   <script src="../core/embeds.js"></script>

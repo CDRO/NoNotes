@@ -102,6 +102,8 @@ async function contract() {
   if (tasks.length) await call('getTask', tasks[0].id);
   await call('listQuestions', { status: 'all', sort: 'due' });
   await call('countQuestions', '2026-01-01');
+  await call('listPeople');
+  await call('listQuestions', { status: 'all', kind: 'decision', person: 'max1234' });
   const qs = await B.listQuestions({ status: 'all' });
   if (qs.length) { await call('getQuestion', qs[0].id); await call('answerQuestion', qs[0].id, 'Antwort'); }
   await call('setCollapsed', a, true);

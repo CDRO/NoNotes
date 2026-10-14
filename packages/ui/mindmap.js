@@ -50,10 +50,10 @@
     for (const r of rows) {
       byId.set(r.id, {
         id: r.id, title: r.title, parentId: r.parent_id, order: r.sort_order,
-        collapsed: !!r.collapsed, badge: r.badge || 0, tbadge: r.tbadge || 0, archived: !!r.archived_at, children: [],
+        collapsed: !!r.collapsed, badge: r.badge || 0, dbadge: r.dbadge || 0, tbadge: r.tbadge || 0, archived: !!r.archived_at, children: [],
       });
     }
-    const root = { id: 'root', isRoot: true, title: mapTitle, children: [], badge: 0, tbadge: 0 };
+    const root = { id: 'root', isRoot: true, title: mapTitle, children: [], badge: 0, dbadge: 0, tbadge: 0 };
     for (const n of byId.values()) {
       const parent = n.parentId != null ? byId.get(n.parentId) : null;
       (parent || root).children.push(n);
@@ -78,11 +78,13 @@
     };
     const countDescendants = n => n.children.reduce((s, c) => s + 1 + countDescendants(c), 0);
     const totalBadge = n => n.badge + n.children.reduce((s, c) => s + totalBadge(c), 0);
+    const totalDBadge = n => n.dbadge + n.children.reduce((s, c) => s + totalDBadge(c), 0);
     const totalTBadge = n => n.tbadge + n.children.reduce((s, c) => s + totalTBadge(c), 0);
     sizeNode(root);
-    // Eingeklappte Äste zeigen die offenen Fragen und Aufgaben des ganzen Teilbaums.
+    // Eingeklappte Äste zeigen die offenen Fragen, Entscheide und Aufgaben des ganzen Teilbaums.
     const setBadges = n => {
       n.shownBadge = n.isRoot ? 0 : (n.collapsed ? totalBadge(n) : n.badge);
+      n.shownDBadge = n.isRoot ? 0 : (n.collapsed ? totalDBadge(n) : n.dbadge);
       n.shownTBadge = n.isRoot ? 0 : (n.collapsed ? totalTBadge(n) : n.tbadge);
       n.visibleChildren.forEach(setBadges);
     };
@@ -266,7 +268,11 @@
         svgEl('circle', { r: 9 }, b);
         const bt = svgEl('text', { 'text-anchor': 'middle', 'dominant-baseline': 'central' }, b);
         bt.textContent = n.shownBadge > 99 ? '99+' : String(n.shownBadge);
-        svgEl('title', null, b).textContent = tn('{n} offene Frage', '{n} offene Fragen', n.shownBadge);
+        const questions = n.shownBadge - n.shownDBadge;
+        svgEl('title', null, b).textContent = [
+          questions > 0 ? tn('{n} offene Frage', '{n} offene Fragen', questions) : '',
+          n.shownDBadge > 0 ? tn('{n} offener Entscheid', '{n} offene Entscheide', n.shownDBadge) : '',
+        ].filter(Boolean).join(', ');
       }
       if (n.shownTBadge > 0) {
         const bx = n.dir < 0 ? 0 : n.w;

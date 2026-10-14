@@ -11,6 +11,7 @@
   const Store = window.NoNotesStorage;
   const Mindmap = window.NoNotesMindmap;
   const Q = window.NoNotesQuestions;
+  const Mentions = window.NoNotesMentions;
   const M = window.NoNotesMarkdown;
   const Zip = window.NoNotesZip;
   const Exporter = window.NoNotesExport;
@@ -110,6 +111,9 @@
     editorEmpty: $('#editorEmpty'), editorPane: $('#editorPane'), backBtn: $('#backBtn'), bodyMirror: $('#bodyMirror'),
     crumbs: $('#crumbs'), noteMeta: $('#noteMeta'), childBtn: $('#childBtn'), deleteBtn: $('#deleteBtn'),
     title: $('#title'), body: $('#body'),
+    viewDecisionsBtn: $('#viewDecisionsBtn'), qPersonFilter: $('#qPersonFilter'), qAnsweredBtn: $('#qAnsweredBtn'), decisionBtn: $('#decisionBtn'),
+    mentionPopup: $('#mentionPopup'), qaPrintTitle: $('#qaPrintTitle'), qaScopeOpen: $('#qaScopeOpen'), qaScopeAnswered: $('#qaScopeAnswered'),
+    qaScopeAll: $('#qaScopeAll'), qaLinesLabel: $('#qaLinesLabel'),
   };
 
   const state = {
@@ -132,6 +136,10 @@
     loadedEmbeds: new Set(), // Videos, die in dieser Sitzung per Klick geladen wurden (nach dem Neuzeichnen der Vorschau wieder laden)
     qDraft: null,         // Entwurf im offenen Antwortfeld (überlebt ein Neuzeichnen)
     qTag: '',
+    qPerson: '',          // Filter «an @kürzel» in Fragen und Entscheiden
+    mention: null,        // offene Vervollständigung @kürzel: { start, items, index }
+    mentionSeq: 0,
+    pluginProviders: new Map(), // Lieferanten für @kürzel je Erweiterung (zum Abmelden beim Ausschalten)
     editorMode: 'edit',   // 'edit' | 'split' | 'preview'
     previewTimer: null,
     listScope: 'live',    // 'live' | 'trash'
@@ -157,6 +165,9 @@
   };
 
   // ---------- Hilfen ----------
+
+  /** Die Ansichten «Fragen» und «Entscheide» teilen sich Leiste und Liste. */
+  const inQuestions = () => state.view === 'questions' || state.view === 'decisions';
 
   /** Neuester Zeichenauftrag je Bereich: nach einem await prüft isLatest(), ob inzwischen ein neuerer begonnen hat. */
   function fresh(key) {
@@ -342,9 +353,10 @@
 
     el.boot.hidden = true;
     el.app.hidden = false;
-    await setView(['list', 'questions', 'tasks'].includes(view) ? view : 'map');
+    await setView(['list', 'questions', 'decisions', 'tasks'].includes(view) ? view : 'map');
     await renderAll();
     shell.afterReady();
+    Mentions.provide(() => B.listPeople()); // Kürzel, die in der Datei schon vorkommen
     await Plugins.activateAll(pluginContext);
     renderPlugins();
     document.body.dataset.ready = 'true';
@@ -517,10 +529,13 @@
     document.body.classList.toggle('view-map', view === 'map');
     document.body.classList.toggle('view-list', view === 'list');
     document.body.classList.toggle('view-questions', view === 'questions');
+    document.body.classList.toggle('view-decisions', view === 'decisions');
     document.body.classList.toggle('view-tasks', view === 'tasks');
     el.viewMapBtn.setAttribute('aria-selected', String(view === 'map'));
     el.viewListBtn.setAttribute('aria-selected', String(view === 'list'));
     el.viewQuestionsBtn.setAttribute('aria-selected', String(view === 'questions'));
+    el.viewDecisionsBtn.setAttribute('aria-selected', String(view === 'decisions'));
+    if (view !== 'decisions' && el.viewDecisionsBtn.dataset.empty === '1') el.viewDecisionsBtn.hidden = true; // Reiter nur, wenn es Entscheide gibt
     el.viewTasksBtn.setAttribute('aria-selected', String(view === 'tasks'));
     try { localStorage.setItem(VIEW_KEY, view); } catch (e) { /* egal */ }
     document.body.classList.remove('editor-open');
@@ -529,7 +544,8 @@
     if (view === 'map') {
       await renderMap();
       el.mindmap.focus({ preventScroll: true });
-    } else if (view === 'questions') {
+    } else if (view === 'questions' || view === 'decisions') {
+      renderQuestionChrome();
       await renderQuestions();
     } else if (view === 'tasks') {
       await renderTasks();
@@ -543,7 +559,7 @@
   /** Zeichnet die aktive Ansicht neu (nach Schliessen des Editors oder Änderungen). */
   async function renderCurrentView() {
     if (state.view === 'map') await renderMap();
-    else if (state.view === 'questions') await renderQuestions();
+    else if (inQuestions()) await renderQuestions();
     else if (state.view === 'tasks') await renderTasks();
     else { await renderList(); await renderEditor(); }
   }
@@ -555,7 +571,7 @@
     if (state.accentStale) { await loadAccent(); await loadTheme(); }
     // Unabhängige Abfragen gleichzeitig stellen: bei einem Backend über das Netz zählt jede Laufzeit nur einmal.
     await Promise.all([renderTagFilters(), renderList(), renderEditor(), renderCount(), renderMap(), renderQuestionCounts(), renderTaskCounts()]);
-    if (state.view === 'questions') await renderQuestions();
+    if (inQuestions()) await renderQuestions();
     if (state.view === 'tasks') await renderTasks();
     if (replaced) emitPlugins('database:replaced', {});
   }
@@ -786,7 +802,11 @@
 
   // ---------- Erweiterungen ----------
 
-  const emitPlugins = (event, data) => { Plugins.emit(event, data); };
+  /** Meldet ein Ereignis den Erweiterungen und als DOM-Ereignis «nonotes:<name>» am Dokument (für Ausprägungen und fremde Skripte). */
+  const emitPlugins = (event, data) => {
+    try { document.dispatchEvent(new CustomEvent('nonotes:' + event, { detail: data })); } catch (e) { /* egal */ }
+    Plugins.emit(event, data);
+  };
 
   /** «Gespeichert»-Ereignis nach einer Pause im Tippen, nicht bei jedem Zeichen. */
   function scheduleSavedEvent(id) {
@@ -842,7 +862,16 @@
         addToolbarButton: item => addPluginToolbarButton(entry, item),
       }),
       editor: pluginEditorApi(),
+      people: Object.freeze({ provide: fn => providePeople(id, fn) }),
     });
+  }
+
+  /** Vorschläge für @kürzel aus einer Erweiterung; beim Ausschalten wieder abgemeldet. */
+  function providePeople(id, fn) {
+    const off = Mentions.provide(fn);
+    if (!state.pluginProviders.has(id)) state.pluginProviders.set(id, []);
+    state.pluginProviders.get(id).push(off);
+    return off;
   }
 
   function checkItem(item, what) {
@@ -901,6 +930,8 @@
     for (const b of el.pluginMenu.querySelectorAll(`[data-plugin="${id}"]`)) b.remove();
     el.pluginMenu.hidden = !el.pluginMenu.querySelector('button');
     for (const b of el.mdToolbar.querySelectorAll(`.tb-plugin[data-plugin="${id}"]`)) b.remove();
+    for (const off of state.pluginProviders.get(id) || []) off();
+    state.pluginProviders.delete(id);
   }
 
   /** Schaltet eine Datei aus plugins/ ein (lädt sie bei Bedarf) oder aus. Gemerkt wird nur, was sich gültig gemeldet hat. */
@@ -1093,6 +1124,19 @@
       b.title = joinParts(tn('{n} offene Frage', '{n} offene Fragen', c.open), c.overdue ? t('{n} überfällig', { n: c.overdue }) : '');
       el.viewQuestionsBtn.appendChild(b);
     }
+    const d = c.decisions || { open: 0, total: 0, overdue: 0 };
+    el.viewDecisionsBtn.replaceChildren();
+    el.viewDecisionsBtn.append(t('Entscheide'));
+    if (d.open > 0) {
+      const b = document.createElement('span');
+      b.className = 'count decisions' + (d.overdue > 0 ? ' overdue' : '');
+      b.textContent = String(d.open);
+      b.title = joinParts(tn('{n} offener Entscheid', '{n} offene Entscheide', d.open), d.overdue ? t('{n} überfällig', { n: d.overdue }) : '');
+      el.viewDecisionsBtn.appendChild(b);
+    }
+    // Der Reiter erscheint nur, wenn es Entscheide gibt (offen oder getroffen); die gerade aktive Ansicht bleibt sichtbar.
+    el.viewDecisionsBtn.dataset.empty = d.total === 0 ? '1' : '';
+    el.viewDecisionsBtn.hidden = d.total === 0 && state.view !== 'decisions';
   }
 
   async function renderMap() {
@@ -1177,7 +1221,7 @@
 
   function renderMulti() {
     const n = state.multi.size;
-    el.multiBar.hidden = n === 0 || state.view === 'questions' || state.view === 'tasks';
+    el.multiBar.hidden = n === 0 || inQuestions() || state.view === 'tasks';
     el.multiCount.textContent = tn('{n} Notiz ausgewählt', '{n} Notizen ausgewählt', n);
     if (state.map) state.map.setMulti(state.multi);
     for (const li of el.list.children) li.classList.toggle('multi', state.multi.has(Number(li.dataset.id)));
@@ -1260,10 +1304,19 @@
   async function openQaPrintDialog() {
     hideContextMenu();
     closeMenu();
-    const shown = (await B.listQuestions({ status: state.qStatus, query: state.qQuery, tag: state.qTag })).length;
-    const label = state.qStatus === 'open' ? t('offene Fragen') : state.qStatus === 'answered' ? t('beantwortete Fragen') : t('alle Fragen');
+    const kind = questionKind();
+    const decision = kind === 'decision';
+    const shown = (await B.listQuestions({ kind, status: state.qStatus, query: state.qQuery, tag: state.qTag, person: state.qPerson })).length;
+    const label = decision
+      ? (state.qStatus === 'open' ? t('offene Entscheide') : state.qStatus === 'answered' ? t('getroffene Entscheide') : t('alle Entscheide'))
+      : (state.qStatus === 'open' ? t('offene Fragen') : state.qStatus === 'answered' ? t('beantwortete Fragen') : t('alle Fragen'));
+    el.qaPrintTitle.textContent = decision ? t('Entscheide drucken') : t('Fragen und Antworten drucken');
+    el.qaScopeOpen.textContent = decision ? t('Nur offene Entscheide') : t('Nur offene Fragen');
+    el.qaScopeAnswered.textContent = decision ? t('Nur getroffene Entscheide') : t('Nur beantwortete Fragen');
+    el.qaScopeAll.textContent = decision ? t('Alle Entscheide') : t('Alle Fragen');
+    el.qaLinesLabel.textContent = decision ? t('Linien für handschriftliche Entscheide bei offenen Entscheiden') : t('Linien für handschriftliche Antworten bei offenen Fragen');
     el.qaScopeFiltered.textContent = t('Wie angezeigt: {filter} ({anzahl})', {
-      filter: joinParts(label, state.qTag ? t('Tag „{tag}“', { tag: state.qTag }) : '', state.qQuery.trim() ? t('Suche „{suche}“', { suche: state.qQuery.trim() }) : ''),
+      filter: joinParts(label, state.qTag ? t('Tag „{tag}“', { tag: state.qTag }) : '', state.qPerson ? t('an @{person}', { person: state.qPerson }) : '', state.qQuery.trim() ? t('Suche „{suche}“', { suche: state.qQuery.trim() }) : ''),
       anzahl: shown,
     });
     if (typeof el.qaPrintDialog.showModal === 'function') el.qaPrintDialog.showModal();
@@ -1274,8 +1327,10 @@
     const scope = (el.qaPrintForm.querySelector('input[name="qaScope"]:checked') || {}).value || 'filtered';
     const groupBy = (el.qaPrintForm.querySelector('input[name="qaGroup"]:checked') || {}).value || 'note';
     const html = await Printer.buildQuestionsDocument(B, {
+      kind: questionKind(),
       status: scope === 'filtered' ? state.qStatus : scope,
       tag: scope === 'filtered' ? state.qTag : '',
+      person: scope === 'filtered' ? state.qPerson : '',
       query: scope === 'filtered' ? state.qQuery.trim() : '',
       groupBy,
       lines: el.qaLines.checked,
@@ -1440,7 +1495,7 @@
     markEdited();
     await renderTagFilters();
     await renderList();
-    if (state.view === 'questions') await renderQuestions();
+    if (inQuestions()) await renderQuestions();
   }
 
   async function addTagFromInput() {
@@ -1761,10 +1816,17 @@
 
   function renderNoteQuestions(body) {
     const parsed = Q.parse(body);
-    const open = parsed.filter(q => !q.answer).length;
-    el.noteQuestions.textContent = parsed.length === 0 ? ''
-      : open === 0 ? tn('{n} Frage, alle beantwortet', '{n} Fragen, alle beantwortet', parsed.length)
-      : tn('{n} offene Frage von {gesamt}', '{n} offene Fragen von {gesamt}', open, { gesamt: parsed.length });
+    const qs = parsed.filter(q => q.kind !== 'decision');
+    const ds = parsed.filter(q => q.kind === 'decision');
+    const qOpen = qs.filter(q => !q.answer).length;
+    const dOpen = ds.filter(q => !q.answer).length;
+    const parts = [
+      qs.length === 0 ? '' : qOpen === 0 ? tn('{n} Frage, alle beantwortet', '{n} Fragen, alle beantwortet', qs.length)
+        : tn('{n} offene Frage von {gesamt}', '{n} offene Fragen von {gesamt}', qOpen, { gesamt: qs.length }),
+      ds.length === 0 ? '' : dOpen === 0 ? tn('{n} Entscheid, alle getroffen', '{n} Entscheide, alle getroffen', ds.length)
+        : tn('{n} offener Entscheid von {gesamt}', '{n} offene Entscheide von {gesamt}', dOpen, { gesamt: ds.length }),
+    ];
+    el.noteQuestions.textContent = parts.filter(Boolean).join(' · ');
   }
 
   function renderMeta(createdAt, updatedAt, by) {
@@ -1900,7 +1962,7 @@
       if (state.currentId != null) state.mapSelection = state.currentId;
       await renderMap();
       el.mindmap.focus({ preventScroll: true });
-    } else if (state.view === 'questions') {
+    } else if (inQuestions()) {
       await renderQuestions();
     } else if (state.view === 'tasks') {
       await renderTasks();
@@ -2265,6 +2327,7 @@
       case 'quote': r = E.togglePrefix(text, s, e, 'quote'); break;
       case 'question': r = E.togglePrefix(text, s, e, 'question'); break;
       case 'answer': r = E.togglePrefix(text, s, e, 'answer'); break;
+      case 'decision': r = E.togglePrefix(text, s, e, 'decision'); break;
       case 'codeblock': r = E.codeBlock(text, s, e); break;
       case 'hr': r = E.horizontalRule(text, s, e); break;
       case 'link': r = E.link(text, s, e); break;
@@ -2339,7 +2402,20 @@
     el.helpStorageStatus.textContent = lines.join('\n');
   }
 
-  // ---------- Fragen-Ansicht ----------
+  // ---------- Fragen- und Entscheide-Ansicht ----------
+
+  /** Art der Einträge in der aktiven Ansicht: 'question' (Fragen) oder 'decision' (Entscheide). */
+  const questionKind = () => state.view === 'decisions' ? 'decision' : 'question';
+
+  /** Beschriftungen der Leiste je nach Ansicht: dieselbe Leiste und Liste zeigt Fragen oder Entscheide. */
+  function renderQuestionChrome() {
+    const decision = questionKind() === 'decision';
+    el.questionsView.setAttribute('aria-label', decision ? t('Entscheide') : t('Fragen'));
+    el.qAnsweredBtn.textContent = decision ? t('Entschieden') : t('Beantwortet');
+    el.qSearch.placeholder = decision ? t('Entscheide durchsuchen…') : t('Fragen durchsuchen…');
+    el.qSearch.setAttribute('aria-label', el.qSearch.placeholder);
+    el.qPrintBtn.title = decision ? t('Entscheide drucken (Ctrl+P)') : t('Fragen und Antworten drucken (Ctrl+P)');
+  }
 
   async function setQuestionFilter(status) {
     clearTimeout(state.qSearchTimer);
@@ -2351,18 +2427,44 @@
     await renderQuestions();
   }
 
+  /** Auswahl «an @kürzel»: alle Kürzel, die Fragen und Entscheide nennen; ohne Kürzel bleibt die Auswahl verborgen. */
+  function fillPersonFilter(people) {
+    const frag = document.createDocumentFragment();
+    const all = document.createElement('option');
+    all.value = '';
+    all.textContent = t('Alle Personen');
+    frag.appendChild(all);
+    for (const handle of people) {
+      const o = document.createElement('option');
+      o.value = handle;
+      o.textContent = '@' + handle;
+      frag.appendChild(o);
+    }
+    el.qPersonFilter.replaceChildren(frag);
+    state.qPerson = people.some(h => h.toLowerCase() === state.qPerson.toLowerCase()) ? state.qPerson : '';
+    el.qPersonFilter.value = state.qPerson;
+    el.qPersonFilter.hidden = people.length === 0;
+  }
+
   async function renderQuestions() {
-    if (state.view !== 'questions') return;
+    if (!inQuestions()) return;
+    const kind = questionKind();
+    const decision = kind === 'decision';
     const isLatest = fresh('questions');
     const resolve = await wikiResolver();
     // Entwurf eines offenen Antwortfelds sichern, damit ein Neuzeichnen nichts verschluckt.
     const openTa = state.qAnswering != null ? el.qList.querySelector(`.q-item[data-id="${state.qAnswering}"] .q-form textarea`) : null;
     if (openTa) state.qDraft = openTa.value;
     const today = Dates.nowIso();
-    const rows = await B.listQuestions({ status: state.qStatus, query: state.qQuery, tag: state.qTag, sort: state.qSort });
-    const counts = await B.countQuestions(today);
+    const [rows, counts, people] = await Promise.all([
+      B.listQuestions({ kind, status: state.qStatus, query: state.qQuery, tag: state.qTag, person: state.qPerson, sort: state.qSort }),
+      B.countQuestions(today),
+      B.listPeople(),
+    ]);
     if (!isLatest()) return;
-    el.qCount.textContent = t('{anzahl} von {gesamt} · {offen} offen', { anzahl: rows.length, gesamt: counts.total, offen: counts.open }) + (counts.overdue ? ' · ' + t('{n} überfällig', { n: counts.overdue }) : '');
+    const c = decision ? (counts.decisions || { open: 0, total: 0, overdue: 0 }) : counts;
+    fillPersonFilter(people);
+    el.qCount.textContent = t('{anzahl} von {gesamt} · {offen} offen', { anzahl: rows.length, gesamt: c.total, offen: c.open }) + (c.overdue ? ' · ' + t('{n} überfällig', { n: c.overdue }) : '');
 
     const groups = new Map();
     for (const r of rows) {
@@ -2370,7 +2472,7 @@
       const key = byDue ? (r.answer ? 'answered' : Dates.urgency(r.due, today)) : `n${r.note_id}`;
       if (!groups.has(key)) {
         groups.set(key, {
-          title: byDue ? Dates.urgencyLabel(key) : (r.note_title.trim() || t('Ohne Titel')),
+          title: byDue ? (key === 'answered' && decision ? t('Entschieden') : Dates.urgencyLabel(key)) : (r.note_title.trim() || t('Ohne Titel')),
           noteId: byDue ? null : r.note_id,
           cls: byDue ? `urgency-${key}` : '',
           items: [],
@@ -2396,7 +2498,7 @@
         h.append(g.title);
       }
       const cnt = document.createElement('span');
-      cnt.textContent = tn('{n} Frage', '{n} Fragen', g.items.length);
+      cnt.textContent = decision ? tn('{n} Entscheid', '{n} Entscheide', g.items.length) : tn('{n} Frage', '{n} Fragen', g.items.length);
       h.appendChild(cnt);
       section.appendChild(h);
       for (const r of g.items) section.appendChild(renderQuestionItem(r, today, resolve));
@@ -2404,25 +2506,35 @@
     }
     el.qList.replaceChildren(frag);
     el.qEmpty.hidden = rows.length > 0;
-    el.qEmpty.textContent = state.qQuery || state.qTag ? t('Keine Treffer.')
-      : state.qStatus === 'open' ? t('Keine offenen Fragen. Eine Zeile, die mit „?“ beginnt, wird zur Frage, optional mit „@15.10.2026“ am Ende.')
-      : state.qStatus === 'answered' ? t('Noch keine beantworteten Fragen.')
-      : t('Noch keine Fragen. Eine Zeile, die mit „?“ beginnt, wird zur Frage.');
+    el.qEmpty.textContent = state.qQuery || state.qTag || state.qPerson ? t('Keine Treffer.')
+      : decision
+        ? (state.qStatus === 'open' ? t('Keine offenen Entscheide. Eine Zeile, die mit „?!“ beginnt, wird zum Entscheid; „@kürzel“ nennt, wer entscheiden soll.')
+          : state.qStatus === 'answered' ? t('Noch keine getroffenen Entscheide.')
+          : t('Noch keine Entscheide. Eine Zeile, die mit „?!“ beginnt, wird zum Entscheid.'))
+        : (state.qStatus === 'open' ? t('Keine offenen Fragen. Eine Zeile, die mit „?“ beginnt, wird zur Frage, optional mit „@15.10.2026“ am Ende.')
+          : state.qStatus === 'answered' ? t('Noch keine beantworteten Fragen.')
+          : t('Noch keine Fragen. Eine Zeile, die mit „?“ beginnt, wird zur Frage.'));
+    emitPlugins('questions:rendered', {
+      kind,
+      items: rows.map(r => ({ id: r.id, noteId: r.note_id, kind: r.kind, text: r.text, answer: r.answer, decided: r.decided || null, due: r.due || null, people: r.people || [], element: el.qList.querySelector(`.q-item[data-id="${r.id}"]`) })),
+    });
   }
 
   function renderQuestionItem(r, today, resolve) {
+    const decision = r.kind === 'decision';
     const item = document.createElement('article');
-    item.className = 'q-item ' + (r.answer ? 'answered' : 'open');
+    item.className = 'q-item ' + (decision ? 'decision ' : '') + (r.answer ? 'answered' : 'open');
     item.dataset.id = String(r.id);
+    item.dataset.kind = r.kind || 'question';
 
     const head = document.createElement('div');
     head.className = 'q-head';
     const mark = document.createElement('span');
     mark.className = 'q-mark';
-    mark.textContent = r.answer ? '✓' : '?';
+    mark.textContent = r.answer ? '✓' : decision ? '?!' : '?';
     const text = document.createElement('div');
     text.className = 'q-text';
-    text.innerHTML = M.inline(r.text, { highlight: state.qQuery.trim() || null, resolveTitle: resolve });
+    text.innerHTML = M.inline(r.text, { highlight: state.qQuery.trim() || null, resolveTitle: resolve, people: true });
     head.append(mark, text);
     if (r.due) {
       const due = document.createElement('span');
@@ -2445,7 +2557,9 @@
     const answerBtn = document.createElement('button');
     answerBtn.type = 'button';
     answerBtn.className = r.answer ? '' : 'primary';
-    answerBtn.textContent = r.answer ? t('Antwort bearbeiten') : t('Beantworten');
+    answerBtn.textContent = decision
+      ? (r.answer ? t('Entscheid bearbeiten') : t('Entscheiden'))
+      : (r.answer ? t('Antwort bearbeiten') : t('Beantworten'));
     answerBtn.addEventListener('click', () => { if (!denyWrite()) openAnswerForm(item, r); });
     answerBtn.hidden = readOnly();
     const gotoBtn = document.createElement('button');
@@ -2467,7 +2581,9 @@
     }
     const meta = document.createElement('span');
     meta.className = 'q-meta';
-    meta.textContent = r.answer && r.answered_at ? t('Beantwortet {datum}', { datum: fmtDate(r.answered_at) }) : t('Gestellt {datum}', { datum: fmtDate(r.created_at) });
+    meta.textContent = decision
+      ? (r.answer ? t('Entschieden {datum}', { datum: r.decided ? Dates.formatDue(r.decided) : fmtDate(r.answered_at) }) : t('Gestellt {datum}', { datum: fmtDate(r.created_at) }))
+      : (r.answer && r.answered_at ? t('Beantwortet {datum}', { datum: fmtDate(r.answered_at) }) : t('Gestellt {datum}', { datum: fmtDate(r.created_at) }));
     actions.appendChild(meta);
     item.appendChild(actions);
 
@@ -2475,8 +2591,8 @@
     form.className = 'q-form';
     form.hidden = true;
     const ta = document.createElement('textarea');
-    ta.placeholder = t('Antwort…');
-    ta.setAttribute('aria-label', t('Antwort'));
+    ta.placeholder = decision ? t('Entscheid…') : t('Antwort…');
+    ta.setAttribute('aria-label', decision ? t('Entscheid') : t('Antwort'));
     const row = document.createElement('div');
     row.className = 'row';
     const save = document.createElement('button');
@@ -2491,10 +2607,10 @@
     form.append(ta, row);
     form.addEventListener('submit', async e => {
       e.preventDefault();
-      await saveAnswer(r.id, ta.value);
+      await saveAnswer(r, ta.value);
     });
     ta.addEventListener('keydown', async e => {
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); await saveAnswer(r.id, ta.value); }
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); await saveAnswer(r, ta.value); }
       else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel.click(); }
     });
     item.appendChild(form);
@@ -2515,20 +2631,132 @@
     if (!reopened || document.activeElement === document.body) ta.focus();
   }
 
-  async function saveAnswer(questionId, text) {
+  /** Schreibt Antwort oder Entscheid in die Notiz; ein neuer Entscheid bekommt das heutige Datum in den Text. */
+  async function saveAnswer(r, text) {
     if (denyWrite()) return;
+    const decision = r.kind === 'decision';
     try {
-      const noteId = await B.answerQuestion(questionId, text);
+      const options = decision && !r.decided ? { decided: Dates.formatDue(Dates.todayIso()) } : {};
+      const noteId = await B.answerQuestion(r.id, text, options);
       state.qAnswering = null;
       state.qDraft = null;
       markEdited();
       await renderQuestionCounts();
       await renderQuestions();
       if (state.currentId === noteId) await renderEditor();
-      setStatus(text.trim() ? t('Antwort gespeichert') : t('Antwort entfernt'), 'dirty');
+      setStatus(text.trim()
+        ? (decision ? t('Entscheid gespeichert') : t('Antwort gespeichert'))
+        : (decision ? t('Entscheid entfernt') : t('Antwort entfernt')), 'dirty');
     } catch (e) {
-      setStatus(t('Antwort konnte nicht gespeichert werden: {fehler}', { fehler: errorText(e) }), 'error');
+      setStatus(decision
+        ? t('Entscheid konnte nicht gespeichert werden: {fehler}', { fehler: errorText(e) })
+        : t('Antwort konnte nicht gespeichert werden: {fehler}', { fehler: errorText(e) }), 'error');
     }
+  }
+
+  // ---------- Vervollständigung @kürzel im Editor ----------
+
+  // Ein begonnenes Kürzel direkt vor dem Cursor: "@" am Wortanfang (auch nach "("), dahinter nichts oder ein Buchstabe und mehr.
+  const MENTION_PREFIX_RE = /(?:^|[\s(])\(?@(\p{L}[\p{L}\p{N}_.-]*|)$/u;
+
+  /** Steht der Cursor hinter einem begonnenen @kürzel, zeigt die Liste die passenden Vorschläge; sonst schliesst sie sich. */
+  async function updateMentionPopup() {
+    if (!Mentions || el.body.readOnly || document.activeElement !== el.body) { closeMentionPopup(); return; }
+    const caret = el.body.selectionStart || 0;
+    if (caret !== (el.body.selectionEnd || 0)) { closeMentionPopup(); return; }
+    const before = el.body.value.slice(Math.max(0, caret - 120), caret);
+    const m = MENTION_PREFIX_RE.exec(before);
+    if (!m) { closeMentionPopup(); return; }
+    const prefix = m[1];
+    const token = ++state.mentionSeq;
+    const items = await Mentions.suggest(prefix, 8);
+    if (token !== state.mentionSeq || document.activeElement !== el.body) return;
+    if (!items.length) { closeMentionPopup(); return; }
+    state.mention = { start: caret - prefix.length, items, index: 0, prefix };
+    renderMentionPopup();
+  }
+
+  function renderMentionPopup() {
+    const m = state.mention;
+    if (!m) return;
+    el.mentionPopup.replaceChildren(...m.items.map((it, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('role', 'option');
+      b.dataset.index = String(i);
+      b.setAttribute('aria-selected', String(i === m.index));
+      const h = document.createElement('span');
+      h.className = 'mention-handle';
+      h.textContent = '@' + it.handle;
+      b.appendChild(h);
+      if (it.name) {
+        const n = document.createElement('span');
+        n.className = 'mention-name';
+        n.textContent = it.name;
+        b.appendChild(n);
+      }
+      return b;
+    }));
+    el.mentionPopup.hidden = false;
+    placeMentionPopup();
+  }
+
+  /** Setzt die Liste unter das begonnene Kürzel: ein unsichtbarer Spiegel des Textfelds misst die Cursorposition. */
+  function placeMentionPopup() {
+    const m = state.mention;
+    if (!m) return;
+    const ta = el.body;
+    const cs = getComputedStyle(ta);
+    const mirror = document.createElement('div');
+    for (const p of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'boxSizing', 'tabSize', 'textIndent']) mirror.style[p] = cs[p];
+    Object.assign(mirror.style, { position: 'absolute', top: '0', left: '0', visibility: 'hidden', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', border: '0', width: ta.clientWidth + 'px' });
+    mirror.textContent = ta.value.slice(0, m.start);
+    const marker = document.createElement('span');
+    marker.textContent = ta.value.slice(m.start, m.start + 1) || '.';
+    mirror.appendChild(marker);
+    ta.parentElement.appendChild(mirror);
+    const lineH = parseFloat(cs.lineHeight) || 20;
+    const top = ta.offsetTop + marker.offsetTop - ta.scrollTop + lineH + 2;
+    const left = ta.offsetLeft + marker.offsetLeft - ta.scrollLeft;
+    mirror.remove();
+    const box = ta.parentElement;
+    el.mentionPopup.style.left = Math.max(0, Math.min(left, box.clientWidth - el.mentionPopup.offsetWidth - 4)) + 'px';
+    el.mentionPopup.style.top = Math.max(0, Math.min(top, box.clientHeight - el.mentionPopup.offsetHeight - 4)) + 'px';
+  }
+
+  function closeMentionPopup() {
+    state.mention = null;
+    state.mentionSeq++;
+    el.mentionPopup.hidden = true;
+    el.mentionPopup.replaceChildren();
+  }
+
+  /** Tasten bei offener Liste: Pfeile wählen, Enter oder Tab übernehmen, Esc schliesst. Liefert true, wenn die Taste verbraucht ist. */
+  function handleMentionKey(e) {
+    const m = state.mention;
+    if (!m) return false;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      m.index = (m.index + (e.key === 'ArrowDown' ? 1 : m.items.length - 1)) % m.items.length;
+      for (const b of el.mentionPopup.children) b.setAttribute('aria-selected', String(Number(b.dataset.index) === m.index));
+      e.preventDefault();
+      return true;
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); acceptMention(m.index); return true; }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMentionPopup(); return true; }
+    return false;
+  }
+
+  /** Übernimmt den gewählten Vorschlag an Stelle des begonnenen Kürzels, mit Leerzeichen dahinter. */
+  async function acceptMention(index) {
+    const m = state.mention;
+    if (!m || !m.items[index]) return;
+    const handle = m.items[index].handle;
+    const text = el.body.value;
+    const caret = el.body.selectionStart || 0;
+    const after = text.slice(caret);
+    const insert = handle + (/^[\s)]/.test(after) ? '' : ' ');
+    closeMentionPopup();
+    await applyEdit({ text: text.slice(0, m.start) + insert + after, selStart: m.start + insert.length, selEnd: m.start + insert.length });
   }
 
   // ---------- Aufgaben-Ansicht ----------
@@ -2751,7 +2979,7 @@
 
   /** "/" ausserhalb von Eingabefeldern: Suche der aktuellen Ansicht fokussieren. */
   function focusSearch() {
-    const target = state.view === 'map' ? el.mapSearch : state.view === 'questions' ? el.qSearch : state.view === 'tasks' ? el.tSearch : el.search;
+    const target = state.view === 'map' ? el.mapSearch : inQuestions() ? el.qSearch : state.view === 'tasks' ? el.tSearch : el.search;
     target.focus();
     target.select();
   }
@@ -3216,6 +3444,7 @@
     el.viewMapBtn.addEventListener('click', () => setView('map'));
     el.viewListBtn.addEventListener('click', () => setView('list'));
     el.viewQuestionsBtn.addEventListener('click', () => setView('questions'));
+    el.viewDecisionsBtn.addEventListener('click', () => setView('decisions'));
     el.viewTasksBtn.addEventListener('click', () => setView('tasks'));
     el.tFilter.addEventListener('click', async e => {
       const b = e.target.closest('button[data-status]');
@@ -3259,6 +3488,7 @@
     el.body.addEventListener('keydown', async e => {
       const mod = e.ctrlKey || e.metaKey;
       if (e.isComposing || el.body.readOnly) return;
+      if (state.mention && handleMentionKey(e)) return; // offene Vorschlagsliste für @kürzel
       // Listen, Aufgaben, Zitate und Antworten weiterführen; Shift+Enter bleibt die normale neue Zeile.
       if (e.key === 'Enter' && !mod && !e.shiftKey && !e.altKey) {
         const r = E.continueLine(el.body.value, el.body.selectionStart || 0, el.body.selectionEnd || 0);
@@ -3275,12 +3505,24 @@
       if (e.shiftKey) {
         if (k === 'f') { e.preventDefault(); await runCommand('question'); }
         else if (k === 'a') { e.preventDefault(); await runCommand('answer'); }
+        else if (k === 'd') { e.preventDefault(); await runCommand('decision'); }
         return;
       }
       if (k === 'b') { e.preventDefault(); await runCommand('bold'); }
       else if (k === 'i') { e.preventDefault(); await runCommand('italic'); }
       else if (k === 'k') { e.preventDefault(); await runCommand('link'); }
     });
+
+    el.body.addEventListener('input', () => { updateMentionPopup(); });
+    el.body.addEventListener('click', () => { if (state.mention) updateMentionPopup(); });
+    el.body.addEventListener('scroll', () => { if (state.mention) placeMentionPopup(); });
+    el.body.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== el.body) closeMentionPopup(); }, 0));
+    el.mentionPopup.addEventListener('mousedown', e => e.preventDefault()); // der Fokus bleibt im Textfeld
+    el.mentionPopup.addEventListener('click', async e => {
+      const b = e.target.closest('button[data-index]');
+      if (b) await acceptMention(Number(b.dataset.index));
+    });
+    el.qPersonFilter.addEventListener('change', async () => { state.qPerson = el.qPersonFilter.value; await renderQuestions(); });
 
     el.newBtn.addEventListener('click', newNote);
     el.mapNewBtn.addEventListener('click', () => newNoteInMap(selectionAsParent()));
@@ -3436,7 +3678,7 @@
       else if (e.key === 'F1') { e.preventDefault(); await openHelp('editor'); }
       else if (mod && !e.shiftKey && e.key.toLowerCase() === 'p') {
         e.preventDefault();
-        if (state.view === 'questions' && !isEditorOpen()) await openQaPrintDialog();
+        if (inQuestions() && !isEditorOpen()) await openQaPrintDialog();
         else if (state.view === 'tasks' && !isEditorOpen()) await openTaskPrintDialog();
         else await openPrintDialog({ noteId: isEditorOpen() || state.view === 'list' ? state.currentId : undefined });
       }

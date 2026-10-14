@@ -110,6 +110,7 @@ gilt für eine Erweiterung, deren `activate` oder deren Ereignisrückruf einen F
 | `ctx.editor.isWritable()` | `true`, wenn eine Notiz offen und nicht schreibgeschützt ist |
 | `ctx.editor.selection()` | `{ start, end, text }` der Markierung im Text |
 | `ctx.editor.replaceSelection(text)` | Ersetzt die Markierung (oder fügt am Cursor ein); Promise mit `false`, wenn nichts zu bearbeiten ist |
+| `ctx.people.provide(fn)` | Vorschläge für `@kürzel` beim Schreiben: `fn(prefix)` liefert (auch als Promise) `[{ handle, name }]` oder Kürzel als Text; die App führt alle Lieferanten zusammen, jedes Kürzel erscheint einmal. Liefert eine Funktion zum Abmelden; beim Ausschalten wird abgemeldet. Ohne Erweiterung gilt `NoNotesMentions.provide(fn)` für Ausprägungen (seit 1.11.0) |
 
 `action`-Funktionen dürfen `async` sein. Wirft eine Aktion einen Fehler, erscheint er in der Statuszeile; die App
 läuft weiter.
@@ -125,8 +126,10 @@ läuft weiter.
 | `mindmap:rendered` | Die Mindmap wurde (neu) gezeichnet. Die Verbindungslinien sind `path.mm-edge` mit `data-from` (Kennung der Elternnotiz, bei der Wurzel `root`), `data-to` (Kennung der Unternotiz) und den Endpunkten `data-x1`, `data-y1`, `data-x2`, `data-y2` | `{}` |
 | `mindmap:select` | Die Auswahl in der Mindmap hat sich geändert (Klick, Tastatur, Neuzeichnen mit anderer Auswahl) | `{ id }`: Notizkennung, `'root'` für die Wurzel oder `null` ohne Auswahl |
 | `database:replaced` | Eine andere Datei wurde geöffnet oder importiert | `{}` |
+| `questions:rendered` | Die Ansicht «Fragen» oder «Entscheide» wurde (neu) gezeichnet (seit 1.11.0) | `{ kind, items }`: `kind` ist `'question'` oder `'decision'`, `items` die gezeigten Einträge mit `id`, `noteId`, `kind`, `text`, `answer`, `decided`, `due`, `people` (`[{ handle, optional }]`) und `element` (der Eintrag in der Liste, zum Beispiel um Knöpfe oder Marken anzuhängen) |
 
-Rückrufe dürfen `async` sein. Die App wartet nicht auf sie.
+Rückrufe dürfen `async` sein. Die App wartet nicht auf sie. Jedes Ereignis geht zusätzlich als DOM-Ereignis `nonotes:<name>` am `document`
+aus (`detail` trägt die Daten), damit auch Skripte ohne Erweiterungs-Schnittstelle zuhören können, etwa die Hülle einer Ausprägung.
 
 ## Designs
 

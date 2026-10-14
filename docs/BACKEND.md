@@ -38,7 +38,7 @@ Die Argumente entsprechen den Funktionen in `packages/data/db.js` ohne das erste
 | Papierkorb | `deleteNote(id)`, `restoreNote(id)`, `purgeNote(id)`, `emptyTrash()`, `countTrash()` |
 | Archiv | `isArchived(id)`, `archiveCount(ids)`, `archiveNote(id)`, `unarchiveNote(id)`, `countArchived()` |
 | Tags | `getTags(noteId)`, `setTags(noteId, names)`, `listAllTags()` |
-| Fragen | `listQuestions(options)`, `countQuestions(nowIso)`, `getQuestion(id)`, `answerQuestion(id, text)` |
+| Fragen und Entscheide | `listQuestions({ kind, status, query, tag, person, sort, archived })` (`kind`: `'question'` (Standard), `'decision'` oder `'all'`; `person`: nur Einträge, die dieses Kürzel nennen; jede Zeile trägt `kind`, `decided` (Tag des Entscheids aus dem Text, `YYYY-MM-DD`) und `people` (`[{ handle, optional }]`)), `countQuestions(nowIso)` (`{ open, total, overdue, decisions: { open, total, overdue } }`), `getQuestion(id)`, `answerQuestion(id, text, options)` (bei einem Entscheid `!!`-Zeilen, die erste mit `options.decided`, zum Beispiel `'14.10.2026'`, sonst dem Datum aus dem Text, sonst heute; `options.author` wie bei `updateNote`), `listPeople()` (alle Kürzel lebender Notizen, seit v1.11.0, Schema 14) |
 | Aufgaben | `listTasks(options)`, `countTasks(nowIso)`, `getTask(id)`, `setTaskDone(id, done)`, `toggleTaskTree(id)` |
 | Verlauf | `listHistory(noteId)`, `getHistoryVersion(noteId, historyId)`, `restoreHistoryVersion(noteId, historyId, options)`, `clearHistory(noteId)` |
 | Bilder | `addAttachment(noteId, { name, mime, bytes })`, `listAttachments(noteId)`, `getAttachment(id)`, `deleteAttachment(id)`, `allAttachments({ archived })`, `attachmentsSize()` |

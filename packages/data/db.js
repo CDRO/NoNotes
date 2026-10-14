@@ -3,7 +3,7 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 13;
+  const SCHEMA_VERSION = 14;
 
   // Verlauf pro Notiz: eine «Arbeitsphase» endet nach so langer Pause oder so langer Dauer; danach beginnt eine neue Fassung.
   // Aufbewahrt werden höchstens so viele Fassungen und Tage; meta history_max_versions / history_max_days / history_enabled ('0') ändern das.
@@ -101,7 +101,10 @@
         line_no     INTEGER NOT NULL,
         created_at  TEXT NOT NULL,
         answered_at TEXT,
-        due         TEXT
+        due         TEXT,
+        kind        TEXT NOT NULL DEFAULT 'question',
+        decided     TEXT,
+        people      TEXT
       );
       CREATE INDEX idx_questions_note ON questions (note_id);
       CREATE TABLE tags (
@@ -315,6 +318,13 @@
       version = 13;
     }
 
+    if (version < 14) {
+      // Entscheide ("?!"-Zeilen), Tag des Entscheids und Personen ("@kürzel"): Spalten am Index, aus den Texten gefüllt
+      ensureQuestionColumns(db);
+      for (const row of selectAll(db, 'SELECT id, body FROM notes')) syncQuestions(db, row.id, row.body);
+      version = 14;
+    }
+
     setMeta(db, 'schema_version', SCHEMA_VERSION);
   }
 
@@ -406,6 +416,7 @@
     const rows = selectAll(db,
       `SELECT id, title, parent_id, sort_order, collapsed, archived_at,
               CASE WHEN archived_at IS NULL THEN (SELECT count(*) FROM questions q WHERE q.note_id = notes.id AND q.answer IS NULL) ELSE 0 END AS badge,
+              CASE WHEN archived_at IS NULL THEN (SELECT count(*) FROM questions q WHERE q.note_id = notes.id AND q.answer IS NULL AND q.kind = 'decision') ELSE 0 END AS dbadge,
               CASE WHEN archived_at IS NULL THEN (SELECT count(*) FROM tasks t WHERE t.note_id = notes.id AND t.done = 0) ELSE 0 END AS tbadge
          FROM notes
         WHERE deleted_at IS NULL ORDER BY parent_id, sort_order, id`);
@@ -804,6 +815,14 @@
   // ---------- Querverweise ----------
 
   /** Querverweise [[Titel*]] je Notiz (Schema 13); das Ziel wird beim Lesen über den Titel aufgelöst. */
+  /** Spalten für Entscheide und Personen am Index (Schema 14), auch auf alten Dateien. */
+  function ensureQuestionColumns(db) {
+    const cols = selectAll(db, 'PRAGMA table_info(questions)').map(c => c.name);
+    if (!cols.includes('kind')) db.exec("ALTER TABLE questions ADD COLUMN kind TEXT NOT NULL DEFAULT 'question'");
+    if (!cols.includes('decided')) db.exec('ALTER TABLE questions ADD COLUMN decided TEXT');
+    if (!cols.includes('people')) db.exec('ALTER TABLE questions ADD COLUMN people TEXT');
+  }
+
   function createLinksTable(db) {
     db.exec(`
       CREATE TABLE IF NOT EXISTS note_links (
@@ -1087,40 +1106,57 @@
     const unused = existing.slice();
     const ts = nowIso();
     for (const q of parsed) {
-      const idx = unused.findIndex(e => e.norm === q.norm);
+      const idx = unused.findIndex(e => e.norm === q.norm && (e.kind || 'question') === q.kind);
+      const people = q.people.length ? JSON.stringify(q.people) : null;
+      const decided = q.decided || null;
       if (idx >= 0) {
         const e = unused.splice(idx, 1)[0];
         let answeredAt = e.answered_at;
         if (q.answer && !e.answer) answeredAt = ts;
         if (!q.answer) answeredAt = null;
         const due = q.due || null;
-        if (e.text !== q.text || e.answer !== q.answer || e.line_no !== q.lineIndex || e.answered_at !== answeredAt || e.due !== due) {
-          db.run('UPDATE questions SET text = ?, answer = ?, line_no = ?, answered_at = ?, due = ? WHERE id = ?',
-            [q.text, q.answer, q.lineIndex, answeredAt, due, e.id]);
+        if (e.text !== q.text || e.answer !== q.answer || e.line_no !== q.lineIndex || e.answered_at !== answeredAt || e.due !== due
+          || (e.kind || 'question') !== q.kind || (e.decided || null) !== decided || (e.people || null) !== people) {
+          db.run('UPDATE questions SET text = ?, answer = ?, line_no = ?, answered_at = ?, due = ?, kind = ?, decided = ?, people = ? WHERE id = ?',
+            [q.text, q.answer, q.lineIndex, answeredAt, due, q.kind, decided, people, e.id]);
         }
       } else {
-        db.run('INSERT INTO questions (note_id, text, norm, answer, line_no, created_at, answered_at, due) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-          [noteId, q.text, q.norm, q.answer, q.lineIndex, ts, q.answer ? ts : null, q.due || null]);
+        db.run('INSERT INTO questions (note_id, text, norm, answer, line_no, created_at, answered_at, due, kind, decided, people) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [noteId, q.text, q.norm, q.answer, q.lineIndex, ts, q.answer ? ts : null, q.due || null, q.kind, decided, people]);
       }
     }
     for (const e of unused) db.run('DELETE FROM questions WHERE id = ?', [e.id]);
   }
 
-  /** Fragen über alle lebenden Notizen. status: 'open' | 'answered' | 'all'; sort: 'note' | 'due'. */
+  /** Personen aus der Indexspalte: [{ handle, optional }]. */
+  function peopleOf(row) {
+    if (!row || !row.people) return [];
+    try { const v = JSON.parse(row.people); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+  }
+
+  /** Fragen oder Entscheide über alle lebenden Notizen. kind: 'question' (Standard) | 'decision' | 'all';
+   *  status: 'open' | 'answered' | 'all'; sort: 'note' | 'due'; person: nur Einträge, die dieses Kürzel nennen. */
   function listQuestions(db, options) {
     const status = (options && options.status) || 'open';
+    const kind = options && (options.kind === 'decision' || options.kind === 'all') ? options.kind : 'question';
     const q = ((options && options.query) || '').trim().toLowerCase();
     const tag = options && options.tag ? String(options.tag).trim() : '';
+    const person = options && options.person ? String(options.person).trim().replace(/^@/, '').toLowerCase() : '';
     const sort = options && options.sort === 'due' ? 'due' : 'note';
     const where = ['n.deleted_at IS NULL'];
-    if (!(options && options.archived)) where.push('n.archived_at IS NULL'); // Archiv nur auf Wunsch (Export)
     const params = [];
+    if (kind !== 'all') { where.push('q.kind = ?'); params.push(kind); }
+    if (!(options && options.archived)) where.push('n.archived_at IS NULL'); // Archiv nur auf Wunsch (Export)
     if (tag) {
       where.push('EXISTS (SELECT 1 FROM note_tags nt JOIN tags t ON t.id = nt.tag_id WHERE nt.note_id = n.id AND t.name = ? COLLATE NOCASE)');
       params.push(tag);
     }
     if (status === 'open') where.push('q.answer IS NULL');
     else if (status === 'answered') where.push('q.answer IS NOT NULL');
+    if (person) {
+      where.push("nn_lower(q.people) LIKE ? ESCAPE '\\'");
+      params.push('%"handle":"' + escapeLike(person) + '"%');
+    }
     if (q) {
       const like = '%' + escapeLike(q) + '%';
       where.push("(nn_lower(q.text) LIKE ? ESCAPE '\\' OR nn_lower(q.answer) LIKE ? ESCAPE '\\' OR nn_lower(n.title) LIKE ? ESCAPE '\\')");
@@ -1130,11 +1166,20 @@
       ? '(q.answer IS NOT NULL), (q.due IS NULL), q.due, n.updated_at DESC, n.id, q.line_no'
       : '(q.answer IS NOT NULL), n.updated_at DESC, n.id, q.line_no';
     return selectAll(db,
-      `SELECT q.id, q.note_id, q.text, q.norm, q.answer, q.line_no, q.created_at, q.answered_at, q.due,
+      `SELECT q.id, q.note_id, q.text, q.norm, q.answer, q.line_no, q.created_at, q.answered_at, q.due, q.kind, q.decided, q.people,
               n.title AS note_title, n.updated_at AS note_updated_at
          FROM questions q JOIN notes n ON n.id = q.note_id
         WHERE ${where.join(' AND ')}
-        ORDER BY ${order}`, params);
+        ORDER BY ${order}`, params).map(r => Object.assign(r, { people: peopleOf(r) }));
+  }
+
+  /** Alle Kürzel, die Fragen und Entscheide lebender Notizen nennen (ohne @, jede Schreibweise einmal), alphabetisch. */
+  function listPeople(db) {
+    const seen = new Map();
+    for (const r of selectAll(db, 'SELECT q.people FROM questions q JOIN notes n ON n.id = q.note_id WHERE n.deleted_at IS NULL AND n.archived_at IS NULL AND q.people IS NOT NULL')) {
+      for (const p of peopleOf(r)) if (p.handle && !seen.has(p.handle.toLowerCase())) seen.set(p.handle.toLowerCase(), p.handle);
+    }
+    return [...seen.values()].sort((a, b) => a.localeCompare(b));
   }
 
   /** Überfällig: ohne Uhrzeit zählt der Tag, mit Uhrzeit der Zeitpunkt. */
@@ -1142,22 +1187,29 @@
     return `((length(${col}) = 10 AND ${col} < ?) OR (length(${col}) > 10 AND ${col} < ?))`;
   }
 
+  /** Zähler der Fragen (open, total, overdue) und darunter decisions: dieselben Zahlen für Entscheide. */
   function countQuestions(db, nowIso) {
     const now = nowIso || '0000-00-00';
     const today = now.slice(0, 10);
-    const row = selectOne(db,
-      `SELECT sum(q.answer IS NULL) AS open, count(*) AS total,
-              sum(q.answer IS NULL AND q.due IS NOT NULL AND ${overdueClause('q.due')}) AS overdue
-         FROM questions q JOIN notes n ON n.id = q.note_id WHERE n.deleted_at IS NULL AND n.archived_at IS NULL`, [today, now]);
-    return { open: Number(row && row.open || 0), total: Number(row && row.total || 0), overdue: Number(row && row.overdue || 0) };
+    const count = kind => {
+      const row = selectOne(db,
+        `SELECT sum(q.answer IS NULL) AS open, count(*) AS total,
+                sum(q.answer IS NULL AND q.due IS NOT NULL AND ${overdueClause('q.due')}) AS overdue
+           FROM questions q JOIN notes n ON n.id = q.note_id WHERE n.deleted_at IS NULL AND n.archived_at IS NULL AND q.kind = ?`, [today, now, kind]);
+      return { open: Number(row && row.open || 0), total: Number(row && row.total || 0), overdue: Number(row && row.overdue || 0) };
+    };
+    return Object.assign(count('question'), { decisions: count('decision') });
   }
 
   function getQuestion(db, id) {
-    return selectOne(db, 'SELECT * FROM questions WHERE id = ?', [id]);
+    const row = selectOne(db, 'SELECT * FROM questions WHERE id = ?', [id]);
+    return row ? Object.assign(row, { people: peopleOf(row) }) : row;
   }
 
-  /** Schreibt die Antwort als "!"-Zeilen unter die Frage in der Notiz. Leerer Text entfernt die Antwort. */
-  function answerQuestion(db, questionId, answerText) {
+  /** Schreibt die Antwort als "!"-Zeilen unter die Frage in der Notiz, bei einem Entscheid als "!!"-Zeilen, die erste mit
+   *  dem Datum (options.decided, wie es im Text stehen soll; sonst das Datum aus dem Text, sonst heute). Leerer Text entfernt
+   *  die Antwort. options.author wie bei updateNote. */
+  function answerQuestion(db, questionId, answerText, options) {
     const Q = global.NoNotesQuestions;
     const row = getQuestion(db, questionId);
     if (!row) throw fail('QUESTION_NOT_FOUND', 'Frage nicht gefunden.');
@@ -1165,8 +1217,8 @@
     if (!note) throw fail('NOTE_NOT_FOUND', 'Notiz nicht gefunden.');
     const q = Q.locate(note.body, row);
     if (!q) throw fail('QUESTION_STALE', 'Die Frage steht nicht mehr so im Text.');
-    const body = Q.writeAnswer(note.body, q, answerText);
-    updateNote(db, note.id, note.title, body);
+    const body = Q.writeAnswer(note.body, q, answerText, options);
+    updateNote(db, note.id, note.title, body, { author: authorOf(options) });
     return note.id;
   }
 
@@ -1224,6 +1276,7 @@
     countQuestions,
     getQuestion,
     answerQuestion,
+    listPeople,
     findNoteByTitle,
     titleIndex,
     countTrash,

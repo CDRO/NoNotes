@@ -28,7 +28,7 @@
   const FILE_RE = /^(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.js$/;
   // Farben und Masse, die ein Theme überschreiben darf (CSS-Variablen ohne --). Die Hauptfarbe bleibt Sache der Palette.
   const THEME_VARS = ['bg', 'panel', 'text', 'muted', 'border', 'hover', 'danger', 'ok', 'warn', 'radius', 'shadow'];
-  const EVENTS = ['ready', 'database:replaced', 'note:open', 'note:close', 'note:saved', 'mindmap:rendered', 'mindmap:select'];
+  const EVENTS = ['ready', 'database:replaced', 'note:open', 'note:close', 'note:saved', 'mindmap:rendered', 'mindmap:select', 'questions:rendered'];
 
   const listed = [];    // { file } aus plugins/plugins.js, in dieser Reihenfolge (immer geladen)
   const available = []; // Verzeichnis aus dem Build: { file, id, name, version, api, description, theme }

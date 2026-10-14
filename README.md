@@ -249,8 +249,35 @@ Notiztext bleibt die einzige Wahrheit, die App führt nur einen Index darüber.
 - Frage und Antwort werden in der Liste, in der Vorschau und im Druck formatiert: fett, Code,
   Links und `[[Verweise]]` funktionieren, eine Antwort darf mehrere Zeilen und Listen enthalten
   (`! 1. erstens`, `! 2. zweitens`). Im Markdown-Export bleibt eine solche Antwort eine Liste.
-- In der Mindmap zeigt eine Marke am Knoten die Anzahl offener Fragen; eingeklappte Äste
+- In der Mindmap zeigt eine Marke am Knoten die Anzahl offener Fragen und Entscheide; eingeklappte Äste
   zählen ihren ganzen Teilbaum. Der Reiter *Fragen* trägt die Gesamtzahl.
+
+### Entscheide
+
+Eine Zeile, die mit `?!` beginnt, ist ein **Entscheid**. Direkt darunter stehende Zeilen, die mit `!!`
+beginnen, sind der getroffene Entscheid; die erste darf mit dem Datum beginnen. Termin am Zeilenende
+wie bei Fragen. Die Zeile mit dem Öffner bestimmt die Art: unter `?!` zählt auch `!`, unter `?` auch `!!`.
+
+```
+?! Variante B oder C? @lea1234 (@tom5678) @31.10.2026
+!! 14.10.2026: Variante B, weil sie ohne Serverkomponente auskommt
+```
+
+- **Personen:** `@kürzel` im Text einer Frage oder eines Entscheids nennt, wer antworten oder
+  entscheiden soll; `(@kürzel)` ist jemand, der wahlweise dabei ist. Beim Tippen von `@` schlägt der
+  Editor bekannte Kürzel vor (die in der Datei vorkommen; Erweiterungen und Ausprägungen können
+  weitere liefern, siehe [docs/PLUGINS.md](docs/PLUGINS.md)). `↑` `↓` wählen, `Enter` oder `Tab`
+  übernimmt, `Esc` schliesst.
+- Die Ansicht **Entscheide** erscheint als Reiter, sobald es Entscheide gibt. Sie funktioniert wie
+  die Fragen-Ansicht (Filter *Offen*, *Alle*, *Entschieden*, Suche, Tags, Sortierung); beide Ansichten
+  filtern zusätzlich nach Person. **Entscheiden** schreibt den Entscheid mit dem heutigen Datum als
+  `!!`-Zeilen unter die Zeile; **Entscheid bearbeiten** ändert den Text, das Datum bleibt.
+- Im Editor setzt **?! Entscheid** (oder `Ctrl+Shift+D`) das Zeichen auf der aktuellen Zeile oder
+  nimmt es wieder weg. Vorschau, Liste und Druck zeigen Entscheide als Karte mit Datum und Personen.
+- **Drucken…** in der Ansicht druckt die Entscheide; der Markdown-Export macht Zitatblöcke daraus
+  (`> **Offener Entscheid:** …`, `> **Entschieden 14.10.2026:** …`) und listet offene Entscheide im
+  Inhaltsverzeichnis, sobald es welche gibt.
+- Die Statusleiste zählt bei offener Notiz Fragen und Entscheide getrennt.
 
 ### Aufgaben
 
@@ -346,7 +373,7 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | --- | --- |
 | Oberfläche | `index.html`, `css/app.css`, `js/app.js` (`packages/ui/`) – reines HTML/CSS/JS, keine Frameworks; der Build kopiert nur |
 | Mindmap | `packages/ui/mindmap.js`: eigenes Layout (links/rechts ausbalanciert), SVG, Zoom, Ziehen, Tastatur; archivierte Knoten blass und gestrichelt |
-| Fragen | `packages/core/questions.js`: Parser für `?`/`!`-Zeilen; Index in der Tabelle `questions`, bei jeder Änderung abgeglichen |
+| Fragen und Entscheide | `packages/core/questions.js`: ein Parser für `?`-, `?!`-, `!`- und `!!`-Zeilen samt Datum und `@kürzel` (`parseBlock` nutzen auch Vorschau und Export); Index in der Tabelle `questions` mit `kind`, `decided`, `people` (Schema 14), bei jeder Änderung abgeglichen; Vorschläge für Kürzel über `packages/core/mentions.js`; Test `test/decisions.cjs` |
 | Aufgaben | `packages/core/tasks.js`: Parser für `- [ ]`-Zeilen mit `@Datum`, Unteraufgaben über die Einrückung, Abschluss-Regeln als reine Textfunktionen; Index in der Tabelle `tasks`, gleiches Prinzip |
 | Termine | `packages/core/dates.js`: gemeinsame Logik für `@TT.MM.JJJJ` bzw. `@JJJJ-MM-TT`, Dringlichkeit, Anzeige |
 | Markdown | `packages/core/markdown.js`: eigener Renderer, escaped allen Text, erlaubt nur sichere Link-Schemata |
@@ -441,7 +468,7 @@ in die Datenbankdatei, die Mindmap-Bedienung, Fragen, Markdown-Vorschau, Tags, P
 Umsortieren per Drag & Drop, Bild-Anhänge, den Export (Ordner und ZIP), das Drucken (mit gestubbtem
 `window.print`), Toolleiste und Hilfe, Aufgaben, Termine mit Uhrzeit, den Kalenderexport, das synchrone
 Scrollen der geteilten Ansicht, Unteraufgaben, das Archiv und die Migration alter Datenbanken. Dazu
-kommen der Vertrag der Backend-Schnittstelle (`test/backend.cjs`), die Datenbankschicht mit Schema 13, Konflikterkennung, Autor und Querverweise (`test/db.cjs`), das Zusammenführen (`test/merge.cjs`), gleichzeitiges Arbeiten und Änderungen von aussen (`test/conflict.cjs`, `test/external.cjs`), der Build fremder Ausprägungen (`test/build.cjs`), die Hauptfarbe (`test/palette.cjs`), die Erweiterungs-Schnittstelle (`test/plugins.cjs`), den Verlauf (`test/history.cjs`) und die
+kommen der Vertrag der Backend-Schnittstelle (`test/backend.cjs`), die Datenbankschicht mit Schema 14, Konflikterkennung, Autor, Querverweise und Entscheide (`test/db.cjs`), die Entscheide in der Oberfläche (`test/decisions.cjs`), das Zusammenführen (`test/merge.cjs`), gleichzeitiges Arbeiten und Änderungen von aussen (`test/conflict.cjs`, `test/external.cjs`), der Build fremder Ausprägungen (`test/build.cjs`), die Hauptfarbe (`test/palette.cjs`), die Erweiterungs-Schnittstelle (`test/plugins.cjs`), den Verlauf (`test/history.cjs`) und die
 Sprachprüfungen (`test/i18n.cjs`, `tools/i18n.cjs lint` und `check`):
 
 ```bash

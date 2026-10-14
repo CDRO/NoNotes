@@ -38,8 +38,9 @@
   const LIST_RE = /^(\s*)(?:[-*+]|\d+[.)])\s+(\[[ xX]\]\s+)?/;
   const PREFIX_RE = {
     quote: /^(\s*)>\s?/,
-    question: /^(\s*)\?(?!\?)\s?/,
-    answer: /^(\s*)!(?!\[)\s?/,
+    question: /^(\s*)\?(?![?!])\s?/,
+    decision: /^(\s*)\?!\s?/,
+    answer: /^(\s*)!(?!\[)!?\s?/,
     heading: /^(\s*)#{1,6}\s+/,
   };
 
@@ -52,7 +53,7 @@
   }
 
   function stripLinePrefixes(line) {
-    return line.replace(LIST_RE, '$1').replace(PREFIX_RE.quote, '$1').replace(PREFIX_RE.question, '$1').replace(PREFIX_RE.answer, '$1');
+    return line.replace(LIST_RE, '$1').replace(PREFIX_RE.quote, '$1').replace(PREFIX_RE.decision, '$1').replace(PREFIX_RE.question, '$1').replace(PREFIX_RE.answer, '$1');
   }
 
   /** Listen umschalten: kind = 'bullet' | 'ordered' | 'task'. */
@@ -74,10 +75,10 @@
     });
   }
 
-  /** Zitat, Frage oder Antwort umschalten (kind = 'quote' | 'question' | 'answer'). */
+  /** Zitat, Frage, Entscheid oder Antwort umschalten (kind = 'quote' | 'question' | 'decision' | 'answer'). */
   function togglePrefix(text, s, e, kind) {
     const re = PREFIX_RE[kind];
-    const marker = kind === 'quote' ? '> ' : kind === 'question' ? '? ' : '! ';
+    const marker = kind === 'quote' ? '> ' : kind === 'question' ? '? ' : kind === 'decision' ? '?! ' : '! ';
     const { from, to } = lineBounds(text, s, e);
     const lines = text.slice(from, to).split('\n');
     const all = lines.filter(l => l.trim()).every(l => re.test(l));
@@ -85,8 +86,8 @@
       if (!l.trim() && lines.length > 1) return l;
       if (all) return l.replace(re, '$1');
       if (re.test(l)) return l;
-      const other = kind === 'question' ? PREFIX_RE.answer : kind === 'answer' ? PREFIX_RE.question : null;
-      const base = other ? l.replace(other, '$1') : l;
+      const others = kind === 'quote' ? [] : [PREFIX_RE.decision, PREFIX_RE.question, PREFIX_RE.answer].filter(o => o !== re);
+      const base = others.reduce((acc, o) => acc.replace(o, '$1'), l);
       return base.replace(/^(\s*)/, '$1' + marker);
     });
   }
@@ -151,7 +152,7 @@
 
   const ITEM_RE = /^(\s*)(?:([-*+])|(\d+)([.)]))\s+(\[[ xX]\]\s+)?(.*)$/;
   const QUOTE_LINE_RE = /^(\s*)>\s?(.*)$/;
-  const ANSWER_LINE_RE = /^(\s*)!(?!\[)\s?(.*)$/;
+  const ANSWER_LINE_RE = /^(\s*)(!!|!(?!\[))\s?(.*)$/;
 
   /** Zerlegt eine Zeile in Einrückung, Marker und Inhalt, oder null. */
   function parseItem(line) {
@@ -167,7 +168,7 @@
     m = QUOTE_LINE_RE.exec(line);
     if (m) return { kind: 'quote', indent: m[1], content: m[2], prefixLength: line.length - m[2].length };
     m = ANSWER_LINE_RE.exec(line);
-    if (m) return { kind: 'answer', indent: m[1], content: m[2], prefixLength: line.length - m[2].length };
+    if (m) return { kind: 'answer', indent: m[1], marker: m[2], content: m[3], prefixLength: line.length - m[3].length };
     return null;
   }
 
@@ -177,7 +178,7 @@
       case 'ordered': return `${item.number + (next ? 1 : 0)}${item.delim} `;
       case 'bullet': return `${item.bullet} `;
       case 'quote': return '> ';
-      case 'answer': return '! ';
+      case 'answer': return (item.marker || '!') + ' ';
       default: return '';
     }
   }

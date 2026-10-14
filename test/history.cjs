@@ -340,7 +340,7 @@ async function main() {
     const dlPath = path.join(tmp, 'verlauf.sqlite');
     await dl.saveAs(dlPath);
     const db = new SQL.Database(new Uint8Array(fs.readFileSync(dlPath)));
-    assert.equal(db.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], '13');
+    assert.equal(db.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], '14');
     assert.ok(db.exec('SELECT count(*) FROM note_history')[0].values[0][0] >= 1);
     db.run('DROP TABLE note_history; UPDATE meta SET value = \'10\' WHERE key = \'schema_version\';');
     const v10 = path.join(tmp, 'schema10.sqlite');
@@ -360,7 +360,7 @@ async function main() {
     const migPath = path.join(tmp, 'migriert.sqlite');
     await dl2.saveAs(migPath);
     const db2 = new SQL.Database(new Uint8Array(fs.readFileSync(migPath)));
-    assert.equal(db2.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], '13');
+    assert.equal(db2.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], '14');
     assert.equal(db2.exec("SELECT count(*) FROM sqlite_master WHERE name='note_history'")[0].values[0][0], 1);
     db2.close();
     assert.deepEqual(errors2, []);

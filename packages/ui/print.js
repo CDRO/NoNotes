@@ -135,13 +135,14 @@
     return parts.join('\n');
   }
 
-  /** HTML für den Druck von Fragen und Antworten.
-   *  options: { status: 'open'|'answered'|'all', tag, query, lines, groupBy: 'note'|'due'|'none' } */
+  /** HTML für den Druck von Fragen und Antworten oder von Entscheiden (options.kind = 'decision').
+   *  options: { kind: 'question'|'decision', status: 'open'|'answered'|'all', tag, query, person, lines, groupBy: 'note'|'due'|'none' } */
   async function buildQuestionsDocument(backend, options) {
     const D = global.NoNotesDates;
     const today = D.nowIso();
+    const decision = options.kind === 'decision';
     const groupBy = options.groupBy || (options.grouped === false ? 'none' : 'note');
-    const rows = await backend.listQuestions({ status: options.status || 'all', tag: options.tag || '', query: options.query || '', sort: groupBy === 'due' ? 'due' : 'note' });
+    const rows = await backend.listQuestions({ kind: decision ? 'decision' : 'question', status: options.status || 'all', tag: options.tag || '', query: options.query || '', person: options.person || '', sort: groupBy === 'due' ? 'due' : 'note' });
     const mapTitle = await backend.getMapTitle();
     const nodes = await Exporter().treeOrder(backend);
     const byId = new Map(nodes.map(n => [n.id, n]));
@@ -152,8 +153,11 @@
       return parts;
     };
     const filterText = [
-      options.status === 'open' ? t('offene Fragen') : options.status === 'answered' ? t('beantwortete Fragen') : t('alle Fragen'),
+      decision
+        ? (options.status === 'open' ? t('offene Entscheide') : options.status === 'answered' ? t('getroffene Entscheide') : t('alle Entscheide'))
+        : (options.status === 'open' ? t('offene Fragen') : options.status === 'answered' ? t('beantwortete Fragen') : t('alle Fragen')),
       options.tag ? t('Tag „{tag}“', { tag: options.tag }) : null,
+      options.person ? t('an @{person}', { person: options.person }) : null,
       options.query ? t('Suche „{suche}“', { suche: options.query }) : null,
     ].filter(Boolean).join(', ');
     const open = rows.filter(r => !r.answer).length;
@@ -165,17 +169,24 @@
       const u = answered ? 'none' : D.urgency(r.due, today);
       const due = r.due ? `<span class="due ${u}">${esc(answered ? D.formatDue(r.due) : D.dueLabel(r.due, today))}</span>` : '';
       const from = groupBy === 'note' ? '' : ` · ${esc(t('aus'))} ${esc(r.note_title.trim() || t('Ohne Titel'))}`;
-      return `<div class="print-q ${answered ? 'answered' : 'open'}">` +
-        `<span class="print-mark">${answered ? '✓' : '?'}</span>` +
-        `<div class="print-q-body"><div class="print-q-text">${M().inline(r.text, { resolveTitle })}${due}</div>` +
+      const when = decision
+        ? (answered ? t('Entschieden {datum}', { datum: r.decided ? D.formatDue(r.decided) : fmtDate(r.answered_at) }) : t('Gestellt {datum}', { datum: fmtDate(r.created_at) }))
+        : (answered && r.answered_at ? t('Beantwortet {datum}', { datum: fmtDate(r.answered_at) }) : t('Gestellt {datum}', { datum: fmtDate(r.created_at) }));
+      return `<div class="print-q${decision ? ' decision' : ''} ${answered ? 'answered' : 'open'}">` +
+        `<span class="print-mark">${answered ? '✓' : decision ? '?!' : '?'}</span>` +
+        `<div class="print-q-body"><div class="print-q-text">${M().inline(r.text, { resolveTitle, people: true })}${due}</div>` +
         (answered ? `<div class="print-a md">${M().render(r.answer, { resolveTitle })}</div>` : ruled) +
-        `<div class="print-q-meta">${answered && r.answered_at ? esc(t('Beantwortet {datum}', { datum: fmtDate(r.answered_at) })) : esc(t('Gestellt {datum}', { datum: fmtDate(r.created_at) }))}${from}</div></div></div>`;
+        `<div class="print-q-meta">${esc(when)}${from}</div></div></div>`;
     };
 
     const parts = [];
-    parts.push(`<header class="print-head"><h1>${esc(t('Fragen und Antworten'))}</h1><p class="print-meta">${esc(mapTitle)} · ${esc(filterText)} · ${esc(tn('{n} Frage, davon {offen} offen', '{n} Fragen, davon {offen} offen', rows.length, { offen: open }))} · ${esc(t('Gedruckt {datum}', { datum: fmtDate(new Date().toISOString()) }))}</p></header>`);
+    const heading = decision ? t('Entscheide') : t('Fragen und Antworten');
+    const summary = decision
+      ? tn('{n} Entscheid, davon {offen} offen', '{n} Entscheide, davon {offen} offen', rows.length, { offen: open })
+      : tn('{n} Frage, davon {offen} offen', '{n} Fragen, davon {offen} offen', rows.length, { offen: open });
+    parts.push(`<header class="print-head"><h1>${esc(heading)}</h1><p class="print-meta">${esc(mapTitle)} · ${esc(filterText)} · ${esc(summary)} · ${esc(t('Gedruckt {datum}', { datum: fmtDate(new Date().toISOString()) }))}</p></header>`);
     if (!rows.length) {
-      parts.push(`<p class="print-meta">${esc(t('Keine Fragen in dieser Auswahl.'))}</p>`);
+      parts.push(`<p class="print-meta">${esc(decision ? t('Keine Entscheide in dieser Auswahl.') : t('Keine Fragen in dieser Auswahl.'))}</p>`);
       return parts.join('\n');
     }
     if (groupBy === 'none') {

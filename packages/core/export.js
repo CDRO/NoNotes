@@ -56,30 +56,33 @@
     return parts;
   }
 
-  /** Wandelt den Notiztext in portables Markdown: ?/! werden zu Zitatblöcken, [[Titel]] zu Links. */
+  /** Wandelt den Notiztext in portables Markdown: ?/?!/! werden zu Zitatblöcken, [[Titel]] zu Links. */
   function bodyToMarkdown(body, resolveLink, resolveAttachment) {
     const lines = String(body || '').replace(/\r\n?/g, '\n').split('\n');
     const out = [];
+    const Q = global.NoNotesQuestions;
+    const D = global.NoNotesDates;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      const q = /^\s*\?\s?(.*)$/.exec(line);
-      if (q && q[1].trim()) {
-        let j = i + 1;
-        const answers = [];
-        while (j < lines.length && /^\s*!(?!\[)\s?/.test(lines[j])) answers.push(lines[j++].replace(/^\s*!(?!\[)\s?/, '').trim());
-        const answered = answers.join('').trim().length > 0;
+      const qb = Q ? Q.parseBlock(lines, i) : null;
+      if (qb) {
+        const answered = !!qb.answer;
+        const decision = qb.kind === 'decision';
         if (out.length && out[out.length - 1].trim() !== '' && !out[out.length - 1].startsWith('>')) out.push('');
-        out.push(`> **${answered ? t('Frage (beantwortet)') : t('Offene Frage')}:** ${inline(q[1].trim(), resolveLink, resolveAttachment)}`);
+        const label = decision ? (answered ? t('Entscheid (getroffen)') : t('Offener Entscheid')) : (answered ? t('Frage (beantwortet)') : t('Offene Frage'));
+        const due = qb.due && D ? ' (' + t('bis {datum}', { datum: D.formatDue(qb.due) }) + ')' : '';
+        out.push(`> **${label}:** ${inline(qb.text, resolveLink, resolveAttachment)}${due}`);
         if (answered) {
-          const rendered = answers.map(a => inline(a, resolveLink, resolveAttachment));
-          if (rendered.length === 1) out.push(`> **${t('Antwort')}:** ${rendered[0]}`);
-          else { out.push(`> **${t('Antwort')}:**`); for (const a of rendered) out.push(`> ${a}`); } // Listen in Antworten bleiben Listen
+          const rendered = qb.answer.split('\n').map(a => inline(a, resolveLink, resolveAttachment));
+          const head = decision ? (qb.decided && D ? t('Entschieden {datum}', { datum: D.formatDue(qb.decided) }) : t('Entschieden')) : t('Antwort');
+          if (rendered.length === 1) out.push(`> **${head}:** ${rendered[0]}`);
+          else { out.push(`> **${head}:**`); for (const a of rendered) out.push(`> ${a}`); } // Listen in Antworten bleiben Listen
         }
-        if (j < lines.length && lines[j].trim() !== '') out.push('');
-        i = j - 1;
+        if (qb.end < lines.length && lines[qb.end].trim() !== '') out.push('');
+        i = qb.end - 1;
         continue;
       }
-      const a = /^\s*!(?!\[)\s?(.*)$/.exec(line);
+      const a = /^\s*(?:!!|!(?!\[))\s?(.*)$/.exec(line);
       if (a) { out.push(`> **${t('Antwort')}:** ${inline(a[1].trim(), resolveLink, resolveAttachment)}`); continue; }
       out.push(inline(line, resolveLink, resolveAttachment));
     }
@@ -116,16 +119,21 @@
     return nodes.map(n => `${'  '.repeat(n.depth - 1)}- [${n.title.trim() || t('Ohne Titel')}](${hrefOf(n)})${n.archived_at ? ' *(' + t('archiviert') + ')*' : ''}`);
   }
 
-  async function openQuestionLines(backend, nodes, hrefOf, archived) {
+  async function openQuestionLines(backend, nodes, hrefOf, archived, kind) {
     const D = global.NoNotesDates;
     const byId = new Map(nodes.map(n => [n.id, n]));
-    const rows = await backend.listQuestions({ status: 'open', sort: 'due', archived });
-    if (!rows.length) return [t('Keine offenen Fragen.')];
+    const rows = await backend.listQuestions({ status: 'open', sort: 'due', archived, kind: kind || 'question' });
+    if (!rows.length) return [kind === 'decision' ? t('Keine offenen Entscheide.') : t('Keine offenen Fragen.')];
     return rows.map(r => {
       const n = byId.get(r.note_id);
       const due = r.due && D ? ' (' + t('bis {datum}', { datum: D.formatDue(r.due) }) + ')' : '';
       return n ? `- ${r.text}${due} — ${t('aus')} [${n.title.trim() || t('Ohne Titel')}](${hrefOf(n)})` : `- ${r.text}${due}`;
     });
+  }
+
+  /** Der Abschnitt «Offene Entscheide» erscheint nur, wenn es überhaupt Entscheide gibt (wie der Reiter in der App). */
+  async function hasDecisions(backend, archived) {
+    return (await backend.listQuestions({ status: 'all', kind: 'decision', archived })).length > 0;
   }
 
   async function openTaskLines(backend, nodes, hrefOf, archived) {
@@ -183,6 +191,7 @@
       index.push('## Inhalt', '');
       index.push(...(nodes.length ? tocLines(nodes, hrefFromIndex) : [t('Noch keine Notizen.')]));
       index.push('', '## ' + t('Offene Fragen'), '', ...await openQuestionLines(backend, nodes, hrefFromIndex, archived), '');
+      if (await hasDecisions(backend, archived)) index.push('## ' + t('Offene Entscheide'), '', ...await openQuestionLines(backend, nodes, hrefFromIndex, archived, 'decision'), '');
       index.push('## ' + t('Offene Aufgaben'), '', ...await openTaskLines(backend, nodes, hrefFromIndex, archived), '');
       files.push({ path: 'index.md', data: index.join('\n') });
       for (const n of nodes) {
@@ -204,6 +213,7 @@
       doc.push('## Inhalt', '');
       doc.push(...(nodes.length ? tocLines(nodes, anchorOf) : [t('Noch keine Notizen.')]));
       doc.push('', '## ' + t('Offene Fragen'), '', ...await openQuestionLines(backend, nodes, anchorOf, archived), '');
+      if (await hasDecisions(backend, archived)) doc.push('## ' + t('Offene Entscheide'), '', ...await openQuestionLines(backend, nodes, anchorOf, archived, 'decision'), '');
       doc.push('## ' + t('Offene Aufgaben'), '', ...await openTaskLines(backend, nodes, anchorOf, archived), '');
       for (const n of nodes) {
         const note = await backend.getNote(n.id);

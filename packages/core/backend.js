@@ -33,8 +33,8 @@
     'findNoteByTitle', 'titleIndex', 'getLinks',
     // Tags
     'getTags', 'setTags', 'listAllTags',
-    // Fragen
-    'listQuestions', 'countQuestions', 'getQuestion', 'answerQuestion',
+    // Fragen und Entscheide
+    'listQuestions', 'countQuestions', 'getQuestion', 'answerQuestion', 'listPeople',
     // Aufgaben
     'listTasks', 'countTasks', 'getTask', 'setTaskDone', 'toggleTaskTree',
     // Verlauf

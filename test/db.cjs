@@ -1,4 +1,4 @@
-/* Test der Datenbankschicht ohne Browser: Schema 13 (Autor, Querverweise), Migration aus Schema 11, Konflikterkennung beim Speichern
+/* Test der Datenbankschicht ohne Browser: Schema 14 (Autor, Querverweise, Entscheide), Migration aus Schema 11, Konflikterkennung beim Speichern
    (NOTE_CONFLICT), Autor im Verlauf, Querverweise [[Titel*]]. Lädt dieselben Skripte wie die Seite in einen vm-Kontext, mit festgehaltener Uhr.
    Ausführen: node test/db.cjs */
 'use strict';
@@ -34,7 +34,7 @@ async function main() {
   // ---------- Schema 13 ----------
   let db = DB.open(SQL, null);
   const cols = (d, t) => d.exec(`PRAGMA table_info(${t})`)[0].values.map(r => r[1]);
-  assert.equal(DB.getMeta(db, 'schema_version'), '13');
+  assert.equal(DB.getMeta(db, 'schema_version'), '14');
   assert.ok(cols(db, 'notes').includes('updated_by'));
   assert.ok(cols(db, 'note_history').includes('author'));
   assert.deepEqual(cols(db, 'note_links'), ['id', 'note_id', 'title', 'key', 'line_no']);
@@ -66,7 +66,7 @@ async function main() {
     const bytes = old.export();
     old.close();
     const migrated = DB.open(SQL, bytes);
-    assert.equal(DB.getMeta(migrated, 'schema_version'), '13');
+    assert.equal(DB.getMeta(migrated, 'schema_version'), '14');
     assert.ok(cols(migrated, 'notes').includes('updated_by') && cols(migrated, 'note_history').includes('author'));
     assert.equal(DB.getNote(migrated, 1).title, 'Alt');
     assert.equal(DB.getNote(migrated, 1).updated_by, null);
@@ -183,9 +183,73 @@ async function main() {
     const bytes = old.export();
     old.close();
     const mig = DB.open(SQL, bytes);
-    assert.equal(DB.getMeta(mig, 'schema_version'), '13');
+    assert.equal(DB.getMeta(mig, 'schema_version'), '14');
     assert.equal(json(DB.getLinks(mig)).length, 1, 'die Linie Alpha → beta kommt aus dem bestehenden Text');
     step('Migration aus Schema 12: Tabelle angelegt und aus den Texten gefüllt');
+  }
+
+  // ---------- Entscheide, Personen und Datum (Schema 14) ----------
+  {
+    const d = DB.open(SQL, null);
+    assert.ok(['kind', 'decided', 'people'].every(c => cols(d, 'questions').includes(c)), 'Spalten kind, decided, people am Index');
+    const n1 = DB.createNote(d, null);
+    DB.updateNote(d, n1, 'Plan', [
+      '? Wie hoch ist das Budget? @max1234',
+      '! 20k',
+      '?! Variante B oder C? @lea5678 (@tom9012) @01.11.2026',
+      '!! 14.10.2026: Variante B',
+      '!! weil billiger',
+      '?! Lieferant wählen @max1234',
+      '!! allein ohne Öffner davor zählt nicht',
+    ].join('\n'));
+    const rows = d.exec("SELECT kind, text, answer, decided, people FROM questions ORDER BY line_no")[0].values;
+    assert.deepEqual(rows, [
+      ['question', 'Wie hoch ist das Budget? @max1234', '20k', null, '[{"handle":"max1234","optional":false}]'],
+      ['decision', 'Variante B oder C? @lea5678 (@tom9012)', 'Variante B\nweil billiger', '2026-10-14', '[{"handle":"lea5678","optional":false},{"handle":"tom9012","optional":true}]'],
+      ['decision', 'Lieferant wählen @max1234', 'allein ohne Öffner davor zählt nicht', null, '[{"handle":"max1234","optional":false}]'],
+    ]);
+    assert.equal(json(DB.listQuestions(d, { status: 'all' })).length, 1, 'ohne kind: nur Fragen (wie bisher)');
+    assert.equal(json(DB.listQuestions(d, { status: 'all', kind: 'decision' })).length, 2);
+    assert.equal(json(DB.listQuestions(d, { status: 'all', kind: 'all' })).length, 3);
+    assert.deepEqual(json(DB.listQuestions(d, { status: 'all', kind: 'all', person: '@MAX1234' })).map(r => r.text), ['Wie hoch ist das Budget? @max1234', 'Lieferant wählen @max1234'], 'Filter nach Person, Gross-/Kleinschreibung egal');
+    assert.deepEqual(json(DB.listQuestions(d, { status: 'all', kind: 'decision' }))[0].people, [{ handle: 'lea5678', optional: false }, { handle: 'tom9012', optional: true }], 'people kommt als Liste');
+    assert.deepEqual(json(DB.listPeople(d)), ['lea5678', 'max1234', 'tom9012']);
+    const c = DB.countQuestions(d, '2026-10-14T10:00');
+    assert.deepEqual(json({ open: c.open, total: c.total, decisions: c.decisions }), { open: 0, total: 1, decisions: { open: 0, total: 2, overdue: 0 } });
+    assert.deepEqual(json(DB.getTree(d).map(r => [r.badge, r.dbadge])), [[0, 0]]);
+    step('Schema 14: Art, Tag des Entscheids und Personen im Index; listQuestions filtert nach Art und Person; Zähler je Art');
+
+    // Entscheiden schreibt "!!" mit Datum; ein bestehendes Datum bleibt; leer entfernt alles
+    DB.updateNote(d, n1, 'Plan', '?! Lieferant wählen @max1234\nEnde');
+    const open = json(DB.listQuestions(d, { kind: 'decision' }));
+    assert.equal(open.length, 1);
+    DB.answerQuestion(d, open[0].id, 'Firma Muster\nweil nah', { decided: '15.10.2026' });
+    assert.equal(DB.getNote(d, n1).body, '?! Lieferant wählen @max1234\n!! 15.10.2026: Firma Muster\n!! weil nah\nEnde');
+    assert.equal(DB.getQuestion(d, open[0].id).decided, '2026-10-15');
+    DB.answerQuestion(d, open[0].id, 'Firma Beispiel', { decided: '16.10.2026' });
+    assert.equal(DB.getNote(d, n1).body, '?! Lieferant wählen @max1234\n!! 16.10.2026: Firma Beispiel\nEnde', 'ein mitgegebenes Datum gilt');
+    DB.answerQuestion(d, open[0].id, 'Firma Beispiel', {});
+    assert.equal(DB.getNote(d, n1).body, '?! Lieferant wählen @max1234\n!! 16.10.2026: Firma Beispiel\nEnde', 'ohne Datum bleibt das Datum aus dem Text');
+    DB.answerQuestion(d, open[0].id, '', {});
+    assert.equal(DB.getNote(d, n1).body, '?! Lieferant wählen @max1234\nEnde');
+    assert.equal(DB.getTree(d)[0].dbadge, 1, 'offener Entscheid zählt in der Marke');
+    const q = DB.createNote(d, null);
+    DB.updateNote(d, q, 'Frage', '? Offen?');
+    DB.answerQuestion(d, json(DB.listQuestions(d, { kind: 'question' }))[0].id, 'Ja');
+    assert.equal(DB.getNote(d, q).body, '? Offen?\n! Ja', 'Antworten auf Fragen bleiben "!"-Zeilen ohne Datum');
+    step('Entscheiden schreibt "!! Datum: Text" in die Notiz, Fragen bleiben wie bisher');
+
+    // Migration aus Schema 13: eine "?!"-Zeile war bisher eine Frage mit Text "! …" und wird zum Entscheid
+    const old = new SQL.Database(DB.exportBytes(d));
+    old.run("UPDATE meta SET value = '13' WHERE key = 'schema_version'");
+    old.run("UPDATE questions SET kind = 'question', decided = NULL, people = NULL");
+    const bytes = old.export();
+    old.close();
+    const mig = DB.open(SQL, bytes);
+    assert.equal(DB.getMeta(mig, 'schema_version'), '14');
+    assert.deepEqual(mig.exec("SELECT kind, people FROM questions ORDER BY note_id, line_no")[0].values,
+      [['decision', '[{"handle":"max1234","optional":false}]'], ['question', null]]);
+    step('Migration aus Schema 13: der Index wird aus den Texten neu gefüllt');
   }
 
   console.log('\nDatenbank-Test bestanden.');

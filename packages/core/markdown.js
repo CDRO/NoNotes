@@ -80,6 +80,19 @@
         }
       }
 
+      // @kürzel und (@kürzel) als Personen-Marke (nur in Fragen und Entscheiden: ctx.people)
+      if (ctx.people && (ch === '@' || (ch === '(' && src[i + 1] === '@')) && (i === 0 || /[\s(]/.test(src[i - 1]))) {
+        const m = /^(\(?)@(\p{L}[\p{L}\p{N}_.-]*)(\)?)/u.exec(src.slice(i));
+        if (m) {
+          const handle = m[2].replace(/[.-]+$/, ''); // Satzzeichen am Ende gehören nicht dazu
+          const optional = m[1] === '(' && m[3] === ')' && handle === m[2];
+          if (m[1] === '(' && !optional) { emit('('); i += 1; continue; } // "(@x" ohne Klammer zu: nur die Klammer ist Text
+          out += `<span class="md-person${optional ? ' optional' : ''}" data-handle="${escapeHtml(handle)}"${optional ? ` title="${escapeHtml(t('optional'))}"` : ''}>@${escapeHtml(handle)}</span>`;
+          i += (optional ? 2 : 0) + 1 + handle.length;
+          continue;
+        }
+      }
+
       // Bild ![alt](src) – auch Anhänge att:ID
       if (ch === '!' && src[i + 1] === '[') {
         const m = /^!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/.exec(src.slice(i));
@@ -142,9 +155,10 @@
         continue;
       }
 
-      // Normaler Text bis zum nächsten Sonderzeichen
+      // Normaler Text bis zum nächsten Sonderzeichen (mit Personen-Marken auch bis "@" und "(")
+      const stops = ctx.people ? '`![*_~hw@(' : '`![*_~hw';
       let j = i + 1;
-      while (j < n && !'`![*_~hw'.includes(src[j])) j++;
+      while (j < n && !stops.includes(src[j])) j++;
       emit(src.slice(i, j));
       i = j;
     }
@@ -155,7 +169,7 @@
 
   function makeCtx(options) {
     options = options || {};
-    return { text: makeText(options.highlight), resolveTitle: options.resolveTitle, resolveAttachment: options.resolveAttachment, interactiveTasks: !!options.interactiveTasks, lineMap: !!options.lineMap, embeds: !!options.embeds, embedLoad: options.embedLoad };
+    return { text: makeText(options.highlight), resolveTitle: options.resolveTitle, resolveAttachment: options.resolveAttachment, interactiveTasks: !!options.interactiveTasks, lineMap: !!options.lineMap, embeds: !!options.embeds, embedLoad: options.embedLoad, people: !!options.people };
   }
 
   /** Nur Zeilenformatierung (fett, Code, Links, [[Verweise]]), z. B. für Listeneinträge und den Druck. */
@@ -236,32 +250,28 @@
       // Trennlinie
       if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) { flushParagraph(); out.push(`<hr${la(i)}>`); i++; continue; }
 
-      // Frage mit Antwortzeilen
-      const q = /^\s*\?\s?(.*)$/.exec(line);
-      if (q && q[1].trim()) {
+      // Frage oder Entscheid mit Antwortzeilen (Syntax: packages/core/questions.js)
+      const qb = global.NoNotesQuestions ? global.NoNotesQuestions.parseBlock(lines, i) : null;
+      if (qb) {
         flushParagraph();
-        const answers = [];
-        let j = i + 1;
-        while (j < lines.length) {
-          const a = /^\s*!(?!\[)\s?(.*)$/.exec(lines[j]);
-          if (!a) break;
-          answers.push(a[1]);
-          j++;
-        }
-        const answered = answers.join('').trim().length > 0;
+        const answered = !!qb.answer;
+        const decision = qb.kind === 'decision';
         const D = global.NoNotesDates;
-        const split = D ? D.splitDue(q[1]) : { text: q[1].trim(), due: null };
-        const dueHtml = split.due && D
-          ? `<span class="md-due due ${answered ? 'none' : D.urgency(split.due)}">${escapeHtml(answered ? D.formatDue(split.due) : D.dueLabel(split.due))}</span>`
+        const dueHtml = qb.due && D
+          ? `<span class="md-due due ${answered ? 'none' : D.urgency(qb.due)}">${escapeHtml(answered ? D.formatDue(qb.due) : D.dueLabel(qb.due))}</span>`
           : '';
-        out.push(`<div class="md-q ${answered ? 'answered' : 'open'}"${la(i)}><span class="md-mark" aria-hidden="true">${answered ? '✓' : '?'}</span><div class="md-q-body"><div class="md-q-text">${renderInline(split.text, ctx)}${dueHtml}</div>` +
-          (answered ? `<div class="md-a">${render(answers.join('\n'), Object.assign({}, nested, { interactiveTasks: false }))}</div>` : '') + '</div></div>');
-        i = j;
+        const decidedHtml = decision && answered && qb.decided && D
+          ? `<div class="md-decided">${escapeHtml(t('Entschieden {datum}', { datum: D.formatDue(qb.decided) }))}</div>`
+          : '';
+        const mark = answered ? '✓' : decision ? '?!' : '?';
+        out.push(`<div class="md-q${decision ? ' md-decision' : ''} ${answered ? 'answered' : 'open'}"${la(i)}><span class="md-mark" aria-hidden="true">${mark}</span><div class="md-q-body"><div class="md-q-text">${renderInline(qb.text, Object.assign({}, ctx, { people: true }))}${dueHtml}</div>` +
+          (answered ? `<div class="md-a">${decidedHtml}${render(qb.answer, Object.assign({}, nested, { interactiveTasks: false }))}</div>` : '') + '</div></div>');
+        i = qb.end;
         continue;
       }
 
       // Antwort ohne Frage davor: als Hinweis darstellen
-      const loneAnswer = /^\s*!(?!\[)\s?(.*)$/.exec(line);
+      const loneAnswer = /^\s*(?:!!|!(?!\[))\s?(.*)$/.exec(line);
       if (loneAnswer) {
         flushParagraph();
         out.push(`<div class="md-a md-a-lone"${la(i)}>${renderInline(loneAnswer[1].trim(), ctx)}</div>`);
