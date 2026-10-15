@@ -1111,6 +1111,17 @@ async function runDecisions(browser, part, step) {
   await page.waitForTimeout(150);
   assert.equal(await page.locator('#mentionPopup').isVisible(), false, 'ein Termin ist kein Kürzel');
   await page.waitForFunction(SAVED);
+  // Ein halb getipptes Kürzel, das schon gespeichert ist, schlägt sich nicht selbst vor
+  await page.keyboard.type(' @ma');
+  await page.waitForFunction(() => document.querySelector('#status').dataset.state !== 'saved');
+  await page.waitForFunction(SAVED);
+  await page.keyboard.type('x');
+  await page.keyboard.press('Backspace');
+  await page.waitForSelector('#mentionPopup:not([hidden])');
+  await page.waitForTimeout(150);
+  assert.deepEqual(await page.locator('#mentionPopup .mention-handle').allTextContents(), ['@max1234'], 'das eben getippte «@ma» steht nicht in der Liste');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(SAVED);
   part('Tippen von "@" schlägt Kürzel vor: Pfeile, Enter, Tab, Esc; Erweiterungen liefern über ctx.people.provide');
 
   // Export und Druck

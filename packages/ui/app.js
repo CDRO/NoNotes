@@ -356,7 +356,7 @@
     await setView(['list', 'questions', 'decisions', 'tasks'].includes(view) ? view : 'map');
     await renderAll();
     shell.afterReady();
-    Mentions.provide(() => B.listPeople()); // Kürzel, die in der Datei schon vorkommen
+    Mentions.provide(localPeople); // Kürzel, die in der Datei schon vorkommen
     await Plugins.activateAll(pluginContext);
     renderPlugins();
     document.body.dataset.ready = 'true';
@@ -2658,6 +2658,23 @@
 
   // Ein begonnenes Kürzel direkt vor dem Cursor: "@" am Wortanfang (auch nach "("), dahinter nichts oder ein Buchstabe und mehr.
   const MENTION_PREFIX_RE = /(?:^|[\s(])\(?@(\p{L}[\p{L}\p{N}_.-]*|)$/u;
+
+  /** Kürzel aus der Datei für die Vorschläge. Für die offene Notiz zählt der Text im Editor ohne das Wort am Cursor: die Notiz wird
+   *  beim Tippen gespeichert, und ein halb getipptes «@be» (oder ein Zwischenstand wie «@ben») stünde sonst selbst in der Liste. */
+  async function localPeople() {
+    const seen = new Map();
+    const add = h => { if (h && !seen.has(h.toLowerCase())) seen.set(h.toLowerCase(), h); };
+    const open = isEditorOpen() && state.currentId != null ? state.currentId : null;
+    for (const r of await B.listQuestions({ kind: 'all', status: 'all' })) if (r.note_id !== open) for (const p of r.people || []) add(p.handle);
+    if (open != null) {
+      const text = el.body.value;
+      const caret = el.body.selectionStart || 0;
+      const m = MENTION_PREFIX_RE.exec(text.slice(Math.max(0, caret - 120), caret));
+      const without = m ? text.slice(0, caret - m[1].length - 1) + text.slice(caret).replace(/^[\p{L}\p{N}_.-]*/u, '') : text;
+      for (const q of Q.parse(without)) for (const p of q.people) add(p.handle);
+    }
+    return [...seen.values()];
+  }
 
   /** Steht der Cursor hinter einem begonnenen @kürzel, zeigt die Liste die passenden Vorschläge; sonst schliesst sie sich. */
   async function updateMentionPopup() {

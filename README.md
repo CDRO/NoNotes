@@ -266,8 +266,9 @@ wie bei Fragen. Die Zeile mit dem Öffner bestimmt die Art: unter `?!` zählt au
 - **Personen:** `@kürzel` im Text einer Frage oder eines Entscheids nennt, wer antworten oder
   entscheiden soll; `(@kürzel)` ist jemand, der wahlweise dabei ist. Beim Tippen von `@` schlägt der
   Editor bekannte Kürzel vor (die in der Datei vorkommen; Erweiterungen und Ausprägungen können
-  weitere liefern, siehe [docs/PLUGINS.md](docs/PLUGINS.md)). `↑` `↓` wählen, `Enter` oder `Tab`
-  übernimmt, `Esc` schliesst.
+  weitere liefern, siehe [docs/PLUGINS.md](docs/PLUGINS.md)). Das Kürzel, das gerade getippt wird,
+  schlägt sich nicht selbst vor, auch wenn die Notiz zwischendurch gespeichert wurde (seit 2.0.1).
+  `↑` `↓` wählen, `Enter` oder `Tab` übernimmt, `Esc` schliesst.
 - Die Ansicht **Entscheide** erscheint als Reiter, sobald es Entscheide gibt. Sie funktioniert wie
   die Fragen-Ansicht (Filter *Offen*, *Alle*, *Entschieden*, Suche, Tags, Sortierung); beide Ansichten
   filtern zusätzlich nach Person. **Entscheiden** schreibt den Entscheid mit dem heutigen Datum als
