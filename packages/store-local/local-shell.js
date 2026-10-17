@@ -60,6 +60,7 @@
       channel: null,          // Benachrichtigung zwischen Tabs desselben Browsers
       external: null,         // 'file' | 'mirror': von aussen geändert, die Person hat noch nicht entschieden (Speichern ruht)
       editedSinceStart: false, // Inhalt könnte von der gemerkten Datei abweichen
+      baseSnap: null,         // Stand, den Datei bzw. Browser-Speicher zuletzt hatten (Grundlage für das Zusammenführen von aussen)
       openedFromFile: false,
       storageKind: null,
     };
@@ -116,6 +117,7 @@
         }
       }
 
+      s.baseSnap = snapshot(s.db);
       s.backend = global.NoNotesBackendLocal.create({
         getDb: () => s.db,
         onChange: () => { s.editedSinceStart = true; scheduleSave(); },
@@ -158,6 +160,7 @@
       let ok = true;
       let foreign = null; // Inhalt der Datei, falls sie inzwischen von jemand anderem geändert wurde
       try {
+        const snap = snapshot(s.db); // was gleich geschrieben wird; danach die Grundlage für das Zusammenführen
         const bytes = DB.exportBytes(s.db);
         try {
           await Store.browserStore.saveDb(bytes);
@@ -185,6 +188,7 @@
         }
         if (ok) {
           s.savedSeq = seq;
+          s.baseSnap = snap;
           setStatus(t('Gespeichert {zeit}', { zeit: timeFormat().format(new Date()) }), 'saved');
         }
       } catch (e) {
@@ -254,6 +258,7 @@
     async function onExternalChange(kind) {
       if (s.external) return;
       if (!isDirty()) { await loadExternal(kind, true); return; } // nichts Ungesichertes zu verlieren: still übernehmen (die Statuszeile meldet es)
+      if (await mergeExternal(kind)) return; // eigene Änderungen und fremde vertragen sich: vereint, ohne Rückfrage
       s.external = kind;
       clearTimeout(s.saveTimer);
       const name = s.fileHandle ? s.fileHandle.name : '';
@@ -276,6 +281,7 @@
         s.pendingFileBytes = null;
         if (!bytes || !bytes.length) { s.external = null; host.hideBanner(); return; }
         replaceDb(DB.open(s.SQL, bytes));
+        s.baseSnap = snapshot(s.db);
         if (kind === 'file') await rememberFile(bytes);
         s.external = null;
         s.editedSinceStart = false;
@@ -298,6 +304,103 @@
       s.overwrite = true; // die Person hat entschieden: diesmal nicht noch einmal nachsehen
       s.editSeq++; // eigenen Stand schreiben, der Datei bzw. dem Browser-Speicher zum Trotz
       try { await persistNow(); } finally { s.overwrite = false; }
+    }
+
+    // ---------- Änderungen von aussen zusammenführen (Notiz für Notiz) ----------
+
+    /** Alles, was für das Zusammenführen zählt: Notizen (Titel, Text, Platz im Baum, Zustand, Tags), Bilder, Einstellungen. */
+    function snapshot(db) {
+      const rows = sql => {
+        const r = db.exec(sql);
+        if (!r.length) return [];
+        const cols = r[0].columns;
+        return r[0].values.map(v => { const o = {}; cols.forEach((c, i) => { o[c] = v[i]; }); return o; });
+      };
+      const notes = new Map();
+      for (const n of rows('SELECT id, title, body, parent_id, sort_order, collapsed, deleted_at, archived_at FROM notes')) { n.tags = []; notes.set(n.id, n); }
+      for (const x of rows('SELECT nt.note_id AS note_id, t.name AS name FROM note_tags nt JOIN tags t ON t.id = nt.tag_id ORDER BY t.name COLLATE NOCASE')) { const n = notes.get(x.note_id); if (n) n.tags.push(x.name); }
+      const attachments = rows('SELECT id, note_id FROM attachments').map(a => `${a.note_id}:${a.id}`).sort().join(',');
+      const meta = new Map(rows('SELECT key, value FROM meta').map(m => [m.key, m.value]));
+      return { notes, attachments, meta };
+    }
+    const samePlace = (a, b) => a.parent_id === b.parent_id && a.sort_order === b.sort_order && (a.deleted_at || null) === (b.deleted_at || null) && (a.archived_at || null) === (b.archived_at || null);
+    const sameContent = (a, b) => a.title === b.title && a.body === b.body && a.tags.join('\n') === b.tags.join('\n');
+
+    /** Vereint den fremden Stand (bytes) mit den eigenen ungesicherten Änderungen: eigene Änderungen an Titel, Text, Tags, Auf-/Zuklappen
+     *  und Einstellungen werden auf den fremden Stand übertragen; hat die Gegenseite dieselbe Notiz geändert, wird zeilenweise
+     *  zusammengeführt (NoNotesMerge). Gibt { db, base } zurück (die vereinte Datenbank und den fremden Stand als neue Grundlage) oder
+     *  null, wenn die Person entscheiden muss: Konflikt in derselben Notiz, eigene Änderungen am Baum, an Bildern, Papierkorb oder Archiv. */
+    function mergeWithExternal(bytes) {
+      if (!s.baseSnap) return null;
+      const base = s.baseSnap;
+      const mine = snapshot(s.db);
+      if (mine.attachments !== base.attachments || mine.notes.size !== base.notes.size) return null;
+      const changed = [];
+      for (const [id, m] of mine.notes) {
+        const b = base.notes.get(id);
+        if (!b || !samePlace(m, b)) return null;
+        if (!sameContent(m, b) || m.collapsed !== b.collapsed) changed.push(id);
+      }
+      const metaChanged = [...mine.meta].filter(([k, v]) => base.meta.get(k) !== v).map(([k]) => k);
+      let theirsDb;
+      try { theirsDb = DB.open(s.SQL, bytes); } catch (e) { return null; }
+      const theirs = snapshot(theirsDb);
+      const Merge = global.NoNotesMerge;
+      try {
+        for (const id of changed) {
+          const m = mine.notes.get(id);
+          const b = base.notes.get(id);
+          const th = theirs.notes.get(id);
+          if (!th || th.deleted_at) throw new Error('Notiz drüben weg'); // i18n-ignore: nur intern
+          if (!sameContent(m, b)) {
+            let title = m.title;
+            let body = m.body;
+            let tags = m.tags;
+            if (!sameContent(th, b)) { // beide haben dieselbe Notiz geändert
+              const mt = Merge.merge3(b.title, m.title, th.title);
+              const mb = Merge.merge3(b.body, m.body, th.body);
+              if (!mt.clean || !mb.clean) throw new Error('Konflikt'); // i18n-ignore: nur intern
+              title = mt.text;
+              body = mb.text;
+              const mineTags = m.tags.join('\n') !== b.tags.join('\n');
+              const theirTags = th.tags.join('\n') !== b.tags.join('\n');
+              if (mineTags && theirTags && m.tags.join('\n') !== th.tags.join('\n')) throw new Error('Konflikt'); // i18n-ignore: nur intern
+              if (!mineTags) tags = th.tags;
+            }
+            if (title !== th.title || body !== th.body) DB.updateNote(theirsDb, id, title, body);
+            if (tags.join('\n') !== th.tags.join('\n')) DB.setTags(theirsDb, id, tags);
+          }
+          if (m.collapsed !== b.collapsed) DB.setCollapsed(theirsDb, id, !!m.collapsed);
+        }
+        for (const k of metaChanged) {
+          if (theirs.meta.get(k) !== base.meta.get(k) && theirs.meta.get(k) !== mine.meta.get(k)) throw new Error('Konflikt'); // i18n-ignore: nur intern
+          DB.setMeta(theirsDb, k, mine.meta.get(k));
+        }
+      } catch (e) {
+        try { theirsDb.close(); } catch (e2) { /* egal */ }
+        return null;
+      }
+      return { db: theirsDb, base: theirs };
+    }
+
+    /** Versucht das Zusammenführen; true, wenn es gelungen ist (dann ist die vereinte Fassung geschrieben oder unterwegs). */
+    async function mergeExternal(kind) {
+      let bytes = null;
+      try { bytes = kind === 'file' ? (s.pendingFileBytes || await Store.fileAccess.read(s.fileHandle)) : await Store.browserStore.loadDb(); }
+      catch (e) { bytes = null; }
+      if (!bytes || !bytes.length) return false;
+      const merged = mergeWithExternal(bytes);
+      if (!merged) { if (kind === 'file') s.pendingFileBytes = bytes; return false; }
+      s.pendingFileBytes = null;
+      if (s.db) { try { s.db.close(); } catch (e) { /* egal */ } }
+      s.db = merged.db; // ohne onDatabaseReplaced: die Oberfläche behält die offene Notiz, Bilder und Baum sind unverändert
+      s.baseSnap = merged.base;
+      if (kind === 'file') await rememberFile(bytes); // der fremde Stand ist jetzt die Grundlage; gleich kommt der vereinte darüber
+      s.editSeq++;
+      setStatus(kind === 'file' ? t('Änderungen aus „{name}“ mit deinen zusammengeführt', { name: s.fileHandle.name }) : t('Änderungen aus dem anderen Tab mit deinen zusammengeführt'), 'dirty');
+      try { await host.renderAll(); } catch (e) { console.warn('Neu zeichnen nach dem Zusammenführen', e); }
+      await persistNow();
+      return true;
     }
 
     // ---------- Datei-Anbindung ----------

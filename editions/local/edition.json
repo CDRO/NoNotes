@@ -9,6 +9,16 @@
     "edition.js"
   ],
   "helpStorage": "help-storage.html",
-  "files": ["start.ps1", "start.cmd"],
-  "include": ["README.md", "NOTICE", "docs", "plugins", "vendor/sql.js"]
+  "files": [
+    "start.ps1",
+    "start.cmd",
+    "agent/nonotes-mcp.cjs"
+  ],
+  "include": [
+    "README.md",
+    "NOTICE",
+    "docs",
+    "plugins",
+    "vendor/sql.js"
+  ]
 }

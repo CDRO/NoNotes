@@ -1,4 +1,4 @@
-# KI-Agenten: Werkzeuge für Copilot, Claude, ChatGPT und andere
+# KI-Agenten: Werkzeuge für Claude Code, Copilot, ChatGPT und andere
 
 Seit v2.1.0 beschreibt NoNotes seine Daten als **Werkzeuge für Agenten**: «Übersicht», «Notizen suchen», «Frage 12 beantworten»,
 «Aufgabe 5 abschliessen». Ein Agent, der Werkzeuge aufrufen kann, liest und ändert damit Notizen, Fragen, Entscheide, Aufgaben
@@ -11,7 +11,7 @@ dazugehörige Schnittstelle WebMCP.
 | --- | --- | --- |
 | **WebMCP in der Seite** (`packages/agent/webmcp.js`) | den Agenten des Browsers, zum Beispiel Copilot in Edge oder Gemini in Chrome | gebaut und getestet gegen einen Nachbau der Schnittstelle. Die Browser bauen WebMCP gerade ein (Stand Oktober 2026: Chrome im öffentlichen Testlauf, Edge in den Vorabversionen hinter einer Schaltfläche); ein Browser-Agent, der die Werkzeuge einer Seite tatsächlich aufruft, ist noch nicht ausgeliefert. Sobald einer kommt, funktioniert NoNotes ohne Änderung. |
 | **MCP über das Netz** (`packages/agent/protocol.js`) | Agenten, die einen Server ansprechen (Microsoft 365 Copilot, Copilot Studio, Claude, ChatGPT, VS Code) | der Protokollteil ist gebaut und getestet; eine Ausprägung mit Server (ein Dienst) hängt ihn an eine Adresse mit Anmeldung. Die lokale Version hat keinen Server. |
-| Programm auf dem eigenen Rechner | Agenten wie VS Code mit Copilot oder Claude Desktop, die lokale Programme starten | noch nicht gebaut; braucht eine Laufzeit (Node) auf dem Rechner |
+| **Programm auf dem eigenen Rechner** (`agent/nonotes-mcp.cjs`, seit v2.2.0) | Agenten, die lokale Programme starten: Claude Code, VS Code mit GitHub Copilot, Claude Desktop, Copilot CLI | gebaut und getestet; arbeitet auf derselben `NoNotes.sqlite` wie die App. Braucht Node 18 oder neuer auf dem Rechner (Claude Code bringt es mit). |
 
 Alle drei Wege benutzen **denselben Werkzeugkatalog** (`packages/agent/catalog.js`), der auf der Backend-Schnittstelle
 (`docs/BACKEND.md`) aufsetzt. Was ein Agent im Browser kann, kann er über einen Server auch.
@@ -54,6 +54,48 @@ ganzen Notiz vorziehen soll.
   Text («12») werden verstanden.
 - Bilder liefern die Werkzeuge nicht (nur Namen und Grössen), der Verlauf lässt sich lesen, nicht zurücksetzen; Export und
   Import bleiben der Oberfläche vorbehalten.
+
+## Das Programm für den eigenen Rechner
+
+Im ausgelieferten Ordner liegt `agent/nonotes-mcp.cjs`. Ein Agent startet es und spricht mit ihm MCP über die Standardeingabe und
+-ausgabe; es arbeitet auf der Datenbankdatei der App (`Datenbank → Datenbankdatei anlegen…`). Die App darf dieselbe Datei
+gleichzeitig offen haben.
+
+**Einrichten** (einmal, im Terminal des eigenen Rechners; die Pfade zeigt `--config` fertig an):
+
+```
+node <Ordner der App>/agent/nonotes-mcp.cjs --config "<Pfad zur NoNotes.sqlite>"
+```
+
+| Agent | Eintrag |
+| --- | --- |
+| Claude Code | `claude mcp add --scope user nonotes -- node "<Ordner>/agent/nonotes-mcp.cjs" --file "<Pfad>/NoNotes.sqlite"` |
+| VS Code mit GitHub Copilot | `.vscode/mcp.json`: `{ "servers": { "nonotes": { "type": "stdio", "command": "node", "args": ["<Ordner>/agent/nonotes-mcp.cjs", "--file", "<Pfad>/NoNotes.sqlite"] } } }` |
+| Claude Desktop | `claude_desktop_config.json`: `{ "mcpServers": { "nonotes": { "command": "node", "args": [ … wie oben … ] } } }` |
+| GitHub Copilot CLI | `~/.copilot/mcp-config.json`: `{ "mcpServers": { "nonotes": { "type": "local", "command": "node", "args": [ … ] } } }` |
+
+Danach den Agenten neu starten und fragen, zum Beispiel «Welche Fragen sind in NoNotes offen?» oder «Beantworte die Frage zur
+Bank mit Raiffeisen». Der Agent zeigt jeden Werkzeugaufruf an und fragt vor Änderungen nach (das regelt der Agent, nicht NoNotes).
+
+**Optionen:** `--read-only` meldet nur lesende Werkzeuge und schreibt nie; `--create` legt die Datei an, wenn sie fehlt;
+`--verbose` meldet jeden Aufruf auf der Fehlerausgabe; `--help`, `--version`.
+
+**Wie Programm und App sich vertragen:**
+
+- Vor jedem Aufruf prüft das Programm, ob die Datei sich geändert hat (Grösse, Zeitstempel, Prüfsumme), und liest sie dann neu.
+  Was die App schreibt, sieht der Agent also beim nächsten Aufruf (die App speichert 1,5 Sekunden nach der letzten Eingabe).
+- Nach einer Änderung schreibt das Programm die Datei atomar (temporäre Datei daneben, dann umbenennen), unter einer Sperre
+  (`NoNotes.sqlite.lock`), damit mehrere Agenten sich nicht überschreiben. Hat die App zwischen Lesen und Schreiben die Datei
+  geändert, läuft das Werkzeug auf dem frischen Stand noch einmal.
+- Die App prüft beim Zurückkehren in den Tab, beim Fokus, alle 30 Sekunden und kurz vor jedem eigenen Schreiben, ob die Datei
+  von aussen geändert wurde. Ohne eigene ungesicherte Änderungen lädt sie den neuen Stand still. Mit ungesicherten Änderungen
+  **führt sie Notiz für Notiz zusammen** (seit v2.2.0): eigene Änderungen an Titel, Text, Tags, Auf-/Zuklappen und Einstellungen
+  kommen auf den neuen Stand; hat der Agent dieselbe Notiz geändert, wird zeilenweise zusammengeführt. Nur wenn dieselbe Stelle
+  betroffen ist oder die eigene Änderung den Baum, Bilder, Papierkorb oder Archiv betrifft, fragt die App wie bisher
+  («Datei laden» oder «Meine Fassung behalten»).
+- Das Programm hält keine Verbindung und keinen Port; es lebt nur, solange der Agent es laufen lässt. Es öffnet nur die Datei
+  aus `--file`. Zugriffsrechte sind die des Benutzerkontos, unter dem der Agent läuft.
+- Der Browser-Speicher (ohne Datenbankdatei) ist für das Programm nicht erreichbar: ohne Datei kein Agent.
 
 ## WebMCP: der Agent des Browsers
 
@@ -98,6 +140,11 @@ await server.handleText('{"jsonrpc":"2.0","id":1,"method":"tools/list"}');   // 
 
 - `test/core.cjs`, Abschnitt «Agenten»: jedes Werkzeug gegen eine Datenbank ohne Browser, Prüfung der Eingaben, Fehlerfälle,
   Lesemodus, Ressourcen; das Protokoll mit Begrüssung je Fassung, Benachrichtigungen, Fehlercodes, Listen und zustandslosen Anfragen.
+- `test/core.cjs`, Abschnitt «Programm für den eigenen Rechner»: das gebaute `agent/nonotes-mcp.cjs` als Prozess: Hilfe und Einträge,
+  Datei anlegen, Notiz über MCP schreiben und auf der Platte wiederfinden, Änderung von aussen beim nächsten Aufruf, zwei Prozesse
+  abwechselnd und gleichzeitig ohne Verlust, Lesemodus, kaputtes JSON, sauberes Ende.
+- `test/collab.cjs`, Abschnitt «Von aussen geändert»: die App führt Änderungen von aussen mit eigenen ungesicherten zusammen
+  (Datei und anderer Tab), fragt nur bei derselben Notiz.
 - `test/extend.cjs`, Abschnitt «WebMCP»: ein Nachbau von `document.modelContext` nimmt die Werkzeuge der Seite an; Aufrufe legen
   eine Notiz an, beantworten eine Frage, schliessen eine Aufgabe ab; die Oberfläche folgt, gespeichert wird, nach dem Neuladen
   ist alles da; im Lesemodus nur lesende Werkzeuge; ohne Schnittstelle nichts.

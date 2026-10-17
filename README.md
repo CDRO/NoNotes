@@ -58,9 +58,11 @@ die sich bei lokal geöffneten Seiten nicht dauerhaft wegklicken lässt. Bis zur
 arbeitest du auf der Browser-Kopie; beim Verbinden gleicht die App beide Stände ab und
 fragt nur nach, wenn die Datei zwischenzeitlich von aussen verändert wurde.
 
-**Änderungen von aussen.** Beschreibt ein anderes Programm oder ein anderer Tab dieselbe Datei (oder den Browser-Speicher), meldet die App
-das beim Zurückkehren in den Tab und kurz vor dem Speichern. Ohne ungesicherte Änderungen lädt sie den neuen Stand still. Sonst fragt sie:
-**Datei laden** verwirft die eigenen Änderungen, **Meine Fassung behalten** überschreibt die Datei. Bis zur Entscheidung wird nichts geschrieben.
+**Änderungen von aussen.** Beschreibt ein anderes Programm (etwa ein KI-Agent, siehe unten) oder ein anderer Tab dieselbe Datei (oder den
+Browser-Speicher), merkt die App das beim Zurückkehren in den Tab, alle 30 Sekunden und kurz vor dem Speichern. Ohne ungesicherte Änderungen
+lädt sie den neuen Stand still. Mit ungesicherten Änderungen führt sie beides Notiz für Notiz zusammen (seit 2.2.0); nur wenn dieselbe Notiz an
+derselben Stelle geändert wurde oder die eigene Änderung den Baum, Bilder, Papierkorb oder Archiv betrifft, fragt sie: **Datei laden** verwirft
+die eigenen Änderungen, **Meine Fassung behalten** überschreibt die Datei. Bis zur Entscheidung wird nichts geschrieben.
 
 Weitere Funktionen im Menü **Datenbank**:
 
@@ -201,7 +203,13 @@ diese Werkzeuge beim **Agenten des Browsers** an (WebMCP, `document.modelContext
 kann dann auf Zuruf offene Fragen zusammenfassen oder eine Antwort unter die Frage schreiben; vor Änderungen fragt er nach, gespeichert
 wird wie bei jeder Eingabe. Stand Oktober 2026 bauen die Browser WebMCP gerade ein; ein Agent, der die Werkzeuge einer Seite aufruft,
 ist noch nicht ausgeliefert. NoNotes ist bereit, sobald er kommt, und tut bis dahin nichts. Im Lesemodus gibt es nur lesende Werkzeuge.
-Für Agenten über das Netz liegt das Protokoll bei (für Ausprägungen mit Server). Einzelheiten: [docs/AGENTS.md](docs/AGENTS.md).
+Für Agenten über das Netz liegt das Protokoll bei (für Ausprägungen mit Server).
+
+**Agenten auf dem eigenen Rechner** (seit 2.2.0): Claude Code, VS Code mit GitHub Copilot, Claude Desktop und die Copilot CLI starten
+das mitgelieferte Programm `agent/nonotes-mcp.cjs` (braucht Node 18 oder neuer) und arbeiten damit auf derselben `NoNotes.sqlite`
+wie die App. `node agent/nonotes-mcp.cjs --config "<Pfad zur NoNotes.sqlite>"` zeigt die Einträge zum Kopieren. Die App merkt
+Änderungen des Agenten und führt sie mit eigenen ungesicherten Änderungen Notiz für Notiz zusammen. Einzelheiten und Grenzen:
+[docs/AGENTS.md](docs/AGENTS.md).
 
 ### Liste, Suche, Tags, Papierkorb, Archiv
 
@@ -393,7 +401,7 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | Druck | `packages/ui/print.js` baut das Druckdokument in `#printArea`; `@media print` blendet den Rest der App aus |
 | Scroll-Sync | `packages/ui/scrollsync.js`: Spiegel des Textes misst Zeilenhöhen, Vorschau-Blöcke tragen `data-line`, lineare Interpolation dazwischen |
 | Erweiterungen | `packages/core/plugins.js` (Verzeichnis, Lader, Schalter, Ereignisse) und die Anbindung in `packages/ui/app.js`; Ordner `plugins/` mit Liste, Anleitung und Beispielen; das Verzeichnis des Ordners erzeugt `tools/build.cjs` (siehe [docs/PLUGINS.md](docs/PLUGINS.md)) |
-| KI-Agenten | `packages/agent/`: `catalog.js` beschreibt die Werkzeuge (englische Namen, Eingabeschemata) und führt sie über das Backend aus, `webmcp.js` meldet sie beim Agenten des Browsers an (`document.modelContext`, sobald ein Browser sie anbietet), `protocol.js` spricht MCP ohne Transport für Ausprägungen mit Server; Tests `test/core.cjs` (Katalog, Protokoll) und `test/extend.cjs` (WebMCP gegen einen Nachbau); siehe [docs/AGENTS.md](docs/AGENTS.md) |
+| KI-Agenten | `packages/agent/`: `catalog.js` beschreibt die Werkzeuge (englische Namen, Eingabeschemata) und führt sie über das Backend aus, `webmcp.js` meldet sie beim Agenten des Browsers an (`document.modelContext`, sobald ein Browser sie anbietet), `protocol.js` spricht MCP ohne Transport; `editions/local/agent/nonotes-mcp.cjs` ist das Programm für Agenten auf dem eigenen Rechner (MCP über die Standardeingabe, dieselbe Datei wie die App, atomar schreiben unter einer Sperre); `local-shell.js` führt Änderungen von aussen Notiz für Notiz zusammen; Tests `test/core.cjs` (Katalog, Protokoll, Programm), `test/collab.cjs` (Zusammenführen), `test/extend.cjs` (WebMCP gegen einen Nachbau); siehe [docs/AGENTS.md](docs/AGENTS.md) |
 | Verlauf | `packages/core/history.js` (Patches und Zeilenvergleich als reine Textfunktionen); Fassungen und Aufbewahrung in `packages/data/db.js`, Dialog in `packages/ui/app.js`; wer eine Fassung geschrieben hat, steht in `author` (nur wenn ein Backend einen Namen liefert) |
 | Videos | `packages/core/embeds.js` erkennt Adressen von YouTube, Vimeo und Dailymotion (nur genau passende Hosts und Kennungen); `markdown.js` macht aus einer Adresse allein auf einer Zeile eine Karte, die Vorschau baut den Rahmen erst nach dem Klick (siehe [docs/EMBEDS.md](docs/EMBEDS.md)); Tests `test/core.cjs` und `test/extend.cjs` |
 | Querverweise | `[[Titel*]]` im Text: `packages/core/links.js` liest sie, `db.js` führt den Index `note_links` beim Speichern nach und löst Ziele über den Titel auf (`getLinks`); die Mindmap zeichnet gestrichelte Linien mit Pfeil zwischen sichtbaren Knoten, auch im SVG für Export und Druck; Schalter «Verweise» in der Leiste (je Browser gemerkt); Test `test/extend.cjs` |

@@ -16,7 +16,8 @@ packages/
                 (Speichern, Datei, Browser-Speicher), Persistenz (IndexedDB, File System Access)
   ui/           Oberfläche: app.js (Ablauf), Mindmap, Druck, Scroll-Sync, app.css
 editions/
-  local/        edition.json (Skripte, Hilfeabschnitt, Dateien), edition.js, Startskripte: setzt die lokale Version zusammen
+  local/        edition.json (Skripte, Hilfeabschnitt, Dateien), edition.js, Startskripte: setzt die lokale Version zusammen;
+                agent/nonotes-mcp.cjs: MCP-Server für Agenten auf dem eigenen Rechner (Node), arbeitet auf derselben Datei wie die App
 lang/           Sprachpakete (de.js ist die Quellsprache)
 plugins/        Erweiterungen: feste Liste (plugins.js, der Build stellt das Verzeichnis des Ordners voran), Anleitung, Beispiele; ausgeliefert neben der App
 tools/          build.cjs (Bau), i18n.cjs (Sprachwerkzeug)

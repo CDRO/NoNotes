@@ -512,7 +512,7 @@ async function runBuild(browser, part, step) {
     r = run(['--edition', 'local', '--out', path.join(tmp, 'lokal'), '--version', 'v1.0.0']);
     assert.equal(r.status, 0, r.stderr);
     const lokal = path.join(tmp, 'lokal');
-    for (const f of ['index.html', 'start.ps1', 'start.cmd', 'README.md', 'NOTICE', 'js/db.js', 'js/local-shell.js', 'js/edition.js', 'vendor/sql.js/sql-asm.js', 'docs/BACKEND.md', 'plugins/plugins.js']) {
+    for (const f of ['index.html', 'start.ps1', 'start.cmd', 'README.md', 'NOTICE', 'js/db.js', 'js/local-shell.js', 'js/edition.js', 'js/catalog.js', 'js/protocol.js', 'js/webmcp.js', 'agent/nonotes-mcp.cjs', 'vendor/sql.js/sql-asm.js', 'docs/BACKEND.md', 'docs/AGENTS.md', 'plugins/plugins.js']) {
       assert.ok(fs.existsSync(path.join(lokal, f)), `lokal: ${f}`);
     }
     const lokalCat = JSON.parse(/NoNotesPlugins\.catalog\((\[[\s\S]*?\])\);/.exec(fs.readFileSync(path.join(lokal, 'plugins', 'plugins.js'), 'utf8'))[1]);
@@ -952,10 +952,149 @@ async function runAgent(browser, part, step) {
   part('Protokoll: Begrüssung je Fassung, Benachrichtigungen ohne Antwort, Ping, Werkzeuge, Ressourcen, Fehlercodes, kaputtes JSON, Listen, zustandslos');
 }
 
+// ============================================================
+/* Test des Programms für den eigenen Rechner (editions/local/agent/nonotes-mcp.cjs, v2.2.0): Hilfe und Einträge für die Agenten,
+   Datei anlegen, MCP über die Standardeingabe, atomar schreiben, Änderungen von aussen lesen, zwei Prozesse mit Sperre, Lesemodus,
+   kaputtes JSON, sauberes Ende. Geprüft wird das gebaute Programm in dist/NoNotes/agent/. */
+async function runAgentProgram(browser, part, step) {
+  const { spawn } = require('node:child_process');
+  const PROGRAM = path.join(DIST, 'agent', 'nonotes-mcp.cjs');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nonotes-mcp-'));
+  const file = path.join(tmp, 'NoNotes.sqlite');
+  const run = args => spawnSync(process.execPath, [PROGRAM, ...args], { encoding: 'utf8' });
+  let r = run(['--help']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /--file/);
+  r = run(['--config', file]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /claude mcp add --scope user nonotes -- node /);
+  assert.ok(r.stdout.includes(file) && r.stdout.includes(PROGRAM), 'Pfade stehen in den Einträgen');
+  assert.ok(r.stdout.includes('"mcpServers"') && r.stdout.includes('"servers"'), 'Claude Code, Claude Desktop, Copilot CLI und VS Code');
+  r = run(['--version']);
+  assert.equal(r.stdout.trim(), 'dev');
+  r = run(['--file', file]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /nicht gefunden/);
+  fs.writeFileSync(path.join(tmp, 'fremd.sqlite'), 'kein sqlite');
+  r = run(['--file', path.join(tmp, 'fremd.sqlite')]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /nicht von NoNotes|nicht öffnen/);
+  r = run(['--file', file, '--unbekannt']);
+  assert.equal(r.status, 2);
+  r = run([]);
+  assert.equal(r.status, 2);
+  part('Programm: Hilfe, Einträge für die Agenten mit Pfaden, Version, klare Fehler bei fehlender oder fremder Datei');
+
+  // Ein kleiner MCP-Client über die Standardeingabe
+  function start(args) {
+    const p = spawn(process.execPath, [PROGRAM, ...args], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const pending = new Map();
+    const stderr = [];
+    let buf = '';
+    let seq = 0;
+    p.stdout.on('data', d => {
+      buf += d;
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 1);
+        if (!line.trim()) continue;
+        const m = JSON.parse(line);
+        const w = pending.get(m.id);
+        if (w) { pending.delete(m.id); w(m); }
+      }
+    });
+    p.stderr.on('data', d => stderr.push(String(d)));
+    return {
+      p, stderr,
+      request: (method, params) => new Promise((resolve, reject) => {
+        const id = ++seq;
+        pending.set(id, resolve);
+        p.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+        setTimeout(() => { if (pending.has(id)) { pending.delete(id); reject(new Error(`keine Antwort auf ${method}: ${stderr.join('')}`)); } }, 20000);
+      }),
+      notify: (method, params) => p.stdin.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n'),
+      raw: text => p.stdin.write(text),
+      stop: () => new Promise(resolve => { p.on('exit', resolve); p.stdin.end(); }),
+    };
+  }
+  const init = c => c.request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
+  const SQL = await initSqlJs();
+  const titles = () => { const d = new SQL.Database(fs.readFileSync(file)); const rows = d.exec("SELECT title FROM notes WHERE deleted_at IS NULL ORDER BY id"); d.close(); return rows.length ? rows[0].values.map(v => v[0]) : []; };
+
+  const a = start(['--file', file, '--create', '--verbose']);
+  let resp = await init(a);
+  assert.equal(resp.result.serverInfo.name, 'nonotes');
+  assert.match(resp.result.instructions, /works on the file/);
+  a.notify('notifications/initialized');
+  assert.ok(fs.existsSync(file), '--create legt die Datei an');
+  resp = await a.request('tools/list');
+  assert.ok(resp.result.tools.some(t => t.name === 'create_note'));
+  resp = await a.request('tools/call', { name: 'create_note', arguments: { title: 'Aus Claude', body: '? Offen?' } });
+  assert.ok(!resp.error && !resp.result.isError, JSON.stringify(resp));
+  assert.deepEqual(titles(), ['Aus Claude'], 'die Datei auf der Platte hat die Notiz');
+  assert.ok(!fs.readdirSync(tmp).some(f => f.endsWith('.tmp') || f.endsWith('.lock')), 'keine Reste neben der Datei');
+  // Änderung von aussen (wie die App sie schreibt): beim nächsten Aufruf gelesen
+  {
+    const d = new SQL.Database(fs.readFileSync(file));
+    d.run("INSERT INTO notes (title, body, created_at, updated_at, parent_id, sort_order) VALUES ('Von der App', '', '2026-10-17T00:00:00.000Z', '2026-10-17T00:00:00.000Z', NULL, 5)");
+    const bytes = d.export();
+    d.close();
+    fs.writeFileSync(file + '.x', bytes);
+    fs.renameSync(file + '.x', file);
+  }
+  resp = await a.request('tools/call', { name: 'search_notes', arguments: {} });
+  assert.equal(resp.result.structuredContent.total, 2, 'Änderung von aussen gelesen');
+  assert.ok(a.stderr.join('').includes('von aussen geändert'), 'mit --verbose gemeldet');
+  resp = await a.request('resources/read', { uri: 'nonotes://overview' });
+  assert.match(resp.result.contents[0].text, /Notes: 2/);
+  part('Programm: Datei angelegt, Notiz über MCP geschrieben und auf der Platte, Änderung von aussen beim nächsten Aufruf gelesen');
+
+  // Zwei Programme auf derselben Datei: abwechselnd und gleichzeitig, nichts geht verloren
+  const b = start(['--file', file]);
+  await init(b);
+  for (let i = 0; i < 3; i++) {
+    await a.request('tools/call', { name: 'create_note', arguments: { title: 'A' + i } });
+    await b.request('tools/call', { name: 'create_note', arguments: { title: 'B' + i } });
+  }
+  assert.equal(titles().length, 8, 'abwechselnd');
+  const burst = [];
+  for (let i = 0; i < 5; i++) {
+    burst.push(a.request('tools/call', { name: 'create_note', arguments: { title: 'PA' + i } }));
+    burst.push(b.request('tools/call', { name: 'create_note', arguments: { title: 'PB' + i } }));
+  }
+  const results = await Promise.all(burst);
+  assert.ok(results.every(x => !x.error && !x.result.isError), JSON.stringify(results.filter(x => x.error || x.result.isError)));
+  assert.equal(titles().length, 18, 'gleichzeitig mit Sperre: nichts verloren');
+  assert.ok(!fs.existsSync(file + '.lock'), 'Sperre wieder weg');
+  assert.equal(await b.stop(), 0);
+  // Lesemodus: nur lesende Werkzeuge, nichts wird geschrieben
+  const before = fs.statSync(file).mtimeMs;
+  const ro = start(['--file', file, '--read-only']);
+  await init(ro);
+  resp = await ro.request('tools/list');
+  assert.ok(resp.result.tools.every(t => t.annotations.readOnlyHint));
+  resp = await ro.request('tools/call', { name: 'delete_note', arguments: { id: 1 } });
+  assert.equal(resp.error.code, -32602);
+  resp = await ro.request('tools/call', { name: 'list_tasks', arguments: {} });
+  assert.ok(!resp.error);
+  assert.equal(fs.statSync(file).mtimeMs, before, 'nichts geschrieben');
+  assert.equal(await ro.stop(), 0);
+  // Kaputte Zeile: Fehlerantwort, der Server läuft weiter; Ende der Eingabe beendet den Prozess sauber
+  a.raw('{kaputt\n');
+  resp = await a.request('ping');
+  assert.deepEqual(resp.result, {});
+  assert.equal(await a.stop(), 0);
+  assert.ok(!fs.existsSync(file + '.lock'));
+  fs.rmSync(tmp, { recursive: true, force: true });
+  part('Programm: zwei Prozesse abwechselnd und gleichzeitig ohne Verlust, Lesemodus schreibt nie, kaputtes JSON schadet nicht, sauberes Ende');
+}
+
 suite('Kern-Test', [
   { name: 'Zusammenführen: Myers-Vergleich, Dreiwege-Zusammenführung mit Zufallsdaten, Konflikte, Cursor', run: runMerge },
   { name: 'Datenbank: Standardschema, Angleichen alter Dateien (Schema 1, 11, 12, 13), Konflikterkennung, Autor im Verlauf, Querverweise, Entscheide und Personen', run: runDb },
   { name: 'Build: fremde Ausprägung, Verzeichnis der Erweiterungen, --plugins, klare Fehler', run: runBuild },
   { name: 'Videoadressen: YouTube, Vimeo, Dailymotion, Fälschungen, Karte im Markdown, maskierte Titel', run: runEmbeds },
   { name: 'Agenten: Werkzeugkatalog (Notizen, Fragen, Entscheide, Aufgaben, Verlauf, Archiv, Papierkorb, Lesemodus, Ressourcen) und MCP-Protokoll aller Fassungen', run: runAgent },
+  { name: 'Programm für den eigenen Rechner: Einträge für Claude Code und andere, Datei, MCP über die Standardeingabe, Änderungen von aussen, zwei Prozesse mit Sperre, Lesemodus', run: runAgentProgram },
 ]);

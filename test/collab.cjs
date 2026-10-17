@@ -638,31 +638,54 @@ async function runExternal(browser, part, step) {
   assert.equal(await page.locator('#banner:not([hidden])').count(), 0);
   part('Nur der Zeitstempel der Datei ändert sich, der Inhalt nicht: keine Meldung');
 
-  // Mit ungesicherten Änderungen: Rückfrage, Speichern ruht
+  // Mit ungesicherten Änderungen an einer anderen Notiz: Notiz für Notiz vereint, keine Rückfrage
   await page.click('#list li >> text=Eigene Notiz');
   const ext2 = await withExtra(await fileBytes(), 'Von aussen zwei'); // die Datei, wie sie gerade ist, plus Fremdes (ohne meine Änderung)
   await stage(ext2, 7);
   await page.fill('#title', 'Eigene Notiz geändert');
   await commitStaged(); // gleich nach der Eingabe, innerhalb der Wartezeit des Speicherns
+  await page.waitForFunction(() => document.querySelector('#list').textContent.includes('Von aussen zwei'), null, { timeout: 5000 }).catch(async () => {
+    throw new Error('nicht zusammengeführt: ' + JSON.stringify(await page.evaluate(() => ({ status: document.querySelector('#status').textContent, banner: document.querySelector('#banner').textContent, list: document.querySelector('#list').textContent }))));
+  });
+  await page.waitForFunction(SAVED);
+  assert.equal(await page.locator('#banner:not([hidden])').count(), 0, 'keine Rückfrage, wenn verschiedene Notizen betroffen sind');
+  assert.equal(await page.inputValue('#title'), 'Eigene Notiz geändert', 'die offene Notiz bleibt offen');
+  const merged2 = titlesIn(await fileBytes());
+  assert.ok(merged2.includes('Von aussen zwei') && merged2.includes('Eigene Notiz geändert'), 'die Datei hat beides: ' + merged2.join(', '));
+  part('Datei von aussen geändert, eigene Änderung an einer anderen Notiz ungesichert: zusammengeführt ohne Rückfrage, die Datei hat beides');
+
+  // Beide ändern dieselbe Notiz: Rückfrage, Speichern ruht
+  const renamed = async (bytes, oldTitle, newTitle) => {
+    const db = DB.open(SQL, bytes);
+    const n = DB.listNotes(db, '').find(x => x.title === oldTitle);
+    DB.updateNote(db, n.id, newTitle, n.body);
+    const out = db.export();
+    db.close();
+    return out;
+  };
+  const ext3 = await renamed(await fileBytes(), 'Eigene Notiz geändert', 'Von aussen umbenannt');
+  await stage(ext3, 9);
+  await page.fill('#title', 'Eigene Notiz nochmals');
+  await commitStaged();
   await page.waitForSelector('#banner:not([hidden])', { timeout: 5000 }).catch(async e => {
     throw new Error('keine Rückfrage: ' + JSON.stringify(await page.evaluate(() => ({ status: document.querySelector('#status').textContent, state: document.querySelector('#status').dataset.state, list: document.querySelector('#list').textContent, title: document.querySelector('#title').value }))));
   });
   assert.match(await page.locator('#banner').innerText(), /ausserhalb dieser Sitzung geändert/);
   await page.waitForTimeout(1200); // länger als die Wartezeit des Speicherns
-  assert.deepEqual(titlesIn(await fileBytes()).sort(), titlesIn(ext2).sort(), 'die Datei wurde nicht überschrieben');
-  part('Datei von aussen geändert, eigene Änderung ungesichert: Rückfrage, die Datei bleibt unberührt');
+  assert.deepEqual(titlesIn(await fileBytes()).sort(), titlesIn(ext3).sort(), 'die Datei wurde nicht überschrieben');
+  part('Beide ändern dieselbe Notiz: Rückfrage, die Datei bleibt unberührt');
 
   // Datei laden: eigene Änderung verworfen
   await page.click('#banner button:has-text("Datei laden")');
   await page.waitForSelector('#banner', { state: 'hidden' });
-  await page.waitForFunction(() => document.querySelector('#list').textContent.includes('Von aussen zwei'));
-  assert.ok(!(await page.locator('#list').innerText()).includes('Eigene Notiz geändert'), 'die eigene Änderung ist verworfen');
+  await page.waitForFunction(() => document.querySelector('#list').textContent.includes('Von aussen umbenannt'));
+  assert.ok(!(await page.locator('#list').innerText()).includes('Eigene Notiz nochmals'), 'die eigene Änderung ist verworfen');
   part('Entscheidung «Datei laden»: Stand der Datei, eigene Änderung verworfen');
 
   // Eigene Fassung behalten: die Datei wird überschrieben
-  await page.click('#list li >> text=Eigene Notiz');
-  const ext3 = await withExtra(await fileBytes(), 'Von aussen drei');
-  await stage(ext3, 9);
+  await page.click('#list li >> text=Von aussen umbenannt');
+  const ext4 = await renamed(await fileBytes(), 'Von aussen umbenannt', 'Von aussen nochmals');
+  await stage(ext4, 11);
   await page.fill('#title', 'Eigene Notiz wieder');
   await commitStaged();
   await page.waitForSelector('#banner:not([hidden])');
@@ -672,11 +695,11 @@ async function runExternal(browser, part, step) {
   await page.waitForFunction(() => window.__file.bytes.length > 0);
   const kept = titlesIn(await fileBytes());
   assert.ok(kept.includes('Eigene Notiz wieder'), 'meine Fassung steht in der Datei');
-  assert.ok(!kept.includes('Von aussen drei'), 'die fremde Änderung ist überschrieben');
+  assert.ok(!kept.includes('Von aussen nochmals'), 'die fremde Änderung ist überschrieben');
   part('Entscheidung «Meine Fassung behalten»: Datei mit meinem Stand überschrieben');
 
-  // Die Datei ändert sich, während gerade gespeichert wird: nicht blind überschreiben
-  await page.click('#list li >> text=Eigene Notiz');
+  // Die Datei ändert sich, während gerade gespeichert wird: nicht blind überschreiben, sondern zusammenführen
+  await page.click('#list li >> text=Eigene Notiz wieder');
   await page.evaluate(() => {
     window.__hold = true;
     const store = NoNotesStorage.browserStore;
@@ -685,14 +708,14 @@ async function runExternal(browser, part, step) {
   });
   await page.fill('#title', 'Eigene Notiz mitten im Speichern');
   await page.waitForFunction(() => document.querySelector('#status').dataset.state === 'saving'); // das Speichern läuft und hängt im Browser-Speicher
-  await setFile(await withExtra(await fileBytes(), 'Von aussen vier'), 11);
+  await setFile(await withExtra(await fileBytes(), 'Von aussen vier'), 13);
   await page.evaluate(() => { window.__hold = false; });
-  await page.waitForSelector('#banner:not([hidden])');
+  await page.waitForFunction(() => document.querySelector('#list').textContent.includes('Von aussen vier'));
+  await page.waitForFunction(SAVED);
+  assert.equal(await page.locator('#banner:not([hidden])').count(), 0);
   const guarded = titlesIn(await fileBytes());
-  assert.ok(guarded.includes('Von aussen vier') && !guarded.includes('Eigene Notiz mitten im Speichern'), 'die fremde Fassung wurde nicht blind überschrieben');
-  await page.click('#banner button:has-text("Datei laden")');
-  await page.waitForSelector('#banner', { state: 'hidden' });
-  part('Datei ändert sich während des Speicherns: die App prüft kurz vor dem Schreiben und fragt, statt zu überschreiben');
+  assert.ok(guarded.includes('Von aussen vier') && guarded.includes('Eigene Notiz mitten im Speichern'), 'die fremde Fassung wurde nicht überschrieben, sondern vereint: ' + guarded.join(', '));
+  part('Datei ändert sich während des Speicherns: die App prüft kurz vor dem Schreiben und führt zusammen, statt zu überschreiben');
   await ctx.close();
 
   // ---------- Anderer Tab hat den Browser-Speicher beschrieben ----------
@@ -718,7 +741,7 @@ async function runExternal(browser, part, step) {
   assert.equal(await p2.locator('#banner:not([hidden])').count(), 0);
   part('Anderer Tab hat gespeichert, hier nichts Ungesichertes: der Stand wird still übernommen');
 
-  // hier ungesichert (Speichern hält an), dort wird gespeichert
+  // hier ungesichert (Speichern hält an), dort wird eine andere Notiz angelegt: vereint, keine Rückfrage
   await p2.evaluate(() => {
     window.__hold = true;
     const store = NoNotesStorage.browserStore;
@@ -731,19 +754,34 @@ async function runExternal(browser, part, step) {
   await p1.fill('#title', 'Noch eine aus Tab eins');
   await p1.waitForFunction(SAVED);
   await tabMessage(p2);
+  await p2.waitForFunction(() => document.querySelector('#list').textContent.includes('Noch eine aus Tab eins'));
+  assert.equal(await p2.locator('#banner:not([hidden])').count(), 0, 'keine Rückfrage: verschiedene Notizen');
+  assert.ok((await p2.locator('#list').innerText()).includes('In Tab zwei geändert'), 'die eigene Änderung bleibt');
+  await p2.evaluate(() => { window.__hold = false; });
+  await p2.waitForFunction(SAVED);
+  part('Anderer Tab hat gespeichert, hier ungesichert an einer anderen Notiz: zusammengeführt, keine Rückfrage');
+
+  // Beide ändern dieselbe Notiz: Rückfrage; «Stand dort laden» verwirft die eigene Änderung
+  await p2.evaluate(() => { window.__hold = true; });
+  await p2.click('#list li >> text=In Tab zwei geändert');
+  await p2.fill('#title', 'In Tab zwei nochmals');
+  await p1.click('#list li >> text=Aus Tab eins'); // Tab eins kennt den Stand von Tab zwei nicht (gestellter Kanal) und benennt dieselbe Notiz um
+  await p1.fill('#title', 'In Tab eins umbenannt');
+  await p1.waitForFunction(SAVED);
+  await tabMessage(p2);
   await p2.waitForSelector('#banner:not([hidden])');
   assert.match(await p2.locator('#banner').innerText(), /anderen Tab/);
   await p2.click('#banner button:has-text("Stand dort laden")');
   await p2.waitForSelector('#banner', { state: 'hidden' });
-  await p2.waitForFunction(() => document.querySelector('#list').textContent.includes('Noch eine aus Tab eins'));
-  assert.ok(!(await p2.locator('#list').innerText()).includes('In Tab zwei geändert'));
-  part('Anderer Tab hat gespeichert, hier ungesichert: Rückfrage; «Stand dort laden» verwirft die eigene Änderung');
+  await p2.waitForFunction(() => document.querySelector('#list').textContent.includes('In Tab eins umbenannt'));
+  assert.ok(!(await p2.locator('#list').innerText()).includes('In Tab zwei nochmals'));
+  part('Beide Tabs ändern dieselbe Notiz: Rückfrage; «Stand dort laden» verwirft die eigene Änderung');
 
   // Eigene Fassung behalten
-  await p2.click('#list li >> text=Aus Tab eins');
+  await p2.click('#list li >> text=In Tab eins umbenannt');
   await p2.fill('#title', 'In Tab zwei behalten');
-  await p1.click('#newBtn');
-  await p1.fill('#title', 'Dritte aus Tab eins');
+  await p1.click('#list li >> text=In Tab eins umbenannt');
+  await p1.fill('#title', 'In Tab eins zweimal');
   await p1.waitForFunction(SAVED);
   await tabMessage(p2);
   await p2.waitForSelector('#banner:not([hidden])');
@@ -753,7 +791,7 @@ async function runExternal(browser, part, step) {
   const p3 = await openPage(ctx2, errors);
   const text3 = await p3.locator('#list').innerText();
   assert.ok(text3.includes('In Tab zwei behalten'), 'mein Stand steht im Browser-Speicher');
-  assert.ok(!text3.includes('Dritte aus Tab eins'), 'die Änderung des anderen Tabs ist überschrieben');
+  assert.ok(!text3.includes('In Tab eins zweimal'), 'die Änderung des anderen Tabs ist überschrieben');
   part('«Meine Fassung behalten» schreibt den eigenen Stand in den Browser-Speicher');
 
   assert.deepEqual(errors, [], 'keine Fehler im Browser');
@@ -923,6 +961,6 @@ async function runReadonly(browser, part, step) {
 suite('Zusammenarbeits-Test', [
   { name: 'Verlauf: Patches, Arbeitsphasen, Wiederherstellen, Aufbewahrung, Dialog mit Unterschieden, Verlauf löschen, archivierte Notiz; Datei mit Schema 10', run: runHistory },
   { name: 'Gleichzeitig schreiben: getrennte Stellen zusammengeführt, dieselbe Stelle als Dialog mit drei Entscheidungen, später entscheiden, Autor im Verlauf, schnelles Tippen', run: runConflict },
-  { name: 'Von aussen geändert: Datei und anderer Tab, still übernehmen oder Rückfrage mit beiden Entscheidungen, Prüfung kurz vor dem Schreiben', run: runExternal },
+  { name: 'Von aussen geändert: Datei und anderer Tab, still übernehmen, Notiz für Notiz zusammenführen, Rückfrage bei derselben Notiz mit beiden Entscheidungen, Prüfung kurz vor dem Schreiben', run: runExternal },
   { name: 'Lesemodus: Schreibwege ausgeblendet oder gesperrt, Backend lehnt mit READ_ONLY ab, Auf-/Zuklappen erlaubt, Mindmap und Listen passend', run: runReadonly },
 ], { browser: true });
