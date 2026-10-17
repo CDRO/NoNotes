@@ -2345,12 +2345,21 @@ async function runAreas(browser, part, step) {
     window.__nextOpen = null;
     window.showSaveFilePicker = async opts => { window.__pickNew.push(opts.suggestedName); return window.__mkHandle(opts.suggestedName); };
     window.showOpenFilePicker = async () => [window.__nextOpen];
+    // Zwischenablage nachgebaut: window.__clip hält den kopierten Text, window.__clipFail lässt das Kopieren scheitern
+    window.__clip = null;
+    window.__clipFail = false;
+    try { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { if (window.__clipFail) throw new Error('denied'); window.__clip = text; } } }); } catch (e) { /* bleibt echt */ }
   };
   const answers = [];
+  const prompts = [];
   const open = async (ctx, query) => {
     const page = await ctx.newPage();
     const errors = watch(page);
-    page.on('dialog', d => (d.type() === 'prompt' ? d.accept(answers.length ? answers.shift() : '') : d.accept()));
+    page.on('dialog', d => {
+      if (d.type() !== 'prompt') return d.accept();
+      prompts.push({ message: d.message(), value: d.defaultValue() });
+      return d.accept(answers.length ? answers.shift() : '');
+    });
     await page.goto(APP_URL + (query || ''));
     await page.waitForSelector(READY, { timeout: 30000 });
     if (!(await page.evaluate(() => document.body.classList.contains('view-list')))) { await page.click('#viewListBtn'); await page.waitForSelector('body.view-list'); }
@@ -2392,7 +2401,7 @@ async function runAreas(browser, part, step) {
     await page.keyboard.press('Alt+1');
     assert.equal(await label(page), 'Nur Browser-Speicher', 'Alt+1 ohne zweiten Bereich tut nichts');
     let items = await menuItems(page);
-    assert.deepEqual(items.map(x => x.replace(/Alt\+\d/, '')), ['Meine Notizen', 'Neuer Bereich…', 'Datei als Bereich öffnen…', 'Bereich umbenennen…'], 'Menü mit einem Bereich: kein «entfernen»');
+    assert.deepEqual(items.map(x => x.replace(/Alt\+\d/, '')), ['Meine Notizen', 'Neuer Bereich…', 'Datei als Bereich öffnen…', 'Bereich umbenennen…', 'Adresse kopieren'], 'Menü mit einem Bereich: kein «entfernen»');
     assert.equal(await page.locator('#contextMenu button.checked').textContent(), 'Meine NotizenAlt+1');
     await page.keyboard.press('Escape');
     part('Ein Bereich: Statusleiste, Titel und Adresse wie bisher; Alt+0 öffnet das Menü der Bereiche');
@@ -2433,7 +2442,7 @@ async function runAreas(browser, part, step) {
     assert.ok(!/Zug buchen/.test(await page.textContent('main')), 'Aufgaben nur aus dem aktiven Bereich');
     await page.click('#viewListBtn');
     items = await menuItems(page);
-    assert.deepEqual(items.map(x => x.replace(/Alt\+\d/, '')), ['Meine Notizen', 'Privat', 'Neuer Bereich…', 'Datei als Bereich öffnen…', 'Bereich umbenennen…', 'Bereich entfernen…']);
+    assert.deepEqual(items.map(x => x.replace(/Alt\+\d/, '')), ['Meine Notizen', 'Privat', 'Neuer Bereich…', 'Datei als Bereich öffnen…', 'Bereich umbenennen…', 'Adresse kopieren', 'Bereich entfernen…']);
     await page.click('#contextMenu button:has-text("Privat")');
     await waitLabel(page, /^Privat · /);
     part('Wechseln über Alt+1/2 und das Menü: Liste, Aufgaben und Editor nur aus dem aktiven Bereich; die offene Notiz wird vorher geschrieben');
@@ -2479,6 +2488,25 @@ async function runAreas(browser, part, step) {
     await p2.page.click('#banner button:has-text("Später")');
     part('Adresse: ?w=<kennung>, Gross/Klein egal, ?w=1 … 9 nach der Stelle; unbekannt → Hinweis mit «anlegen»; Neuladen bleibt im Bereich');
 
+    // ---------- Adresse kopieren (für Verknüpfungen) ----------
+    await choose(page, 'Adresse kopieren');
+    await page.waitForFunction(() => window.__clip);
+    const copied = await page.evaluate(() => window.__clip);
+    assert.equal(copied, APP_URL + '?w=privat', 'die Adresse öffnet genau diesen Bereich, ohne weitere Angaben');
+    assert.equal(await page.textContent('#status'), 'Adresse von „Privat“ kopiert');
+    const viaLink = await open(ctx, copied.slice(APP_URL.length));
+    assert.match(await label(viaLink.page), /^Privat · /, 'die kopierte Adresse öffnet den Bereich');
+    await viaLink.page.close();
+    await page.evaluate(() => { window.__clipFail = true; });
+    prompts.length = 0;
+    await choose(page, 'Adresse kopieren');
+    for (let i = 0; i < 50 && !prompts.length; i++) await page.waitForTimeout(20);
+    assert.equal(prompts.length, 1, 'ohne Zwischenablage: Fenster mit der Adresse');
+    assert.equal(prompts[0].value, APP_URL + '?w=privat');
+    assert.match(prompts[0].message, /Adresse des Bereichs „Privat“ \(mit Ctrl\+C kopieren\)/);
+    await page.evaluate(() => { window.__clipFail = false; });
+    part('Adresse kopieren: in die Zwischenablage, öffnet genau den Bereich; ohne Zwischenablage ein Fenster mit der markierten Adresse');
+
     // ---------- zwei Tabs, verschiedene Bereiche ----------
     await page.reload(); // erfährt den dritten Bereich ohnehin über den Kanal
     await page.waitForSelector(READY);
@@ -2514,7 +2542,7 @@ async function runAreas(browser, part, step) {
     await waitLabel(p2.page, /^Meine Notizen · /);
     items = await menuItems(p2.page);
     assert.deepEqual(items.map(x => x.replace(/Alt\+\d/, '')).slice(0, 2), ['Meine Notizen', 'Familie']);
-    assert.equal(items.length, 6);
+    assert.equal(items.length, 7);
     await p2.page.keyboard.press('Escape');
     const gone = await p2.page.evaluate(() => new Promise(res => { const r = indexedDB.open('nonotes'); r.onsuccess = () => { const q = r.result.transaction('kv').objectStore('kv').get('area:projekt-x:db'); q.onsuccess = () => res(q.result === undefined); }; }));
     assert.equal(gone, true, 'die Browser-Kopie des entfernten Bereichs ist gelöscht');

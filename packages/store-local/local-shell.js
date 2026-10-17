@@ -894,6 +894,27 @@
       ]);
     }
 
+    /** Adresse, die genau diesen Bereich öffnet (für Lesezeichen und Verknüpfungen auf dem Desktop). */
+    function areaUrl() {
+      const u = new URL(global.location.href);
+      u.hash = '';
+      u.search = '';
+      u.searchParams.set(AREA_PARAM, s.area.id);
+      return u.href;
+    }
+
+    /** Kopiert die Adresse des aktiven Bereichs; verweigert der Browser die Zwischenablage, steht sie markiert in einem Fenster. */
+    async function copyAreaUrl() {
+      host.closeMenu();
+      const url = areaUrl();
+      try {
+        await global.navigator.clipboard.writeText(url);
+        setStatus(t('Adresse von „{name}“ kopiert', { name: s.area.name }), isDirty() ? 'dirty' : 'saved');
+      } catch (e) {
+        global.prompt(t('Adresse des Bereichs „{name}“ (mit Ctrl+C kopieren):', { name: s.area.name }), url);
+      }
+    }
+
     /** Menü der Bereiche, über der Statusleiste. */
     function showAreaMenu() {
       if (!areasPossible()) return;
@@ -902,6 +923,7 @@
       items.push('sep', { label: t('Neuer Bereich…'), key: 'Alt+0', action: newArea });
       if (Store.fileAccess.supported) items.push({ label: t('Datei als Bereich öffnen…'), action: openFileAsArea });
       items.push({ label: t('Bereich umbenennen…'), action: renameArea });
+      items.push({ label: t('Adresse kopieren'), action: copyAreaUrl });
       if (multiArea()) items.push({ label: t('Bereich entfernen…'), danger: true, action: removeArea });
       const r = el.storageInfo.getBoundingClientRect();
       host.showMenu(items, Math.max(8, r.left), r.top, { above: true });
@@ -988,6 +1010,7 @@
       get area() { return s.area ? { id: s.area.id, name: s.area.name } : null; },
       get areas() { return s.areas ? s.areas.list.map(a => ({ id: a.id, name: a.name })) : []; },
       switchArea,
+      areaUrl: () => (s.area ? areaUrl() : null),
       flush: persistNow,
       isDirty,
       storageLines, saveLine,

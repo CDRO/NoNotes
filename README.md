@@ -75,6 +75,9 @@ Entscheide, Aufgaben und Suche zeigen nur ihn.
 - **Adresse:** `index.html?w=arbeit` öffnet den Bereich «Arbeit» direkt, als Lesezeichen oder Verknüpfung auf dem Desktop. Die
   Kennung entsteht aus dem Namen (klein, ohne Umlaute: «Projekt Ä» → `projekt-ae`) und bleibt beim Umbenennen gleich; der neue Name
   gilt in der Adresse ebenfalls. `?w=2` öffnet den zweiten Bereich der Liste. Gibt es den Bereich nicht, bietet die App an, ihn anzulegen.
+- **Verknüpfung auf dem Desktop** (seit 2.3.1): im Menü der Bereiche «Adresse kopieren», dann unter Windows Rechtsklick auf den
+  Desktop, «Neu → Verknüpfung», Adresse einfügen. Verweigert der Browser die Zwischenablage, zeigt die App die Adresse markiert zum
+  Kopieren mit `Ctrl+C`.
 - **Tabs:** Jeder Tab hat seinen eigenen aktiven Bereich; zwei Tabs mit verschiedenen Bereichen stören sich nicht. Der Titel des Tabs
   nennt den Bereich.
 - **Freigaben:** Nach einem Neustart des Browsers fragt er für jede Datei einmal um Erlaubnis, beim ersten Wechsel in ihren Bereich.
