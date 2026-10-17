@@ -10,6 +10,8 @@ packages/
   core/         reine Logik ohne Datenbank und ohne Oberfläche: Termine, Fragen, Aufgaben, Markdown,
                 Editor-Funktionen, Export, Kalender, ZIP, Sprachen (i18n), Backend-Schnittstelle
   data/         db.js: Schema und alle SQL-Abfragen (SQLite über sql.js); spricht nur SQL
+  agent/        Werkzeuge für KI-Agenten über das Backend (catalog.js), Anmeldung beim Agenten des Browsers (webmcp.js),
+                MCP ohne Transport für Ausprägungen mit Server (protocol.js); siehe AGENTS.md
   store-local/  alles, was nur die lokale Ausprägung braucht: Backend über db.js, lokale Hülle
                 (Speichern, Datei, Browser-Speicher), Persistenz (IndexedDB, File System Access)
   ui/           Oberfläche: app.js (Ablauf), Mindmap, Druck, Scroll-Sync, app.css
@@ -29,6 +31,8 @@ vendor/         Fremdbestandteile (sql.js), siehe NOTICE
 - `ui` kennt nur das **Backend** (`NoNotesBackend`, siehe [BACKEND.md](BACKEND.md)) und die **Hülle** der
   Ausprägung. Es gibt keinen Zugriff auf SQL, IndexedDB oder Dateien aus der Oberfläche.
 - `store-local` ist die einzige Stelle, die `data` und die Persistenz kennt.
+- `agent` kennt wie `core` nur das Backend; `webmcp.js` dazu die Schnittstelle des Browsers (`document.modelContext`). Die
+  Oberfläche baut den Katalog beim Start und meldet ihn an (`attachAgent` in `app.js`); im Lesemodus nur die lesenden Werkzeuge.
 - Eine Ausprägung (`editions/<name>`) wählt aus, was sie lädt, und liefert `NoNotesEdition.createShell(host)`.
 
 ## Hülle und Backend

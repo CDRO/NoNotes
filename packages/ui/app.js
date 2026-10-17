@@ -359,8 +359,19 @@
     Mentions.provide(localPeople); // Kürzel, die in der Datei schon vorkommen
     await Plugins.activateAll(pluginContext);
     renderPlugins();
+    await attachAgent();
     document.body.dataset.ready = 'true';
     emitPlugins('ready', {});
+  }
+
+  /** Werkzeuge für den Agenten des Browsers (WebMCP, packages/agent/): derselbe Katalog wie im Dienst, im Lesemodus nur lesende.
+   *  Nach einer Änderung durch den Agenten zeichnet die Oberfläche neu; gespeichert wird über das Backend wie bei jeder Eingabe. */
+  async function attachAgent() {
+    if (!window.NoNotesAgent || !window.NoNotesWebMcp) return;
+    try {
+      state.agent = window.NoNotesAgent.create(B, { readOnly: readOnly(), author: shell.userName || null, log: console.warn });
+      state.webmcp = await window.NoNotesWebMcp.attach({ catalog: state.agent, onChange: async () => { markEdited(); await renderAll(); }, log: console.warn });
+    } catch (e) { console.warn('WebMCP', e); }
   }
 
   /** Sprachwahl im Menü, nur sichtbar, wenn mehr als eine Sprache vorhanden ist. Der Wechsel lädt die Seite neu. */

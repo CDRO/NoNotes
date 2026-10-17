@@ -75,7 +75,8 @@ npm run i18n -- list          # alle Texte mit Fundstelle
 
 `npm run i18n -- lint` (Teil von `npm test`) sucht deutsche Texte im Quelltext, die nicht durch `t()`/`tn()`
 laufen. Wer einen Text bewusst nicht übersetzt (Protokollmeldung, interner Fehler), hängt dem Ausdruck
-`// i18n-ignore` an die Zeile.
+`// i18n-ignore` an die Zeile. Eine ganze Datei, deren Texte für Agenten gedacht und darum englisch sind
+(`packages/agent/`), trägt im Kopfkommentar `i18n-ignore-file`; sie wird vom Lint übersprungen.
 
 ## Mit einem Release veröffentlichen
 

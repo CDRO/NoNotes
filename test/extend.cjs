@@ -1,5 +1,5 @@
 /* Erweiterungs-Test: Erweiterungen und Designs, Hauptfarbe, Videos in der Vorschau, Querverweise, Entscheide und Personen,
-   Sprachen (Pseudo-Sprache, Englisch, Testpaket). Ausführen: node test/extend.cjs (nach tools/build.cjs) */
+   Sprachen (Pseudo-Sprache, Englisch, Testpaket), WebMCP. Ausführen: node test/extend.cjs (nach tools/build.cjs) */
 'use strict';
 
 const path = require('node:path');
@@ -1598,6 +1598,104 @@ async function runI18n(browser, part, step) {
   }
 }
 
+// ============================================================
+/* Test der Anbindung an den Agenten des Browsers (WebMCP, v2.1.0): ein Nachbau von document.modelContext nimmt die Werkzeuge an;
+   Aufrufe ändern die Daten, die Oberfläche zeichnet neu, gespeichert wird; im Lesemodus nur lesende Werkzeuge; ohne Schnittstelle nichts. */
+async function runWebMcp(browser, part, step) {
+  const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 }, locale: 'de-CH' });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  page.on('dialog', d => d.accept());
+  await page.addInitScript(() => {
+    // Nachbau der Schnittstelle, wie Chrome und Edge sie beschreiben: registerTool(def), execute(input) liefert das Ergebnis
+    const tools = new Map();
+    const mc = {
+      registerTool: async def => {
+        if (!def || !def.name || !def.description || !def.inputSchema || typeof def.execute !== 'function') throw new Error('bad tool');
+        if (tools.has(def.name)) throw new Error('duplicate ' + def.name);
+        tools.set(def.name, def);
+      },
+      unregisterTool: async name => { tools.delete(name); },
+    };
+    window.__mc = { tools, call: (name, input) => tools.get(name).execute(input) };
+    Object.defineProperty(document, 'modelContext', { value: mc, configurable: true });
+    // Lesemodus auf Wunsch (wie in test/collab.cjs)
+    let edition;
+    Object.defineProperty(window, 'NoNotesEdition', {
+      configurable: true,
+      get: () => edition,
+      set: v => {
+        edition = v;
+        const make = v.createShell;
+        v.createShell = host => { const shell = make(host); if (localStorage.getItem('__readonly') === '1') Object.defineProperty(shell, 'readOnly', { get: () => true }); return shell; };
+      },
+    });
+  });
+  await page.goto(APP_URL);
+  await page.waitForSelector(READY);
+  const names = await page.evaluate(() => [...window.__mc.tools.keys()]);
+  for (const n of ['get_overview', 'search_notes', 'create_note', 'answer_question', 'record_decision', 'complete_task']) assert.ok(names.includes(n), n);
+  const def = await page.evaluate(() => { const t = window.__mc.tools.get('create_note'); return { description: t.description, schema: t.inputSchema, annotations: t.annotations }; });
+  assert.equal(def.schema.type, 'object');
+  assert.equal(def.annotations.readOnlyHint, false);
+  assert.equal(await page.evaluate(() => window.__mc.tools.get('get_overview').annotations.readOnlyHint), true);
+  assert.equal(await page.evaluate(() => window.NoNotesWebMcp.available()), true);
+  part('WebMCP: alle Werkzeuge beim Nachbau der Browser-Schnittstelle gemeldet, mit Schema und Hinweisen');
+
+  // Der Agent legt eine Notiz mit Frage und Aufgabe an: die Oberfläche zeigt sie, gespeichert wird
+  let r = await page.evaluate(() => window.__mc.call('create_note', { title: 'Vom Agenten', body: '? Frage vom Agenten\n- [ ] Aufgabe vom Agenten', tags: ['agent'] }));
+  assert.ok(!r.isError, r.content[0].text);
+  const id = r.structuredContent.id;
+  await page.waitForFunction(() => document.body.textContent.includes('Vom Agenten'));
+  await page.waitForFunction(SAVED);
+  r = await page.evaluate(() => window.__mc.call('list_questions', {}));
+  assert.equal(r.structuredContent.total, 1);
+  const qid = r.structuredContent.items[0].id;
+  r = await page.evaluate(q => window.__mc.call('answer_question', { id: q, answer: 'Antwort vom Agenten' }), qid);
+  assert.ok(!r.isError, r.content[0].text);
+  r = await page.evaluate(() => window.__mc.call('list_tasks', {}));
+  assert.equal(r.structuredContent.total, 1);
+  r = await page.evaluate(t => window.__mc.call('complete_task', { id: t }), r.structuredContent.items[0].id);
+  assert.ok(!r.isError, r.content[0].text);
+  r = await page.evaluate(i => window.__mc.call('get_note', { id: i }), id);
+  assert.equal(r.structuredContent.body, '? Frage vom Agenten\n! Antwort vom Agenten\n- [x] Aufgabe vom Agenten');
+  await page.waitForFunction(SAVED);
+  // Nach dem Neuladen ist alles da (Browser-Speicher)
+  await page.reload();
+  await page.waitForSelector(READY);
+  r = await page.evaluate(() => window.__mc.call('search_notes', { tag: 'agent' }));
+  assert.equal(r.structuredContent.total, 1);
+  assert.equal(r.structuredContent.items[0].title, 'Vom Agenten');
+  r = await page.evaluate(() => window.__mc.call('get_overview', {}));
+  assert.equal(r.structuredContent.questions.open, 0);
+  assert.equal(r.structuredContent.tasks.open, 0);
+  // Fehler kommen als Ergebnis zurück, nicht als Ausnahme
+  r = await page.evaluate(() => window.__mc.call('get_note', { id: 999999 }));
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /NOTE_NOT_FOUND/);
+  part('WebMCP: Notiz, Antwort und Aufgabe über die Werkzeuge; Oberfläche folgt; gespeichert und nach dem Neuladen da; Fehler als Ergebnis');
+
+  // Lesemodus: nur lesende Werkzeuge; ohne Schnittstelle: nichts gemeldet, kein Fehler
+  await page.evaluate(() => localStorage.setItem('__readonly', '1'));
+  await page.reload();
+  await page.waitForSelector(READY);
+  const roNames = await page.evaluate(() => [...window.__mc.tools.keys()]);
+  assert.ok(roNames.includes('get_note') && roNames.includes('list_questions'), roNames.join(','));
+  assert.ok(!roNames.includes('create_note') && !roNames.includes('answer_question') && !roNames.includes('delete_note'), roNames.join(','));
+  await page.evaluate(() => localStorage.removeItem('__readonly'));
+  const plain = await ctx.newPage();
+  plain.on('pageerror', e => errors.push('plain: ' + e.message));
+  await plain.goto(APP_URL);
+  await plain.waitForSelector(READY);
+  assert.equal(await plain.evaluate(() => window.NoNotesWebMcp.available()), false);
+  assert.equal(await plain.evaluate(() => typeof window.__mc), 'undefined');
+  assert.deepEqual(errors, [], errors.join('\n'));
+  await ctx.close();
+  part('Lesemodus meldet nur lesende Werkzeuge; ohne Schnittstelle im Browser passiert nichts');
+}
+
 suite('Erweiterungs-Test', [
   { name: 'Erweiterungen: Lader, Dialog, Schnittstelle 1, Menü, Toolleiste, Ereignisse, Hilfe, Designs, Ein- und Ausschalten zur Laufzeit, Verzeichnis, Beispiele, Pseudo-Sprache', run: runPlugins },
   { name: 'Hauptfarbe: Palette, Auswahl, Datei, Export und Druck, hell und dunkel', run: runPalette },
@@ -1605,4 +1703,5 @@ suite('Erweiterungs-Test', [
   { name: 'Querverweise: gestrichelte Linien, Schalter, eingeklappte Ziele, Vorschau, Export und Druck, gelöschtes Ziel', run: runLinks },
   { name: 'Entscheide und Personen: Reiter, Ansicht, Entscheiden mit Datum, Vorschau, Toolleiste, Vorschläge beim Tippen von @, Export und Druck', run: runDecisions },
   { name: 'Sprachen: Pseudo-Sprache durch alle Ansichten, Englisch, Browsersprache, Mehrzahl, Testpaket, Wechsel', run: runI18n },
+  { name: 'WebMCP: Werkzeuge für den Agenten des Browsers, Aufrufe ändern Daten und Oberfläche, gespeichert, Lesemodus, ohne Schnittstelle nichts', run: runWebMcp },
 ], { browser: true });

@@ -1,5 +1,5 @@
 /* Kern-Test ohne Browser: Zusammenführen, Datenbankschicht (Standardschema, Angleichen alter Dateien, Konflikte, Autor,
-   Querverweise, Entscheide), Build fremder Ausprägungen und Videoadressen. Ausführen: node test/core.cjs */
+   Querverweise, Entscheide), Build fremder Ausprägungen, Videoadressen, Werkzeugkatalog für Agenten und MCP-Protokoll. Ausführen: node test/core.cjs */
 'use strict';
 
 const path = require('node:path');
@@ -647,9 +647,315 @@ async function runEmbeds(browser, part, step) {
 
 }
 
+// ============================================================
+/* Test des Werkzeugkatalogs für Agenten und des MCP-Protokolls (packages/agent/, v2.1.0) ohne Browser: jedes Werkzeug gegen eine
+   Datenbank, Prüfung der Eingaben, Fehlerfälle, Lesemodus, Ressourcen; danach JSON-RPC-Nachrichten aller Protokollfassungen. */
+async function runAgent(browser, part, step) {
+  let now = Date.parse('2026-10-17T08:00:00Z');
+  const RealDate = Date;
+  const sandbox = { console };
+  sandbox.window = sandbox;
+  sandbox.Date = class extends RealDate { constructor(...a) { if (a.length === 0) super(now); else super(...a); } static now() { return now; } };
+  const context = vm.createContext(sandbox);
+  for (const f of ['packages/core/i18n.js', 'packages/core/history.js', 'packages/core/dates.js', 'packages/core/questions.js', 'packages/core/tasks.js', 'packages/core/links.js', 'packages/core/backend.js', 'packages/core/merge.js', 'packages/data/db.js', 'packages/store-local/backend-local.js', 'packages/agent/catalog.js', 'packages/agent/protocol.js']) {
+    vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
+  }
+  const SQL = await initSqlJs();
+  const db = sandbox.NoNotesDB.open(SQL, null);
+  const changes = [];
+  const backend = sandbox.NoNotesBackendLocal.create({ getDb: () => db, onChange: name => changes.push(name) });
+  const Agent = sandbox.NoNotesAgent;
+  const cat = Agent.create(backend, { author: 'Agent-Test', now: () => new RealDate(now).toISOString() });
+  const call = async (name, input) => { now += 1000; return cat.call(name, input); };
+  const json = v => (v === undefined ? v : JSON.parse(JSON.stringify(v))); // Werte aus dem vm-Kontext haben fremde Prototypen
+  const S = r => json(r.structuredContent);
+  const T = r => r.content[0].text;
+  const ok = (r, what) => { assert.ok(!r.isError, `${what || 'kein Fehler erwartet'}: ${r.content && r.content[0] && r.content[0].text}`); return r; };
+  const bad = (r, code, what) => { assert.ok(r.isError, what || `Fehler ${code} erwartet`); assert.equal(S(r).error.code, code, T(r)); return r; };
+
+  // ---------- Beschreibung und leere Datenbank ----------
+  const tools = cat.list();
+  assert.ok(tools.length >= 20, 'mindestens 20 Werkzeuge');
+  for (const name of ['get_overview', 'list_notes', 'search_notes', 'get_note', 'create_note', 'update_note', 'append_to_note', 'list_questions', 'answer_question', 'list_decisions', 'record_decision', 'list_tasks', 'complete_task', 'reopen_task', 'list_people', 'get_history']) assert.ok(tools.some(t => t.name === name), name);
+  for (const t of tools) {
+    assert.match(t.name, /^[a-z][a-z_]+$/, t.name);
+    assert.ok(t.description.length >= 40, `${t.name}: Beschreibung`);
+    assert.equal(t.inputSchema.type, 'object', t.name);
+    assert.equal(t.inputSchema.additionalProperties, false, t.name);
+    assert.equal(typeof t.annotations.readOnlyHint, 'boolean', t.name);
+    assert.ok(t.title, t.name);
+  }
+  assert.equal(new Set(tools.map(t => t.name)).size, tools.length, 'Namen eindeutig');
+  assert.match(Agent.INSTRUCTIONS, /"\?!"/);
+  let r = ok(await call('get_overview', {}));
+  assert.equal(S(r).notes, 0);
+  assert.match(T(r), /^Map: /);
+  r = ok(await call('list_notes', {}));
+  assert.equal(T(r), 'No notes.');
+  r = bad(await call('create_note', {}), 'INVALID_INPUT');
+  assert.match(T(r), /title: required/);
+  bad(await call('get_note', { id: 'abc' }), 'INVALID_INPUT');
+  bad(await call('get_note', { id: 7, extra: 1 }), 'INVALID_INPUT');
+  bad(await call('get_note', { id: 999 }), 'NOTE_NOT_FOUND');
+  bad(await call('nope', {}), 'UNKNOWN_TOOL');
+  bad(await call('list_tasks', { status: 'maybe' }), 'INVALID_INPUT');
+  bad(await call('record_decision', { id: 1, decision: 'x', decided: '17.10.2026' }), 'INVALID_INPUT');
+  part('Katalog: Beschreibungen vollständig, Namen eindeutig, leere Datenbank, Eingaben werden geprüft');
+
+  // ---------- Notizen: anlegen, lesen, Baum, Suche ----------
+  r = ok(await call('create_note', { title: 'Projekt', body: '? Welche Bank?\n- [ ] Angebot einholen @2026-10-20\n  - [ ] Bank anrufen\n?! Variante A oder B? @anna (@ben)', tags: ['Arbeit', '#arbeit', 'Bank'] }));
+  const pid = S(r).id;
+  assert.ok(Number.isInteger(pid));
+  assert.deepEqual(S(r).tags, ['Arbeit', 'Bank']);
+  assert.match(T(r), /^Created note \[\d+\] "Projekt" at the root\.$/);
+  r = ok(await call('create_note', { title: ' Kind ', body: 'Text', parent_id: String(pid) }), 'Kennung als Text');
+  const cid = S(r).id;
+  bad(await call('create_note', { title: 'x', parent_id: 999 }), 'TARGET_NOT_FOUND');
+  r = ok(await call('get_note', { id: cid }));
+  assert.equal(S(r).title, 'Kind');
+  assert.deepEqual(S(r).path, [{ id: pid, title: 'Projekt' }]);
+  assert.equal(S(r).parent_id, pid);
+  r = ok(await call('get_note', { id: pid }));
+  assert.deepEqual(S(r).tags, ['Arbeit', 'Bank']);
+  assert.equal(S(r).questions.length, 2);
+  assert.equal(S(r).tasks.length, 2);
+  assert.match(T(r), /^# Projekt\n\(id \d+ · at the root · tags: Arbeit, Bank · updated 2026-10-17T/);
+  assert.match(T(r), /\[q \d+\] \(note \d+ "Projekt"\) Welche Bank\? — open/);
+  assert.match(T(r), /\[d \d+\] \(note \d+ "Projekt"\) Variante A oder B\? @anna \(@ben\) — open/);
+  assert.match(T(r), /\[t \d+\] \(note \d+ "Projekt"\) Angebot einholen — due 2026-10-20 — 1 of 1 subtasks open — open/);
+  assert.match(T(r), /\[t \d+\] \(note \d+ "Projekt"\)   Bank anrufen — open/);
+  r = ok(await call('list_notes', {}));
+  assert.equal(T(r), `- [${pid}] Projekt  (1 open question, 1 open decision, 2 open tasks)\n  - [${cid}] Kind`);
+  assert.equal(S(r).notes[1].depth, 1);
+  r = ok(await call('list_notes', { parent_id: pid }));
+  assert.equal(T(r), `- [${cid}] Kind`);
+  r = ok(await call('list_notes', { depth: 1 }));
+  assert.ok(!T(r).includes('Kind'), 'Tiefe 1');
+  bad(await call('list_notes', { parent_id: 999 }), 'NOTE_NOT_FOUND');
+  r = ok(await call('search_notes', { query: 'bank' }));
+  assert.equal(S(r).total, 1);
+  assert.equal(S(r).items[0].id, pid);
+  assert.match(S(r).items[0].snippet, /Welche Bank\?/);
+  assert.match(T(r), /^1 note found\n\[\d+\] Projekt — /);
+  r = ok(await call('search_notes', { tag: 'arbeit' }));
+  assert.equal(S(r).total, 1);
+  r = ok(await call('search_notes', {}));
+  assert.equal(S(r).total, 2, 'ohne Suchbegriff: alle lebenden Notizen');
+  assert.equal(S(r).items[0].id, cid, 'zuletzt geändert zuerst');
+  assert.deepEqual(S(r).items[0].path, ['Projekt']);
+  r = ok(await call('search_notes', { query: 'x', limit: 1, offset: 5 }));
+  assert.equal(S(r).items.length, 0);
+  part('Notizen: anlegen mit Tags und Eltern, lesen mit Pfad, Fragen und Aufgaben, Baum mit Marken, Teilbaum, Tiefe, Suche mit Ausschnitt, Tag, Seiten');
+
+  // ---------- Fragen und Entscheide ----------
+  r = ok(await call('list_questions', {}));
+  assert.equal(S(r).total, 1);
+  const qid = S(r).items[0].id;
+  assert.equal(S(r).items[0].kind, 'question');
+  assert.match(T(r), /^1 question\n\[q \d+\]/);
+  r = ok(await call('list_decisions', {}));
+  assert.equal(S(r).total, 1);
+  const did = S(r).items[0].id;
+  assert.deepEqual(S(r).items[0].people, [{ handle: 'anna', optional: false }, { handle: 'ben', optional: true }]);
+  assert.equal(S(ok(await call('list_decisions', { person: '@ben' }))).total, 1);
+  assert.equal(S(ok(await call('list_questions', { person: 'ben' }))).total, 0);
+  assert.equal(S(ok(await call('list_questions', { note_id: cid }))).total, 0);
+  bad(await call('answer_question', { id: did, answer: 'x' }), 'INVALID_INPUT');
+  bad(await call('record_decision', { id: qid, decision: 'x' }), 'INVALID_INPUT');
+  bad(await call('answer_question', { id: 999, answer: 'x' }), 'QUESTION_NOT_FOUND');
+  r = ok(await call('answer_question', { id: qid, answer: 'Raiffeisen\nwegen der Nähe' }));
+  assert.equal(S(r).note_id, pid);
+  let body = S(ok(await call('get_note', { id: pid }))).body;
+  assert.match(body, /^\? Welche Bank\?\n! Raiffeisen\n! wegen der Nähe\n- \[ \] Angebot/);
+  assert.equal(S(ok(await call('list_questions', {}))).total, 0);
+  r = ok(await call('list_questions', { status: 'answered' }));
+  assert.equal(S(r).items[0].answer, 'Raiffeisen\nwegen der Nähe');
+  assert.match(T(r), /answered: Raiffeisen \/ wegen der Nähe/);
+  r = ok(await call('record_decision', { id: did, decision: 'Variante B', decided: '2026-10-17' }));
+  body = S(ok(await call('get_note', { id: pid }))).body;
+  assert.match(body, /\?! Variante A oder B\? @anna \(@ben\)\n!! 2026-10-17: Variante B$/);
+  r = ok(await call('list_decisions', { status: 'decided' }));
+  assert.equal(S(r).items[0].decided, '2026-10-17');
+  assert.match(T(r), /decided 2026-10-17: Variante B/);
+  assert.equal(S(ok(await call('list_decisions', {}))).total, 0);
+  r = ok(await call('list_people', {}));
+  assert.deepEqual(S(r).people, ['anna', 'ben']);
+  assert.equal(T(r), '@anna, @ben');
+  part('Fragen und Entscheide: auflisten mit Personen, Filter, beantworten als !-Zeilen, Entscheid mit Datum als !!-Zeile, Arten nicht verwechselbar');
+
+  // ---------- Aufgaben ----------
+  r = ok(await call('list_tasks', {}));
+  assert.equal(S(r).total, 2);
+  const [main, sub] = S(r).items;
+  assert.equal(main.subtasks_open, 1);
+  assert.equal(sub.depth, 1);
+  assert.equal(sub.parent_text, 'Angebot einholen');
+  r = bad(await call('complete_task', { id: main.id }), 'SUBTASKS_OPEN');
+  assert.match(T(r), /1 subtask is still open/);
+  assert.equal(S(r).error.open, 1);
+  ok(await call('complete_task', { id: sub.id }));
+  r = ok(await call('complete_task', { id: main.id }));
+  assert.equal(S(r).done, true);
+  assert.equal(S(ok(await call('list_tasks', {}))).total, 0);
+  r = ok(await call('list_tasks', { status: 'done' }));
+  assert.equal(S(r).total, 2);
+  assert.match(T(r), /^2 tasks\n/);
+  ok(await call('reopen_task', { id: sub.id }));
+  assert.equal(S(ok(await call('list_tasks', { note_id: pid }))).total, 2, 'Unteraufgabe und Hauptaufgabe wieder offen');
+  bad(await call('complete_task', { id: 999 }), 'TASK_NOT_FOUND');
+  part('Aufgaben: auflisten mit Unteraufgaben, abschliessen erst nach den Unteraufgaben (verständlicher Fehler), erledigt, wieder öffnen');
+
+  // ---------- Schreiben: anhängen, ersetzen, Konflikt, Tags, Verlauf, verschieben, Archiv, Papierkorb ----------
+  ok(await call('append_to_note', { id: cid, text: 'Mehr' }));
+  let n = S(ok(await call('get_note', { id: cid })));
+  assert.equal(n.body, 'Text\nMehr');
+  const base = n.updated_at;
+  now += 6 * 60 * 1000; // neue Arbeitsphase im Verlauf
+  r = ok(await call('update_note', { id: cid, body: 'Neu', base_updated_at: base }));
+  assert.notEqual(S(r).updated_at, base);
+  r = bad(await call('update_note', { id: cid, body: 'Alt', base_updated_at: base }), 'NOTE_CONFLICT');
+  n = S(ok(await call('get_note', { id: cid })));
+  assert.equal(S(r).error.updated_at, n.updated_at);
+  assert.equal(n.body, 'Neu', 'bei Konflikt nichts geschrieben');
+  bad(await call('update_note', { id: cid }), 'INVALID_INPUT');
+  ok(await call('update_note', { id: cid, title: 'Kind 2' }));
+  assert.equal(S(ok(await call('get_note', { id: cid }))).title, 'Kind 2');
+  r = ok(await call('set_tags', { id: cid, tags: ['b', 'a', 'b'] }));
+  assert.deepEqual(S(r).tags, ['b', 'a']);
+  r = ok(await call('get_history', { id: cid }));
+  assert.ok(S(r).versions.length >= 1);
+  assert.equal(S(r).versions[0].author, 'Agent-Test');
+  r = ok(await call('get_history', { id: cid, version_id: S(r).versions[0].version_id }));
+  assert.equal(S(r).version.body, 'Text\nMehr');
+  bad(await call('get_history', { id: cid, version_id: 999999 }), 'HISTORY_NOT_FOUND');
+  ok(await call('move_note', { id: cid, parent_id: null }));
+  assert.equal(S(ok(await call('get_note', { id: cid }))).parent_id, null);
+  bad(await call('move_note', { id: pid, parent_id: pid }), 'MOVE_INTO_SELF');
+  bad(await call('move_note', { id: pid, parent_id: 999 }), 'TARGET_NOT_FOUND');
+  ok(await call('move_note', { id: cid, parent_id: pid }));
+  r = ok(await call('archive_note', { id: pid }));
+  assert.deepEqual([...S(r).ids].sort(), [pid, cid].sort());
+  assert.equal(T(r), 'Archived 2 notes.');
+  bad(await call('update_note', { id: cid, body: 'x' }), 'ARCHIVED_READONLY');
+  bad(await call('append_to_note', { id: pid, text: 'x' }), 'ARCHIVED_READONLY');
+  bad(await call('set_tags', { id: pid, tags: [] }), 'ARCHIVED_READONLY');
+  bad(await call('create_note', { title: 'u', parent_id: pid }), 'ARCHIVED_NO_CHILD');
+  assert.equal(T(ok(await call('list_notes', {}))), 'No notes.');
+  assert.match(T(ok(await call('list_notes', { include_archived: true }))), /Projekt  \(archived\)\n  - \[\d+\] Kind 2  \(archived\)/);
+  assert.equal(S(ok(await call('list_questions', { status: 'all' }))).total, 0, 'archiviert zählt nicht');
+  assert.equal(S(ok(await call('list_questions', { status: 'all', include_archived: true }))).total, 1);
+  r = ok(await call('unarchive_note', { id: cid }));
+  assert.equal(S(r).ids.length, 2, 'Kind samt Eltern');
+  r = ok(await call('delete_note', { id: cid }));
+  assert.match(T(r), /to the trash/);
+  assert.equal(S(ok(await call('get_note', { id: cid }))).in_trash, true);
+  bad(await call('append_to_note', { id: cid, text: 'x' }), 'IN_TRASH');
+  r = ok(await call('search_notes', { scope: 'trash' }));
+  assert.equal(S(r).items[0].id, cid);
+  assert.ok(S(r).items[0].in_trash);
+  bad(await call('restore_note', { id: pid }), 'INVALID_INPUT');
+  ok(await call('restore_note', { id: cid }));
+  assert.equal(S(ok(await call('get_note', { id: cid }))).in_trash, false);
+  part('Schreiben: anhängen, ersetzen mit Basisstand und Konflikt, Titel, Tags, Verlauf, verschieben, Archiv schreibgeschützt, Papierkorb und zurück');
+
+  // ---------- Lesemodus, Ressourcen, Übersicht, Änderungsmeldung ----------
+  const ro = Agent.create(backend, { readOnly: true });
+  assert.ok(ro.list().length >= 8 && ro.list().every(t => t.annotations.readOnlyHint), 'nur lesende Werkzeuge');
+  bad(await ro.call('create_note', { title: 'x' }), 'UNKNOWN_TOOL');
+  ok(await ro.call('get_overview', {}));
+  assert.deepEqual(json(cat.resources().map(x => x.uri)), ['nonotes://overview']);
+  assert.equal(cat.resourceTemplates()[0].uriTemplate, 'nonotes://note/{id}');
+  let res = await cat.readResource(`nonotes://note/${pid}`);
+  assert.equal(res.mimeType, 'text/markdown');
+  assert.match(res.text, /^# Projekt\n\n\? Welche Bank\?/);
+  res = await cat.readResource('nonotes://overview');
+  assert.match(res.text, /^Map: /);
+  await assert.rejects(cat.readResource('nonotes://nope'), e => e.code === 'RESOURCE_NOT_FOUND');
+  assert.ok(changes.includes('updateNote') && changes.includes('setTags') && changes.includes('answerQuestion') && changes.includes('setTaskDone'), 'Änderungen gemeldet (die Hülle speichert)');
+  r = ok(await call('get_overview', {}));
+  assert.equal(S(r).notes, 2);
+  assert.equal(S(r).questions.total, 1);
+  assert.equal(S(r).decisions.total, 1);
+  assert.equal(S(r).tasks.open, 2);
+  assert.deepEqual(S(r).tags.map(t => t.name), ['a', 'Arbeit', 'b', 'Bank']);
+  assert.match(T(r), /Tasks: 2 open of 2/);
+  part('Lesemodus kennt nur lesende Werkzeuge; Ressourcen; Übersicht; jede Änderung wird dem Backend gemeldet');
+
+  // ---------- Protokoll ----------
+  const Mcp = sandbox.NoNotesMcp;
+  const srv = Mcp.createServer({ catalog: cat, name: 'nonotes', version: 'test', log: () => {} });
+  const H = async (server, m) => json(await server.handle(m));
+  const rpc = (id, method, params) => H(srv, { jsonrpc: '2.0', id, method, params });
+  let resp = await rpc(1, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
+  assert.equal(resp.jsonrpc, '2.0');
+  assert.equal(resp.id, 1);
+  assert.equal(resp.result.protocolVersion, '2025-06-18');
+  assert.ok(resp.result.capabilities.tools && resp.result.capabilities.resources);
+  assert.equal(resp.result.serverInfo.name, 'nonotes');
+  assert.match(resp.result.instructions, /NoNotes/);
+  for (const [want, got] of [['2025-11-25', '2025-11-25'], ['2026-07-28', '2026-07-28'], ['2024-11-05', '2024-11-05'], ['2099-01-01', '2025-06-18'], [undefined, '2025-06-18']]) {
+    resp = await rpc(2, 'initialize', { protocolVersion: want });
+    assert.equal(resp.result.protocolVersion, got, String(want));
+  }
+  assert.equal(await H(srv, { jsonrpc: '2.0', method: 'notifications/initialized' }), null, 'Benachrichtigungen ohne Antwort');
+  resp = await rpc(3, 'ping');
+  assert.deepEqual(resp.result, {});
+  resp = await rpc(4, 'tools/list');
+  assert.equal(resp.result.tools.length, cat.list().length);
+  assert.ok(resp.result.tools.every(t => t.name && t.inputSchema && t.description));
+  resp = await rpc(5, 'tools/call', { name: 'create_note', arguments: { title: 'Per MCP' } });
+  assert.ok(!resp.error && !resp.result.isError, JSON.stringify(resp));
+  assert.equal(resp.result.content[0].type, 'text');
+  const mid = resp.result.structuredContent.id;
+  resp = await rpc(6, 'tools/call', { name: 'get_note', arguments: { id: 'x' } });
+  assert.equal(resp.result.isError, true, 'Werkzeugfehler sind Ergebnisse, keine Protokollfehler');
+  resp = await rpc(7, 'tools/call', { name: 'nope' });
+  assert.equal(resp.error.code, -32602);
+  resp = await rpc(8, 'tools/call', { name: 'get_overview', arguments: [1] });
+  assert.equal(resp.error.code, -32602);
+  resp = await rpc(9, 'resources/list');
+  assert.equal(resp.result.resources[0].uri, 'nonotes://overview');
+  resp = await rpc(10, 'resources/templates/list');
+  assert.equal(resp.result.resourceTemplates[0].uriTemplate, 'nonotes://note/{id}');
+  resp = await rpc(11, 'resources/read', { uri: `nonotes://note/${mid}` });
+  assert.equal(resp.result.contents[0].mimeType, 'text/markdown');
+  assert.match(resp.result.contents[0].text, /^# Per MCP/);
+  resp = await rpc(12, 'resources/read', { uri: 'nonotes://note/999999' });
+  assert.equal(resp.error.code, -32002);
+  resp = await rpc(13, 'resources/read', { uri: 'x://y' });
+  assert.equal(resp.error.code, -32002);
+  assert.deepEqual(resp.error.data, { uri: 'x://y' });
+  resp = await rpc(14, 'prompts/list');
+  assert.deepEqual(resp.result.prompts, []);
+  resp = await rpc(15, 'completion/complete', {});
+  assert.equal(resp.error.code, -32601);
+  resp = await H(srv, { id: 16, method: 'ping' });
+  assert.equal(resp.error.code, -32600, 'ohne jsonrpc');
+  resp = await H(srv, { jsonrpc: '2.0', id: 17 });
+  assert.equal(resp.error.code, -32600, 'ohne Methode');
+  resp = json(await srv.handleText('{nope'));
+  assert.equal(resp.error.code, -32700);
+  assert.equal(resp.id, null);
+  resp = json(await srv.handleText(JSON.stringify([{ jsonrpc: '2.0', id: 'a', method: 'ping' }, { jsonrpc: '2.0', method: 'notifications/initialized' }, { jsonrpc: '2.0', id: 'b', method: 'ping' }])));
+  assert.deepEqual(resp.map(x => x.id), ['a', 'b'], 'Liste: nur Anfragen werden beantwortet');
+  assert.equal(await H(srv, [{ jsonrpc: '2.0', method: 'notifications/cancelled' }]), null);
+  resp = await H(srv, []);
+  assert.equal(resp.error.code, -32600);
+  // zustandslos: frischer Server ohne Begrüssung, Anfrage mit _meta wie im Entwurf 2026-07-28
+  const fresh = Mcp.createServer({ catalog: cat });
+  resp = await H(fresh, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'list_people', arguments: {}, _meta: { protocolVersion: '2026-07-28' } } });
+  assert.deepEqual(resp.result.structuredContent.people, ['anna', 'ben']);
+  const roSrv = Mcp.createServer({ catalog: ro });
+  resp = await H(roSrv, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'delete_note', arguments: { id: mid } } });
+  assert.equal(resp.error.code, -32602, 'Lesemodus: schreibende Werkzeuge gibt es nicht');
+  assert.equal((await H(roSrv, { jsonrpc: '2.0', id: 2, method: 'tools/list' })).result.tools.length, ro.list().length);
+  part('Protokoll: Begrüssung je Fassung, Benachrichtigungen ohne Antwort, Ping, Werkzeuge, Ressourcen, Fehlercodes, kaputtes JSON, Listen, zustandslos');
+}
+
 suite('Kern-Test', [
   { name: 'Zusammenführen: Myers-Vergleich, Dreiwege-Zusammenführung mit Zufallsdaten, Konflikte, Cursor', run: runMerge },
   { name: 'Datenbank: Standardschema, Angleichen alter Dateien (Schema 1, 11, 12, 13), Konflikterkennung, Autor im Verlauf, Querverweise, Entscheide und Personen', run: runDb },
   { name: 'Build: fremde Ausprägung, Verzeichnis der Erweiterungen, --plugins, klare Fehler', run: runBuild },
   { name: 'Videoadressen: YouTube, Vimeo, Dailymotion, Fälschungen, Karte im Markdown, maskierte Titel', run: runEmbeds },
+  { name: 'Agenten: Werkzeugkatalog (Notizen, Fragen, Entscheide, Aufgaben, Verlauf, Archiv, Papierkorb, Lesemodus, Ressourcen) und MCP-Protokoll aller Fassungen', run: runAgent },
 ]);

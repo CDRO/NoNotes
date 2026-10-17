@@ -235,6 +235,7 @@ function lint() {
       const rel = path.relative(ROOT, file).split(path.sep).join('/');
       if (SKIP_FILES.has(rel)) continue;
       const src = fs.readFileSync(file, 'utf8');
+      if (/i18n-ignore-file/.test(src.slice(0, 400))) continue; // ganze Datei bewusst englisch (Texte für Agenten, siehe docs/LANGUAGES.md)
       const lines = src.split('\n');
       const ast = acorn.parse(src, { ecmaVersion: 2022, locations: true });
       walk(ast, [], (node, anc) => {

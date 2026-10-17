@@ -463,6 +463,8 @@
         <p>Die Knöpfe wirken auf den markierten Text oder die aktuelle Zeile. Ohne Markierung wird ein Platzhalter eingefügt und gleich markiert. Listen, Zitate, Fragen und Antworten lassen sich mit demselben Knopf wieder entfernen. Die Darstellung wechselt zwischen <strong>Bearbeiten</strong>, <strong>Geteilt</strong> und <strong>Vorschau</strong>. In der geteilten Ansicht scrollen Text und Vorschau gemeinsam; es führt jeweils die Seite, auf der die Maus liegt oder die den Fokus hat.</p>
         <p>Beim Schreiben führt <kbd>Enter</kbd> Listen, Aufgaben, Zitate und Antwortzeilen weiter, <kbd>Tab</kbd> und <kbd>Shift</kbd>+<kbd>Tab</kbd> rücken Listenelemente ein und aus. Termine von Fragen und Aufgaben erscheinen in der Vorschau als Abzeichen, im Text bleibt <code>@15.10.2026</code> stehen.</p>
         <p><strong>Unteraufgaben:</strong> Eine Aufgabe, die tiefer eingerückt direkt unter einer anderen steht (<kbd>Tab</kbd>), gehört zu ihr, beliebig tief. Die Hauptaufgabe lässt sich erst abhaken, wenn alle Unteraufgaben erledigt sind; bis dahin bleibt das Kästchen offen und die Statuszeile nennt die Zahl der offenen. Ein <strong>Doppelklick auf den Aufgabentext</strong> (in der Vorschau oder in der Aufgabenliste) schliesst die Aufgabe und alle Unteraufgaben ab, bei einer vollständig erledigten Aufgabe öffnet er sie wieder. Öffnest du eine Unteraufgabe wieder, werden erledigte Hauptaufgaben darüber mit geöffnet. Ein Abzeichen wie <em>2/3</em> zeigt den Fortschritt. Tippst du <code>[x]</code> von Hand, lässt sich das nicht verhindern; die Liste zeigt dann den Hinweis «Unteraufgaben offen».</p>
+        <h3>KI-Agenten</h3>
+        <p>NoNotes meldet seine Werkzeuge (Übersicht, Suche, Notizen anlegen und ergänzen, Fragen beantworten, Entscheide festhalten, Aufgaben abschliessen) beim Agenten des Browsers an, sobald der Browser das anbietet (WebMCP). Der Agent fragt vor Änderungen nach; gespeichert wird wie bei jeder Eingabe. Im Lesemodus gibt es nur lesende Werkzeuge.</p>
       </section>
 
       <section class="help-panel" data-panel="keys" hidden>
@@ -585,6 +587,8 @@
   <script src="../core/markdown.js"></script>
   <script src="../core/editing.js"></script>
   <script src="../core/backend.js"></script>
+  <script src="../agent/catalog.js"></script>
+  <script src="../agent/webmcp.js"></script>
   <script src="../store-local/storage.js"></script>
   <!-- EDITION-SCRIPTS -->
   <script src="mindmap.js"></script>

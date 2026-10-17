@@ -694,4 +694,6 @@ NoNotesI18n.register('en', 'English', {
   'In Ordner speichern…': 'Save to folder…',
   'Als ZIP herunterladen': 'Download as ZIP',
   'Lade NoNotes…': 'Loading NoNotes…',
+  'KI-Agenten': 'AI agents',
+  'NoNotes meldet seine Werkzeuge (Übersicht, Suche, Notizen anlegen und ergänzen, Fragen beantworten, Entscheide festhalten, Aufgaben abschliessen) beim Agenten des Browsers an, sobald der Browser das anbietet (WebMCP). Der Agent fragt vor Änderungen nach; gespeichert wird wie bei jeder Eingabe. Im Lesemodus gibt es nur lesende Werkzeuge.': 'NoNotes registers its tools (overview, search, creating and extending notes, answering questions, recording decisions, completing tasks) with the browser\'s agent as soon as the browser offers that (WebMCP). The agent asks before making changes; saving works like any other edit. In read-only mode only reading tools are available.',
 }, { locale: 'en-GB' });

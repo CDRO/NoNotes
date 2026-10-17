@@ -193,6 +193,16 @@ Dateien ein, denen du vertraust. Erweiterungen kommen nie aus der Datenbankdatei
 `plugins/beispiele/` liegen zwei Beispiele (Datum einfügen, Design «Sepia»). Die Schnittstelle ist asynchron und
 bleibt innerhalb von 1.x stabil; Beschreibung für Autoren in [docs/PLUGINS.md](docs/PLUGINS.md).
 
+### KI-Agenten
+
+Seit 2.1.0 beschreibt NoNotes seine Daten als **Werkzeuge für Agenten** (MCP): Übersicht, Notizen suchen und lesen, anlegen und
+ergänzen, Fragen beantworten, Entscheide festhalten, Aufgaben abschliessen, Tags setzen, Verlauf lesen. Im Browser meldet die Seite
+diese Werkzeuge beim **Agenten des Browsers** an (WebMCP, `document.modelContext`), etwa Copilot in Edge oder Gemini in Chrome: Er
+kann dann auf Zuruf offene Fragen zusammenfassen oder eine Antwort unter die Frage schreiben; vor Änderungen fragt er nach, gespeichert
+wird wie bei jeder Eingabe. Stand Oktober 2026 bauen die Browser WebMCP gerade ein; ein Agent, der die Werkzeuge einer Seite aufruft,
+ist noch nicht ausgeliefert. NoNotes ist bereit, sobald er kommt, und tut bis dahin nichts. Im Lesemodus gibt es nur lesende Werkzeuge.
+Für Agenten über das Netz liegt das Protokoll bei (für Ausprägungen mit Server). Einzelheiten: [docs/AGENTS.md](docs/AGENTS.md).
+
 ### Liste, Suche, Tags, Papierkorb, Archiv
 
 Der Umschalter oben wechselt zur klassischen Liste mit Suche und Editor nebeneinander.
@@ -367,7 +377,7 @@ Dasselbe gilt für Fragen.
 
 Der Quelltext liegt in Paketen (`packages/`), eine Ausprägung (`editions/local/`) setzt daraus die
 auslieferbare Version zusammen. Aufbau und Abhängigkeiten: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
-Datenschnittstelle: [docs/BACKEND.md](docs/BACKEND.md), Sprachen: [docs/LANGUAGES.md](docs/LANGUAGES.md).
+Datenschnittstelle: [docs/BACKEND.md](docs/BACKEND.md), Sprachen: [docs/LANGUAGES.md](docs/LANGUAGES.md), KI-Agenten: [docs/AGENTS.md](docs/AGENTS.md).
 Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 
 | Teil | Umsetzung |
@@ -383,6 +393,7 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | Druck | `packages/ui/print.js` baut das Druckdokument in `#printArea`; `@media print` blendet den Rest der App aus |
 | Scroll-Sync | `packages/ui/scrollsync.js`: Spiegel des Textes misst Zeilenhöhen, Vorschau-Blöcke tragen `data-line`, lineare Interpolation dazwischen |
 | Erweiterungen | `packages/core/plugins.js` (Verzeichnis, Lader, Schalter, Ereignisse) und die Anbindung in `packages/ui/app.js`; Ordner `plugins/` mit Liste, Anleitung und Beispielen; das Verzeichnis des Ordners erzeugt `tools/build.cjs` (siehe [docs/PLUGINS.md](docs/PLUGINS.md)) |
+| KI-Agenten | `packages/agent/`: `catalog.js` beschreibt die Werkzeuge (englische Namen, Eingabeschemata) und führt sie über das Backend aus, `webmcp.js` meldet sie beim Agenten des Browsers an (`document.modelContext`, sobald ein Browser sie anbietet), `protocol.js` spricht MCP ohne Transport für Ausprägungen mit Server; Tests `test/core.cjs` (Katalog, Protokoll) und `test/extend.cjs` (WebMCP gegen einen Nachbau); siehe [docs/AGENTS.md](docs/AGENTS.md) |
 | Verlauf | `packages/core/history.js` (Patches und Zeilenvergleich als reine Textfunktionen); Fassungen und Aufbewahrung in `packages/data/db.js`, Dialog in `packages/ui/app.js`; wer eine Fassung geschrieben hat, steht in `author` (nur wenn ein Backend einen Namen liefert) |
 | Videos | `packages/core/embeds.js` erkennt Adressen von YouTube, Vimeo und Dailymotion (nur genau passende Hosts und Kennungen); `markdown.js` macht aus einer Adresse allein auf einer Zeile eine Karte, die Vorschau baut den Rahmen erst nach dem Klick (siehe [docs/EMBEDS.md](docs/EMBEDS.md)); Tests `test/core.cjs` und `test/extend.cjs` |
 | Querverweise | `[[Titel*]]` im Text: `packages/core/links.js` liest sie, `db.js` führt den Index `note_links` beim Speichern nach und löst Ziele über den Titel auf (`getLinks`); die Mindmap zeichnet gestrichelte Linien mit Pfeil zwischen sichtbaren Knoten, auch im SVG für Export und Druck; Schalter «Verweise» in der Leiste (je Browser gemerkt); Test `test/extend.cjs` |
