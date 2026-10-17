@@ -64,9 +64,28 @@ lädt sie den neuen Stand still. Mit ungesicherten Änderungen führt sie beides
 derselben Stelle geändert wurde oder die eigene Änderung den Baum, Bilder, Papierkorb oder Archiv betrifft, fragt sie: **Datei laden** verwirft
 die eigenen Änderungen, **Meine Fassung behalten** überschreibt die Datei. Bis zur Entscheidung wird nichts geschrieben.
 
+**Mehrere Bereiche** (seit 2.3.0). Für getrennte Themen, etwa Arbeit und Privat, legst du Bereiche an: jeder ist eine eigene
+Datenbank mit eigener Browser-Kopie, eigener Datei und eigener Hauptfarbe. Bearbeitet wird immer der aktive Bereich; Listen, Fragen,
+Entscheide, Aufgaben und Suche zeigen nur ihn.
+
+- **Wechseln:** Klick auf die Ablage unten links in der Statusleiste, `Datenbank → Bereiche…`, `Alt+1` … `Alt+9` nach der Stelle in
+  der Liste, `Alt+0` für das Menü. Die offene Notiz wird vorher gespeichert; der Wechsel dauert Sekundenbruchteile.
+- **Anlegen:** «Neuer Bereich…» beginnt leer (danach eine eigene Datenbankdatei anlegen); «Datei als Bereich öffnen…» nimmt eine
+  vorhandene NoNotes-Datei als weiteren Bereich auf. Dieselbe Datei in zwei Bereichen gibt es nicht: die App wechselt dann dorthin.
+- **Adresse:** `index.html?w=arbeit` öffnet den Bereich «Arbeit» direkt, als Lesezeichen oder Verknüpfung auf dem Desktop. Die
+  Kennung entsteht aus dem Namen (klein, ohne Umlaute: «Projekt Ä» → `projekt-ae`) und bleibt beim Umbenennen gleich; der neue Name
+  gilt in der Adresse ebenfalls. `?w=2` öffnet den zweiten Bereich der Liste. Gibt es den Bereich nicht, bietet die App an, ihn anzulegen.
+- **Tabs:** Jeder Tab hat seinen eigenen aktiven Bereich; zwei Tabs mit verschiedenen Bereichen stören sich nicht. Der Titel des Tabs
+  nennt den Bereich.
+- **Freigaben:** Nach einem Neustart des Browsers fragt er für jede Datei einmal um Erlaubnis, beim ersten Wechsel in ihren Bereich.
+- **Entfernen** nimmt den Bereich aus der Liste und löscht seine Browser-Kopie; die Datei auf der Platte bleibt.
+
+Wer schon mit einer Datei arbeitet, merkt erst etwas, wenn ein zweiter Bereich dazukommt: der bisherige heisst dann wie seine Datei
+(oder wie seine Mindmap) und bleibt der erste in der Liste.
+
 Weitere Funktionen im Menü **Datenbank**:
 
-- **Datenbankdatei öffnen…**: eine bestehende `.sqlite` von NoNotes laden und ab dann darin arbeiten.
+- **Datenbankdatei öffnen…**: eine bestehende `.sqlite` von NoNotes in den aktiven Bereich laden und ab dann darin arbeiten.
 - **Kopie herunterladen**: Stand als `NoNotes-JJJJ-MM-TT.sqlite` in den Download-Ordner legen.
 - **Aus Datei importieren…**: eine solche Kopie wieder einlesen (ersetzt den aktuellen Stand).
 - **Dateiverbindung trennen**: nur noch im Browser-Speicher arbeiten.
@@ -406,6 +425,7 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | Videos | `packages/core/embeds.js` erkennt Adressen von YouTube, Vimeo und Dailymotion (nur genau passende Hosts und Kennungen); `markdown.js` macht aus einer Adresse allein auf einer Zeile eine Karte, die Vorschau baut den Rahmen erst nach dem Klick (siehe [docs/EMBEDS.md](docs/EMBEDS.md)); Tests `test/core.cjs` und `test/extend.cjs` |
 | Querverweise | `[[Titel*]]` im Text: `packages/core/links.js` liest sie, `db.js` führt den Index `note_links` beim Speichern nach und löst Ziele über den Titel auf (`getLinks`); die Mindmap zeichnet gestrichelte Linien mit Pfeil zwischen sichtbaren Knoten, auch im SVG für Export und Druck; Schalter «Verweise» in der Leiste (je Browser gemerkt); Test `test/extend.cjs` |
 | Lesemodus | Meldet die Hülle `readOnly` (siehe [docs/BACKEND.md](docs/BACKEND.md)), sperrt `packages/ui/app.js` alle Schreibwege (`data-write`, `denyWrite()`) und `readOnlyBackend` lehnt schreibende Aufrufe mit `READ_ONLY` ab; Test `test/collab.cjs` |
+| Bereiche | `packages/store-local/storage.js` (Browser-Kopie und Datei-Handle je Bereich, Verzeichnis `areas`, Kennungen), `local-shell.js` (laden, wechseln, anlegen, öffnen, umbenennen, entfernen, `?w=` in der Adresse, `Alt+1 … 9`, Kanal zwischen Tabs mit Bereich), Menü über `host.showMenu`; `NoNotesAgent.multi()` für das Programm mit mehreren Dateien; Tests `test/app.cjs` (Abschnitt «Bereiche») und `test/core.cjs` (Programm); siehe [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Zusammenführen | `packages/core/merge.js`: zeilenweiser Dreiwege-Vergleich (Myers) für gleichzeitige Änderungen derselben Notiz; Speichern mit `baseUpdatedAt`, Konfliktdialog in `packages/ui/app.js` |
 | Hauptfarbe | `packages/core/palette.js`: acht Farben mit heller und dunkler Fassung (Fläche, Schrift auf der Fläche, Farbe als Schrift, Tönung); die Seite setzt sie über CSS-Variablen, Export und Druck über `toSvgString` |
 | Kalender | `packages/core/ical.js`: iCalendar nach RFC 5545 mit festen UIDs, SEQUENCE, VALARM, Zeilenfaltung; gemerkte Kennungen in `meta` |

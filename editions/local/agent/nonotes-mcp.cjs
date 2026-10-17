@@ -9,9 +9,11 @@
    unter einer Sperre (NoNotes.sqlite.lock), damit zwei Agenten sich nicht überschreiben. Die App merkt die Änderung von aussen
    und lädt sie nach. Alle Meldungen gehen auf die Fehlerausgabe; auf der Standardausgabe stehen nur MCP-Antworten.
 
-   Aufruf:  node agent/nonotes-mcp.cjs --file <Pfad zur NoNotes.sqlite> [--read-only] [--create] [--verbose]
-            node agent/nonotes-mcp.cjs --config [<Pfad zur NoNotes.sqlite>]   Einträge für Claude Code, VS Code, Claude Desktop, Copilot CLI
+   Aufruf:  node agent/nonotes-mcp.cjs --file <Pfad zur NoNotes.sqlite> [--file <weitere>] [--dir <Ordner>] [--read-only] [--create] [--verbose]
+            node agent/nonotes-mcp.cjs --config [<Datei> …] [--dir <Ordner>]   Einträge für Claude Code, VS Code, Claude Desktop, Copilot CLI
             node agent/nonotes-mcp.cjs --help | --version
+   Mehrere Dateien (Bereiche der App, ab v2.3.0): jede wird ein «workspace» mit der Kennung aus ihrem Namen (Arbeit.sqlite → arbeit);
+   die Werkzeuge nehmen dann den Parameter workspace, list_workspaces nennt die Dateien. Mit einer Datei bleibt alles wie zuvor.
    Braucht Node 18 oder neuer, sonst nichts: der Kern (js/) und sql.js (vendor/) liegen im selben Ordner wie die App. */
 'use strict';
 
@@ -198,11 +200,13 @@ function usage() {
     'NoNotes als MCP-Server für Agenten auf diesem Rechner (Claude Code, VS Code mit Copilot, Claude Desktop, Copilot CLI).',
     '',
     'Aufruf:',
-    '  node agent/nonotes-mcp.cjs --file <Pfad zur NoNotes.sqlite> [--read-only] [--create] [--verbose]',
-    '  node agent/nonotes-mcp.cjs --config [<Pfad zur NoNotes.sqlite>]   Einträge für die Agenten zum Kopieren',
+    '  node agent/nonotes-mcp.cjs --file <Pfad zur NoNotes.sqlite> [--file …] [--dir <Ordner>] [--read-only] [--create] [--verbose]',
+    '  node agent/nonotes-mcp.cjs --config [<Datei> …] [--dir <Ordner>]   Einträge für die Agenten zum Kopieren',
     '  node agent/nonotes-mcp.cjs --help | --version',
     '',
-    '  --file       die Datenbankdatei der App (Datenbank → Datenbankdatei anlegen…); die App darf sie gleichzeitig offen haben',
+    '  --file       die Datenbankdatei der App (Datenbank → Datenbankdatei anlegen…); die App darf sie gleichzeitig offen haben.',
+    '               Mehrmals angegeben: je Datei ein Bereich («workspace», Kennung aus dem Dateinamen)',
+    '  --dir        alle .sqlite-Dateien dieses Ordners als Bereiche (beim Start gelesen)',
     '  --read-only  nur lesende Werkzeuge, es wird nie geschrieben',
     '  --create     legt die Datei an, wenn sie fehlt',
     '  --verbose    jeden Werkzeugaufruf auf der Fehlerausgabe melden',
@@ -211,17 +215,20 @@ function usage() {
   ].join('\n');
 }
 
-function configText(file) {
+function configText(files, dirs, order) {
   const program = path.resolve(__filename);
-  const db = file ? path.resolve(file) : '<Pfad zur NoNotes.sqlite>';
-  const args = [program, '--file', db];
+  const sources = [];
+  for (const src of order || []) sources.push(src.file ? '--file' : '--dir', path.resolve(src.file || src.dir));
+  if (!sources.length) sources.push('--file', '<Pfad zur NoNotes.sqlite>');
+  const args = [program, ...sources];
   const q = s => (/[\s"]/.test(s) ? JSON.stringify(s) : s);
   const entry = extra => JSON.stringify({ nonotes: Object.assign({}, extra, { command: 'node', args }) }, null, 2).replace(/\n/g, '\n  ');
+  const shown = sources.filter((x, i) => i % 2 === 1).join(', ');
   return [
-    `Einträge für «nonotes» (Programm: ${program}, Datei: ${db}). Pfade nach Bedarf anpassen; «node» muss im Pfad liegen.`,
+    `Einträge für «nonotes» (Programm: ${program}, ${files.length + dirs.length > 1 || dirs.length ? 'Bereiche' : 'Datei'}: ${shown}). Pfade nach Bedarf anpassen; «node» muss im Pfad liegen.`,
     '',
     'Claude Code (Terminal, gilt für dieses Benutzerkonto):',
-    `  claude mcp add --scope user nonotes -- node ${q(program)} --file ${q(db)}`,
+    `  claude mcp add --scope user nonotes -- node ${q(program)} ${sources.map(q).join(' ')}`,
     '  oder in .mcp.json im Projektordner bzw. ~/.claude.json:',
     `  { "mcpServers": ${entry({ type: 'stdio' })} }`,
     '',
@@ -239,14 +246,15 @@ function configText(file) {
 }
 
 function parseArgs(argv) {
-  const a = { file: null, readOnly: false, create: false, verbose: false, config: false, help: false, version: false, rest: [] };
+  const a = { files: [], dirs: [], sources: [], readOnly: false, create: false, verbose: false, config: false, help: false, version: false, rest: [] };
   for (let i = 0; i < argv.length; i++) {
     const x = argv[i];
-    if (x === '--file') a.file = argv[++i];
+    if (x === '--file') { if (argv[i + 1] !== undefined) { a.files.push(argv[++i]); a.sources.push({ file: argv[i] }); } }
+    else if (x === '--dir') { if (argv[i + 1] !== undefined) { a.dirs.push(argv[++i]); a.sources.push({ dir: argv[i] }); } }
     else if (x === '--read-only') a.readOnly = true;
     else if (x === '--create') a.create = true;
     else if (x === '--verbose') a.verbose = true;
-    else if (x === '--config') { a.config = true; if (argv[i + 1] && !argv[i + 1].startsWith('--')) a.file = argv[++i]; }
+    else if (x === '--config') { a.config = true; while (argv[i + 1] && !argv[i + 1].startsWith('--')) { a.files.push(argv[++i]); a.sources.push({ file: argv[i] }); } }
     else if (x === '--help' || x === '-h') a.help = true;
     else if (x === '--version') a.version = true;
     else a.rest.push(x);
@@ -259,31 +267,66 @@ async function main() {
   const log = (...m) => console.error('[nonotes-mcp]', ...m);
   if (args.help) { console.log(usage()); return 0; }
   if (args.version) { console.log(layout().version); return 0; }
-  if (args.config) { console.log(configText(args.file)); return 0; }
+  if (args.config) { console.log(configText(args.files, args.dirs, args.sources)); return 0; }
   if (args.rest.length) { console.error(`Unbekannte Angabe: ${args.rest.join(' ')}\n\n${usage()}`); return 2; }
-  if (!args.file) { console.error(`--file fehlt.\n\n${usage()}`); return 2; }
+
+  // Dateien sammeln, in der Reihenfolge der Befehlszeile; ein --dir bringt seine .sqlite-Dateien alphabetisch
+  const files = [];
+  for (const src of args.sources) {
+    if (src.file) { files.push(path.resolve(src.file)); continue; }
+    let names;
+    try { names = fs.readdirSync(src.dir); } catch (e) { console.error(`Ordner nicht lesbar: ${path.resolve(src.dir)}`); return 2; }
+    for (const n of names.filter(n => /\.(sqlite3?|db)$/i.test(n) && !n.startsWith('.')).sort((a, b) => a.localeCompare(b))) files.push(path.resolve(src.dir, n));
+  }
+  const unique = [...new Set(files)];
+  if (!unique.length) { console.error(`${args.dirs.length ? 'Keine .sqlite-Datei im Ordner.' : '--file fehlt.'}\n\n${usage()}`); return 2; }
 
   const core = await loadCore();
-  const store = new FileStore({ file: args.file, core, readOnly: args.readOnly, log: args.verbose ? log : () => {} });
-  if (!fs.existsSync(store.file)) {
-    if (!args.create) { console.error(`Datei nicht gefunden: ${store.file} (--create legt eine neue an)`); return 2; }
-    if (args.readOnly) { console.error('--create und --read-only schliessen sich aus.'); return 2; }
-    try { store.create(); } catch (e) { console.error(`Datei konnte nicht angelegt werden: ${e.message}`); return 2; }
-    log(`Neue Datei angelegt: ${store.file}`);
-  } else {
-    try { await store.open(); } catch (e) {
-      if (e && e.code === 'NOT_NONOTES_FILE') console.error(`Diese Datei stammt nicht von NoNotes: ${store.file}`);
-      else if (e && e.code === 'SCHEMA_TOO_NEW') console.error(`Die Datei stammt von einer neueren NoNotes-Version; bitte die App (und dieses Programm) aktualisieren: ${store.file}`);
-      else console.error(`Datei lässt sich nicht öffnen: ${store.file}: ${e.message}`);
-      return 2;
+  const stores = [];
+  for (const file of unique) {
+    const store = new FileStore({ file, core, readOnly: args.readOnly, log: args.verbose ? log : () => {} });
+    if (!fs.existsSync(store.file)) {
+      if (!args.create) { console.error(`Datei nicht gefunden: ${store.file} (--create legt eine neue an)`); return 2; }
+      if (args.readOnly) { console.error('--create und --read-only schliessen sich aus.'); return 2; }
+      try { store.create(); } catch (e) { console.error(`Datei konnte nicht angelegt werden: ${e.message}`); return 2; }
+      log(`Neue Datei angelegt: ${store.file}`);
+    } else {
+      try { await store.open(); } catch (e) {
+        if (e && e.code === 'NOT_NONOTES_FILE') console.error(`Diese Datei stammt nicht von NoNotes: ${store.file}`);
+        else if (e && e.code === 'SCHEMA_TOO_NEW') console.error(`Die Datei stammt von einer neueren NoNotes-Version; bitte die App (und dieses Programm) aktualisieren: ${store.file}`);
+        else console.error(`Datei lässt sich nicht öffnen: ${store.file}: ${e.message}`);
+        return 2;
+      }
     }
+    stores.push(store);
   }
+  const catalogOf = store => guardedCatalog(core.Agent.create(core.BackendLocal.create({ getDb: () => store.db, onChange: () => {} }), { readOnly: args.readOnly, log }), store, log);
 
-  const backend = core.BackendLocal.create({ getDb: () => store.db, onChange: () => {} });
-  const catalog = guardedCatalog(core.Agent.create(backend, { readOnly: args.readOnly, log }), store, log);
+  let catalog;
+  let where;
+  if (stores.length === 1) {
+    catalog = catalogOf(stores[0]);
+    where = `the file ${stores[0].file}`;
+  } else {
+    // Bereiche: Kennung aus dem Dateinamen wie in der App (Arbeit.sqlite → arbeit), doppelte bekommen -2, -3 …
+    const entries = [];
+    for (const store of stores) {
+      const name = path.basename(store.file).replace(/\.(sqlite3?|db)$/i, '');
+      let id = core.Agent.slug(name);
+      for (let n = 2; entries.some(e => e.id === id); n++) id = `${core.Agent.slug(name)}-${n}`;
+      entries.push({ id, name, file: store.file, catalog: catalogOf(store) });
+    }
+    catalog = core.Agent.multi({
+      readOnly: args.readOnly, log,
+      workspaces: () => entries.map(e => ({ id: e.id, name: e.name, file: e.file })),
+      catalogFor: id => entries.find(e => e.id === id).catalog,
+    });
+    where = `${entries.length} files (${entries.map(e => `${e.id}: ${e.file}`).join('; ')})`;
+    log(`Bereiche: ${entries.map(e => e.id).join(', ')}`);
+  }
   const server = core.Mcp.createServer({
     catalog, name: 'nonotes', title: 'NoNotes', version: core.version, log,
-    instructions: `${core.Agent.INSTRUCTIONS} This server works on the file ${store.file}${args.readOnly ? ' (read-only)' : ''}; the NoNotes app may have the same file open and picks up changes.`,
+    instructions: `${catalog.instructions} This server works on ${where}${args.readOnly ? ' (read-only)' : ''}; the NoNotes app may have the same files open and picks up changes.`,
   });
 
   // Standardeingabe: eine Nachricht je Zeile, Antworten in derselben Reihenfolge
@@ -300,7 +343,7 @@ async function main() {
   });
   await new Promise(resolve => { rl.on('close', resolve); process.on('SIGINT', resolve); process.on('SIGTERM', resolve); });
   await queue;
-  try { if (store.db) store.db.close(); } catch (e) { /* egal */ }
+  for (const store of stores) { try { if (store.db) store.db.close(); } catch (e) { /* egal */ } }
   return 0;
 }
 

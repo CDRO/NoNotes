@@ -21,7 +21,9 @@ async function suite(title, sections, options) {
   const started = Date.now();
   try {
     if (options && options.browser) browser = await loadPlaywright().chromium.launch();
+    const only = process.env.NONOTES_TEST_ONLY; // nur Abschnitte, deren Name das Wort enthält (Entwicklung)
     for (const s of sections) {
+      if (only && !(s.name || '').includes(only)) continue;
       state.part = null;
       await s.run(browser, part, step);
       if (s.name) step(s.name);

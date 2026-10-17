@@ -80,6 +80,18 @@ Bank mit Raiffeisen». Der Agent zeigt jeden Werkzeugaufruf an und fragt vor Än
 **Optionen:** `--read-only` meldet nur lesende Werkzeuge und schreibt nie; `--create` legt die Datei an, wenn sie fehlt;
 `--verbose` meldet jeden Aufruf auf der Fehlerausgabe; `--help`, `--version`.
 
+**Mehrere Bereiche** (seit v2.3.0): `--file` lässt sich mehrmals angeben, `--dir <Ordner>` nimmt alle `.sqlite`-Dateien eines Ordners
+(beim Start gelesen). Jede Datei wird ein «workspace» mit der Kennung aus ihrem Namen, gleich gebildet wie die Bereiche der App
+(`Arbeit.sqlite` → `arbeit`, `Privat Ä.sqlite` → `privat-ae`, doppelte Namen bekommen `-2`). Dann gibt es das Werkzeug
+`list_workspaces`, jedes andere Werkzeug nimmt den Parameter `workspace`, und die Ressourcen heissen `nonotes://<workspace>/overview`
+und `nonotes://<workspace>/note/<id>`. Mit einer Datei bleibt alles wie zuvor (ohne `workspace`). Tipp: die Dateien so nennen wie die
+Bereiche in der App, dann sprechen Agent und App dieselbe Sprache.
+
+```
+node <Ordner der App>/agent/nonotes-mcp.cjs --config --dir "<Ordner mit den .sqlite-Dateien>"
+claude mcp add --scope user nonotes -- node "<Ordner>/agent/nonotes-mcp.cjs" --dir "<Ordner mit den .sqlite-Dateien>"
+```
+
 **Wie Programm und App sich vertragen:**
 
 - Vor jedem Aufruf prüft das Programm, ob die Datei sich geändert hat (Grösse, Zeitstempel, Prüfsumme), und liest sie dann neu.
@@ -93,8 +105,8 @@ Bank mit Raiffeisen». Der Agent zeigt jeden Werkzeugaufruf an und fragt vor Än
   kommen auf den neuen Stand; hat der Agent dieselbe Notiz geändert, wird zeilenweise zusammengeführt. Nur wenn dieselbe Stelle
   betroffen ist oder die eigene Änderung den Baum, Bilder, Papierkorb oder Archiv betrifft, fragt die App wie bisher
   («Datei laden» oder «Meine Fassung behalten»).
-- Das Programm hält keine Verbindung und keinen Port; es lebt nur, solange der Agent es laufen lässt. Es öffnet nur die Datei
-  aus `--file`. Zugriffsrechte sind die des Benutzerkontos, unter dem der Agent läuft.
+- Das Programm hält keine Verbindung und keinen Port; es lebt nur, solange der Agent es laufen lässt. Es öffnet nur die Dateien
+  aus `--file` und `--dir`, jede mit eigener Sperre. Zugriffsrechte sind die des Benutzerkontos, unter dem der Agent läuft.
 - Der Browser-Speicher (ohne Datenbankdatei) ist für das Programm nicht erreichbar: ohne Datei kein Agent.
 
 ## WebMCP: der Agent des Browsers

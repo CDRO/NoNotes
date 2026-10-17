@@ -2302,7 +2302,280 @@ async function runBackend(browser, part, step) {
   }
 }
 
+// ============================================================
+/* Bereiche (v2.3.0): mehrere Datenbanken in der lokalen Version. Anlegen, wechseln (Statusleiste, Menü, Alt+1 … 9), Adresse
+   index.html?w=…, je Bereich eigene Browser-Kopie, Datei und Hauptfarbe, umbenennen, entfernen, Datei als Bereich öffnen,
+   zwei Tabs mit verschiedenen Bereichen. */
+async function runAreas(browser, part, step) {
+  const watch = page => {
+    const errors = [];
+    page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+    page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+    return errors;
+  };
+  // Nachgebaute Dateien: window.__mkHandle(name, bytes) → Handle; Schreibvorgänge in window.__files[name]
+  const MOCK_FS = () => {
+    window.__files = {};
+    window.__mkHandle = (name, bytes) => {
+      window.__files[name] = { bytes: bytes || new Uint8Array(), writes: 0, mtime: 1 };
+      const h = {
+        kind: 'file', name,
+        queryPermission: async () => 'granted', requestPermission: async () => 'granted',
+        isSameEntry: async other => other === h || (other && other.name === name && other.__mock),
+        __mock: true,
+        getFile: async () => new File([window.__files[name].bytes], name, { lastModified: window.__files[name].mtime }),
+        createWritable: async () => {
+          const chunks = [];
+          return {
+            write: async d => { chunks.push(new Uint8Array(d)); },
+            close: async () => {
+              const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+              let o = 0;
+              for (const c of chunks) { out.set(c, o); o += c.length; }
+              const f = window.__files[name];
+              f.bytes = out; f.writes++; f.mtime++;
+            },
+            abort: async () => {},
+          };
+        },
+      };
+      return h;
+    };
+    window.__pickNew = [];
+    window.__nextOpen = null;
+    window.showSaveFilePicker = async opts => { window.__pickNew.push(opts.suggestedName); return window.__mkHandle(opts.suggestedName); };
+    window.showOpenFilePicker = async () => [window.__nextOpen];
+  };
+  const answers = [];
+  const open = async (ctx, query) => {
+    const page = await ctx.newPage();
+    const errors = watch(page);
+    page.on('dialog', d => (d.type() === 'prompt' ? d.accept(answers.length ? answers.shift() : '') : d.accept()));
+    await page.goto(APP_URL + (query || ''));
+    await page.waitForSelector(READY, { timeout: 30000 });
+    if (!(await page.evaluate(() => document.body.classList.contains('view-list')))) { await page.click('#viewListBtn'); await page.waitForSelector('body.view-list'); }
+    return { page, errors };
+  };
+  const label = page => page.textContent('#storageInfo .label');
+  const titles = page => page.evaluate(() => [...document.querySelectorAll('#list .note-title')].map(x => x.textContent));
+  const saved = page => page.waitForFunction(SAVED);
+  const area = page => page.evaluate(() => new URLSearchParams(location.search).get('w'));
+  const addNote = async (page, title, body) => {
+    await page.click('#newBtn');
+    await page.fill('#title', title);
+    if (body) await page.fill('#body', body);
+    await saved(page);
+  };
+  const menuItems = async page => {
+    await page.keyboard.press('Alt+0');
+    await page.waitForSelector('#contextMenu:not([hidden])');
+    const items = await page.locator('#contextMenu button').allTextContents();
+    return items;
+  };
+  const choose = async (page, text) => {
+    await page.click('#storageInfo');
+    await page.waitForSelector('#contextMenu:not([hidden])');
+    await page.click(`#contextMenu button:has-text("${text}")`);
+  };
+  const waitLabel = (page, re) => page.waitForFunction(r => new RegExp(r).test(document.querySelector('#storageInfo .label').textContent), re.source);
+
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'de-CH' });
+  await ctx.addInitScript(MOCK_FS);
+  try {
+    // ---------- ein Bereich: alles wie bisher ----------
+    const { page, errors } = await open(ctx);
+    assert.equal(await label(page), 'Nur Browser-Speicher');
+    assert.equal(await page.title(), 'NoNotes');
+    assert.equal(await area(page), null, 'ohne zweiten Bereich bleibt die Adresse, wie sie war');
+    await addNote(page, 'Arbeitsnotiz', 'Text der Arbeit');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Alt+1');
+    assert.equal(await label(page), 'Nur Browser-Speicher', 'Alt+1 ohne zweiten Bereich tut nichts');
+    let items = await menuItems(page);
+    assert.deepEqual(items.map(x => x.replace(/Alt\+\d/, '')), ['Meine Notizen', 'Neuer Bereich…', 'Datei als Bereich öffnen…', 'Bereich umbenennen…'], 'Menü mit einem Bereich: kein «entfernen»');
+    assert.equal(await page.locator('#contextMenu button.checked').textContent(), 'Meine NotizenAlt+1');
+    await page.keyboard.press('Escape');
+    part('Ein Bereich: Statusleiste, Titel und Adresse wie bisher; Alt+0 öffnet das Menü der Bereiche');
+
+    // ---------- zweiten Bereich anlegen ----------
+    answers.push('Privat');
+    await choose(page, 'Neuer Bereich…');
+    await waitLabel(page, /^Privat · Nur Browser-Speicher$/);
+    assert.equal(await page.title(), 'Privat – NoNotes');
+    assert.equal(await area(page), 'privat', 'die Adresse nennt den Bereich');
+    assert.deepEqual(await titles(page), [], 'der neue Bereich ist leer');
+    assert.match(await page.textContent('#banner'), /Neuer Bereich „Privat“\. Empfohlen: eine eigene Datenbankdatei/);
+    await page.click('#banner button:has-text("Später")');
+    await addNote(page, 'Privatnotiz', 'Ferien planen\n- [ ] Zug buchen');
+    await page.click('#viewMapBtn');
+    await page.waitForFunction(() => [...document.querySelectorAll('.mm-node > text')].some(x => x.textContent === 'Privat'));
+    await page.click('#viewListBtn');
+    part('Neuer Bereich: leer, Name in Statusleiste, Tab-Titel, Adresse ?w=privat und als Titel der Mindmap; Hinweis auf eine eigene Datei');
+
+    // ---------- wechseln ----------
+    await page.click('#title');
+    await page.fill('#body', 'Ferien planen\n- [ ] Zug buchen\nGetippt kurz vor dem Wechsel');
+    await page.keyboard.press('Alt+1'); // ohne zu warten: die offene Notiz wird vor dem Wechsel geschrieben
+    await waitLabel(page, /^Meine Notizen · /);
+    assert.deepEqual(await titles(page), ['Arbeitsnotiz'], 'nur die Notizen des aktiven Bereichs');
+    assert.equal(await area(page), 'main');
+    assert.equal(await page.title(), 'Meine Notizen – NoNotes', 'der erste Bereich heisst nach dem Titel seiner Mindmap');
+    await page.keyboard.press('Alt+2');
+    await waitLabel(page, /^Privat · /);
+    assert.deepEqual(await titles(page), ['Privatnotiz']);
+    await page.click('#list .note-item');
+    assert.match(await page.inputValue('#body'), /Getippt kurz vor dem Wechsel/, 'nichts verloren');
+    await page.click('#viewTasksBtn');
+    await page.waitForSelector('body.view-tasks');
+    assert.match(await page.textContent('#taskList, .task-list, main'), /Zug buchen/);
+    await page.keyboard.press('Alt+1');
+    await waitLabel(page, /^Meine Notizen · /);
+    assert.ok(!/Zug buchen/.test(await page.textContent('main')), 'Aufgaben nur aus dem aktiven Bereich');
+    await page.click('#viewListBtn');
+    items = await menuItems(page);
+    assert.deepEqual(items.map(x => x.replace(/Alt\+\d/, '')), ['Meine Notizen', 'Privat', 'Neuer Bereich…', 'Datei als Bereich öffnen…', 'Bereich umbenennen…', 'Bereich entfernen…']);
+    await page.click('#contextMenu button:has-text("Privat")');
+    await waitLabel(page, /^Privat · /);
+    part('Wechseln über Alt+1/2 und das Menü: Liste, Aufgaben und Editor nur aus dem aktiven Bereich; die offene Notiz wird vorher geschrieben');
+
+    // ---------- Hauptfarbe je Bereich ----------
+    await page.click('#menuBtn');
+    const swatch = await page.locator('#accentSwatches .swatch').nth(3).getAttribute('data-accent');
+    await page.click(`#accentSwatches .swatch[data-accent="${swatch}"]`);
+    await saved(page);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Alt+1');
+    await waitLabel(page, /^Meine Notizen · /);
+    await page.click('#menuBtn');
+    assert.notEqual(await page.locator('#accentSwatches .swatch[aria-pressed="true"]').getAttribute('data-accent'), swatch, 'die Farbe gehört zum Bereich');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Alt+2');
+    await waitLabel(page, /^Privat · /);
+    await page.click('#menuBtn');
+    assert.equal(await page.locator('#accentSwatches .swatch[aria-pressed="true"]').getAttribute('data-accent'), swatch);
+    await page.keyboard.press('Escape');
+    part('Hauptfarbe je Bereich (sie steht in der Datei)');
+
+    // ---------- Adresse ----------
+    await page.reload();
+    await page.waitForSelector(READY);
+    assert.match(await label(page), /^Privat · /, 'Neuladen bleibt im Bereich');
+    const p2 = await open(ctx, '?w=main');
+    assert.match(await label(p2.page), /^Meine Notizen · /);
+    assert.deepEqual(await titles(p2.page), ['Arbeitsnotiz']);
+    await p2.page.goto(APP_URL + '?w=PRIVAT');
+    await p2.page.waitForSelector(READY);
+    assert.match(await label(p2.page), /^Privat · /, 'gross oder klein geschrieben');
+    await p2.page.goto(APP_URL + '?w=1');
+    await p2.page.waitForSelector(READY);
+    assert.match(await label(p2.page), /^Meine Notizen · /, 'Stelle in der Liste wie bei Alt+1');
+    assert.equal(await area(p2.page), 'main', 'die Adresse zeigt danach die Kennung');
+    await p2.page.goto(APP_URL + '?w=Projekt%20X');
+    await p2.page.waitForSelector(READY);
+    assert.match(await p2.page.textContent('#banner'), /Den Bereich „Projekt X“ gibt es in diesem Browser nicht\. Geöffnet ist „Meine Notizen“\./);
+    await p2.page.click('#banner button:has-text("Bereich „Projekt X“ anlegen")');
+    await waitLabel(p2.page, /^Projekt X · /);
+    assert.equal(await area(p2.page), 'projekt-x');
+    await p2.page.click('#banner button:has-text("Später")');
+    part('Adresse: ?w=<kennung>, Gross/Klein egal, ?w=1 … 9 nach der Stelle; unbekannt → Hinweis mit «anlegen»; Neuladen bleibt im Bereich');
+
+    // ---------- zwei Tabs, verschiedene Bereiche ----------
+    await page.reload(); // erfährt den dritten Bereich ohnehin über den Kanal
+    await page.waitForSelector(READY);
+    await addNote(p2.page, 'Projektnotiz');
+    await addNote(page, 'Zweite Privatnotiz');
+    await p2.page.waitForTimeout(400);
+    assert.equal(await page.locator('#banner:not([hidden])').count(), 0, 'kein Hinweis im anderen Tab: ' + await page.textContent('#banner'));
+    assert.equal(await p2.page.locator('#banner:not([hidden])').count(), 0, 'kein Hinweis: ' + await p2.page.textContent('#banner'));
+    assert.deepEqual((await titles(page)).sort(), ['Privatnotiz', 'Zweite Privatnotiz']);
+    assert.deepEqual(await titles(p2.page), ['Projektnotiz']);
+    await p2.page.keyboard.press('Escape');
+    await p2.page.keyboard.press('Alt+2');
+    await waitLabel(p2.page, /^Privat · /);
+    assert.deepEqual((await titles(p2.page)).sort(), ['Privatnotiz', 'Zweite Privatnotiz'], 'der andere Tab sieht, was im ersten gespeichert wurde');
+    await p2.page.keyboard.press('Alt+3');
+    await waitLabel(p2.page, /^Projekt X · /);
+    assert.deepEqual(await titles(p2.page), ['Projektnotiz']);
+    part('Zwei Tabs mit verschiedenen Bereichen: jeder speichert in seinen, kein Hinweis beim anderen, Wechsel zeigt den Stand des anderen Tabs');
+
+    // ---------- umbenennen, entfernen ----------
+    answers.push('Familie');
+    await choose(page, 'Bereich umbenennen…');
+    await waitLabel(page, /^Familie · /);
+    assert.equal(await area(page), 'privat', 'die Kennung bleibt');
+    assert.equal(await page.title(), 'Familie – NoNotes');
+    items = await menuItems(p2.page);
+    assert.ok(items.some(x => /^Familie/.test(x)), 'der andere Tab kennt den neuen Namen (über den Kanal zwischen Tabs)');
+    await p2.page.keyboard.press('Escape');
+    const p3 = await open(ctx, '?w=familie');
+    assert.match(await label(p3.page), /^Familie · /, 'der neue Name gilt auch in der Adresse');
+    await p3.page.close();
+    await choose(p2.page, 'Bereich entfernen…'); // Projekt X liegt nur im Browser: Rückfrage, dann weg
+    await waitLabel(p2.page, /^Meine Notizen · /);
+    items = await menuItems(p2.page);
+    assert.deepEqual(items.map(x => x.replace(/Alt\+\d/, '')).slice(0, 2), ['Meine Notizen', 'Familie']);
+    assert.equal(items.length, 6);
+    await p2.page.keyboard.press('Escape');
+    const gone = await p2.page.evaluate(() => new Promise(res => { const r = indexedDB.open('nonotes'); r.onsuccess = () => { const q = r.result.transaction('kv').objectStore('kv').get('area:projekt-x:db'); q.onsuccess = () => res(q.result === undefined); }; }));
+    assert.equal(gone, true, 'die Browser-Kopie des entfernten Bereichs ist gelöscht');
+    part('Umbenennen (Kennung bleibt, neuer Name auch in der Adresse), entfernen (Browser-Kopie weg, Wechsel in den ersten)');
+
+    // ---------- Dateien je Bereich ----------
+    await page.click('#menuBtn');
+    await page.click('#createFileBtn');
+    await waitLabel(page, /^Familie · Familie\.sqlite/);
+    assert.deepEqual(await page.evaluate(() => window.__pickNew), ['Familie.sqlite'], 'Vorschlag: Name des Bereichs');
+    await page.waitForFunction(() => window.__files['Familie.sqlite'].writes >= 1);
+    await page.keyboard.press('Alt+1');
+    await waitLabel(page, /^Meine Notizen · Nur Browser-Speicher$/);
+    const before = await page.evaluate(() => window.__files['Familie.sqlite'].writes);
+    await addNote(page, 'Nur im ersten Bereich');
+    await page.waitForTimeout(300);
+    assert.equal(await page.evaluate(() => window.__files['Familie.sqlite'].writes), before, 'der erste Bereich schreibt nicht in die Datei des anderen');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Alt+2');
+    await waitLabel(page, /^Familie · Familie\.sqlite/);
+    await addNote(page, 'In die Datei');
+    await page.waitForFunction(n => window.__files['Familie.sqlite'].writes > n, before);
+    part('Datei je Bereich: Vorschlag mit dem Namen, der andere Bereich schreibt nicht hinein, nach dem Wechsel zurück wieder verbunden');
+
+    // ---------- Datei als Bereich öffnen ----------
+    await page.evaluate(async () => {
+      const SQL = await initSqlJs();
+      const db = NoNotesDB.open(SQL, null);
+      const id = NoNotesDB.createNote(db, null);
+      NoNotesDB.updateNote(db, id, 'Aus Datei', 'steht in Projekt.sqlite');
+      window.__projekt = window.__mkHandle('Projekt.sqlite', NoNotesDB.exportBytes(db));
+      window.__nextOpen = window.__projekt;
+    });
+    await page.keyboard.press('Escape');
+    await choose(page, 'Datei als Bereich öffnen…');
+    await waitLabel(page, /^Projekt · Projekt\.sqlite/);
+    assert.deepEqual(await titles(page), ['Aus Datei']);
+    assert.equal(await area(page), 'projekt');
+    await page.keyboard.press('Alt+1');
+    await waitLabel(page, /^Meine Notizen · /);
+    await choose(page, 'Datei als Bereich öffnen…'); // dieselbe Datei noch einmal: kein zweiter Bereich, sondern dorthin
+    await waitLabel(page, /^Projekt · /);
+    items = await menuItems(page);
+    assert.equal(items.filter(x => /^Projekt/.test(x)).length, 1);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Alt+1');
+    await waitLabel(page, /^Meine Notizen · /);
+    await page.click('#menuBtn');
+    await page.click('#openFileBtn'); // «Datenbankdatei öffnen…» mit einer Datei, die schon einen Bereich hat: Rückfrage, dann Wechsel
+    await waitLabel(page, /^Projekt · /);
+    assert.deepEqual(await titles(page), ['Aus Datei']);
+    part('Datei als Bereich öffnen: Name aus der Datei, Inhalt da; dieselbe Datei führt in ihren Bereich statt in einen zweiten');
+
+    assert.deepEqual([...errors, ...p2.errors], [], 'keine Fehler im Browser');
+  } finally {
+    await ctx.close();
+  }
+}
+
 suite('App-Test', [
   { name: null, run: runSmoke }, // druckt seine Gruppen selbst
+  { name: 'Bereiche: anlegen, wechseln (Statusleiste, Menü, Alt+1 … 9), Adresse ?w=…, Datei und Hauptfarbe je Bereich, umbenennen, entfernen, Datei als Bereich, zwei Tabs', run: runAreas },
   { name: 'Backend-Vertrag: Methodenliste, JSON-sichere Rückgaben, Änderungsmeldung, Fehlerkennungen', run: runBackend },
 ], { browser: true });

@@ -1086,8 +1086,63 @@ async function runAgentProgram(browser, part, step) {
   assert.deepEqual(resp.result, {});
   assert.equal(await a.stop(), 0);
   assert.ok(!fs.existsSync(file + '.lock'));
-  fs.rmSync(tmp, { recursive: true, force: true });
   part('Programm: zwei Prozesse abwechselnd und gleichzeitig ohne Verlust, Lesemodus schreibt nie, kaputtes JSON schadet nicht, sauberes Ende');
+
+  // ---------- Bereiche: mehrere Dateien (v2.3.0) ----------
+  const areaDir = path.join(tmp, 'bereiche');
+  fs.mkdirSync(areaDir);
+  const arbeit = path.join(areaDir, 'Arbeit.sqlite');
+  const privat = path.join(areaDir, 'Privat Ä.sqlite');
+  const extra = path.join(tmp, 'Arbeit.sqlite'); // gleicher Name in einem anderen Ordner
+  r = run(['--config', arbeit, privat]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(r.stdout.includes(`--file ${arbeit} --file "${privat}"`), 'beide Dateien im Eintrag für Claude Code: ' + r.stdout.split('\n')[3]);
+  r = run(['--config', '--dir', areaDir]);
+  assert.ok(r.stdout.includes(`--dir ${areaDir}`));
+  // --dir liest nur vorhandene Dateien, --create legt fehlende --file an: zuerst die beiden im Ordner anlegen
+  for (const f of [arbeit, privat]) { const c = start(['--file', f, '--create']); await init(c); await c.stop(); }
+  const mm = start(['--dir', areaDir, '--file', extra, '--create', '--verbose']);
+  resp = await init(mm);
+  assert.match(resp.result.instructions, /call list_workspaces first/);
+  assert.match(resp.result.instructions, /3 files/);
+  resp = await mm.request('tools/list');
+  const mtools = resp.result.tools;
+  assert.equal(mtools[0].name, 'list_workspaces');
+  assert.ok(mtools.slice(1).every(t => t.inputSchema.required[0] === 'workspace' && t.inputSchema.properties.workspace), 'jedes Werkzeug nimmt workspace');
+  resp = await mm.request('tools/call', { name: 'list_workspaces', arguments: {} });
+  assert.deepEqual(resp.result.structuredContent.workspaces.map(w => [w.id, w.name]), [['arbeit', 'Arbeit'], ['privat-ae', 'Privat Ä'], ['arbeit-2', 'Arbeit']], 'Kennungen wie in der App, doppelte mit -2');
+  resp = await mm.request('tools/call', { name: 'create_note', arguments: { workspace: 'arbeit', title: 'Sitzung', body: '? Wann ist die nächste?' } });
+  assert.ok(!resp.result.isError, JSON.stringify(resp.result));
+  resp = await mm.request('tools/call', { name: 'create_note', arguments: { workspace: 'Privat Ä', title: 'Ferien' } });
+  assert.ok(!resp.result.isError, 'der Name als Kennung geschrieben geht auch');
+  const titlesOf = f => { const d = new SQL.Database(fs.readFileSync(f)); const rows = d.exec('SELECT title FROM notes WHERE deleted_at IS NULL ORDER BY id'); d.close(); return rows.length ? rows[0].values.map(v => v[0]) : []; };
+  assert.deepEqual([titlesOf(arbeit), titlesOf(privat), titlesOf(extra)], [['Sitzung'], ['Ferien'], []], 'jede Notiz in ihrer Datei');
+  resp = await mm.request('tools/call', { name: 'list_questions', arguments: { workspace: 'privat-ae' } });
+  assert.equal(resp.result.structuredContent.total, 0, 'Fragen nur aus dem genannten Bereich');
+  resp = await mm.request('tools/call', { name: 'list_questions', arguments: { workspace: 'arbeit' } });
+  assert.equal(resp.result.structuredContent.total, 1);
+  resp = await mm.request('tools/call', { name: 'get_overview', arguments: {} });
+  assert.equal(resp.result.isError, true);
+  assert.match(resp.result.content[0].text, /workspace: required/);
+  resp = await mm.request('tools/call', { name: 'get_overview', arguments: { workspace: 'gibtsnicht' } });
+  assert.equal(resp.result.structuredContent.error.code, 'WORKSPACE_NOT_FOUND');
+  resp = await mm.request('resources/list');
+  assert.deepEqual(resp.result.resources.map(x => x.uri), ['nonotes://arbeit/overview', 'nonotes://privat-ae/overview', 'nonotes://arbeit-2/overview']);
+  resp = await mm.request('resources/read', { uri: 'nonotes://privat-ae/note/1' });
+  assert.match(resp.result.contents[0].text, /Ferien/);
+  // die App ändert eine der Dateien: der nächste Aufruf liest sie neu
+  { const d = new SQL.Database(fs.readFileSync(privat)); d.run("UPDATE notes SET title = 'Ferien im Tessin' WHERE id = 1"); fs.writeFileSync(privat, Buffer.from(d.export())); d.close(); }
+  resp = await mm.request('tools/call', { name: 'get_note', arguments: { workspace: 'privat-ae', id: 1 } });
+  assert.equal(resp.result.structuredContent.title, 'Ferien im Tessin');
+  await mm.stop();
+  r = run(['--dir', path.join(tmp, 'leer-gibt-es-nicht')]);
+  assert.equal(r.status, 2);
+  fs.mkdirSync(path.join(tmp, 'leer'));
+  r = run(['--dir', path.join(tmp, 'leer')]);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /Keine \.sqlite-Datei/);
+  fs.rmSync(tmp, { recursive: true, force: true });
+  part('Programm mit mehreren Dateien (--file mehrmals, --dir): list_workspaces, Kennungen wie in der App, Parameter workspace, jede Änderung in ihrer Datei, Ressourcen je Bereich, Änderung von aussen');
 }
 
 suite('Kern-Test', [

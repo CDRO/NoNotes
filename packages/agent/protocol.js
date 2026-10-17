@@ -54,8 +54,8 @@
         if (r.isError) out.isError = true;
         return out;
       },
-      'resources/list'() { return { resources: catalog.resources() }; },
-      'resources/templates/list'() { return { resourceTemplates: catalog.resourceTemplates() }; },
+      async 'resources/list'() { return { resources: await catalog.resources() }; }, // Kataloge über mehrere Dateien antworten asynchron
+      async 'resources/templates/list'() { return { resourceTemplates: await catalog.resourceTemplates() }; },
       async 'resources/read'(params) {
         const uri = params && typeof params.uri === 'string' ? params.uri : '';
         try {

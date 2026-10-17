@@ -5,9 +5,15 @@
 
    Die Oberfläche übergibt beim Anlegen ein host-Objekt mit:
      el                      die benötigten Elemente (createFileBtn, openFileBtn, disconnectBtn, downloadBtn,
-                             importBtn, importInput, storageInfo, menuHint)
+                             importBtn, importInput, storageInfo, menuHint, areasBtn)
      setStatus(text, state)  Statuszeile        showBanner(text, actions) / hideBanner()
      closeMenu()             renderAll()        onDatabaseReplaced()  (die Oberfläche setzt ihren Zustand zurück)
+     showMenu(items, x, y, { above })          kleines Menü (Einträge wie im Kontextmenü der Mindmap)
+     ensureSaved()           schreibt die offene Notiz; false, wenn die Person bei einem Konflikt erst entscheiden muss
+
+   Bereiche (ab v2.3.0): mehrere Datenbanken, je mit eigener Browser-Kopie und eigener Datei. Bearbeitet wird immer nur der
+   aktive Bereich; gewechselt wird über die Statusleiste, «Bereiche…» im Menü, Alt+1 … 9 oder die Adresse (index.html?w=<bereich>).
+   Jeder Tab hat seinen eigenen aktiven Bereich; zwei Tabs mit verschiedenen Bereichen stören sich nicht.
    Beschreibung der Ausprägungen: docs/ARCHITECTURE.md */
 (function (global) {
   'use strict';
@@ -21,6 +27,9 @@
 
   const DEFAULT_FILENAME = 'NoNotes.sqlite';
   const SAVE_DELAY_MS = 600;
+  const AREA_PARAM = 'w';                     // index.html?w=<bereich>
+  const SESSION_AREA_KEY = 'nonotes.area';    // aktiver Bereich dieses Tabs (übersteht Neuladen)
+  const MAIN = Store.MAIN_AREA;
 
   function pad(n) { return String(n).padStart(2, '0'); }
 
@@ -30,6 +39,12 @@
   }
 
   function isAbort(e) { return e && e.name === 'AbortError'; }
+
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  /** Namen von Bereichen: ohne Steuerzeichen, höchstens 60 Zeichen. */
+  const cleanName = v => String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+  /** Dateiname ohne Endung: «Arbeit.sqlite» → «Arbeit». */
+  const baseName = name => cleanName(String(name || '').replace(/\.(sqlite3?|db)$/i, '')) || DEFAULT_FILENAME.replace(/\.sqlite$/, '');
 
   /** Kurzer Prüfwert eines Inhalts (FNV-1a), nur um zu merken, ob sich eine Datei verändert hat. Kein Schutz gegen Absicht. */
   function hashBytes(bytes) {
@@ -63,6 +78,11 @@
       baseSnap: null,         // Stand, den Datei bzw. Browser-Speicher zuletzt hatten (Grundlage für das Zusammenführen von aussen)
       openedFromFile: false,
       storageKind: null,
+      area: null,             // { id, name } aktiver Bereich dieses Tabs
+      areas: null,            // Verzeichnis { list: [{ id, name, createdAt }], last, implicit } (implicit: nur der erste, noch nicht gespeichert)
+      sessionHandles: new Map(), // Bereich → Datei-Handle, das sich nicht merken liess (gilt nur in dieser Sitzung)
+      missingArea: null,      // ?w=… ohne passenden Bereich: beim Start anbieten, ihn anzulegen
+      baseTitle: null,        // Titel der Seite ohne Bereich
     };
 
     const setStatus = (text, state) => host.setStatus(text, state);
@@ -82,42 +102,17 @@
       s.storageKind = await Store.browserStore.detect();
       if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
-      let mirror = null;
-      try { mirror = await Store.browserStore.loadDb(); }
-      catch (e) { console.warn('Browser-Speicher nicht lesbar', e); }
-      s.mirrorAtStart = mirror;
-
-      if (Store.fileAccess.supported) {
-        const handle = await Store.browserStore.loadHandle();
-        if (handle) {
-          s.fileHandle = handle;
-          s.handleRemembered = true;
-          try { s.filePermission = await Store.fileAccess.permission(handle, false); }
-          catch (e) { s.filePermission = 'prompt'; }
-          if (s.filePermission === 'granted') {
-            try {
-              const bytes = await Store.fileAccess.read(handle);
-              s.db = DB.open(s.SQL, bytes);
-              s.openedFromFile = true;
-              await rememberFile(bytes);
-            } catch (e) {
-              console.warn('Datei nicht lesbar, verwende Browser-Kopie', e);
-              s.filePermission = 'prompt';
-            }
-          }
-        }
+      // Bereich dieses Tabs: aus der Adresse (?w=…), sonst der zuletzt in diesem Tab gewählte, sonst der zuletzt benutzte
+      s.areas = await loadAreas();
+      const wanted = urlArea();
+      let area = wanted != null && wanted !== '' ? Store.findArea(s.areas.list, wanted) : null;
+      if (wanted && !area) s.missingArea = wanted;
+      if (!area) {
+        let mine = null;
+        try { mine = sessionStorage.getItem(SESSION_AREA_KEY); } catch (e) { /* ohne Sitzungsspeicher: der zuletzt benutzte */ }
+        area = s.areas.list.find(a => a.id === mine) || s.areas.list.find(a => a.id === s.areas.last) || s.areas.list[0];
       }
-
-      if (!s.openedFromFile) {
-        try {
-          s.db = DB.open(s.SQL, mirror);
-        } catch (e) {
-          console.warn('Browser-Kopie unbrauchbar, starte mit leerer Datenbank', e);
-          s.db = DB.open(s.SQL, null);
-        }
-      }
-
-      s.baseSnap = snapshot(s.db);
+      await openArea(area, false);
       s.backend = global.NoNotesBackendLocal.create({
         getDb: () => s.db,
         onChange: () => { s.editedSinceStart = true; scheduleSave(); },
@@ -127,8 +122,11 @@
 
     /** Nach dem ersten Zeichnen: Anzeige der Ablage, Hinweis zum Verbinden, Startmeldung. */
     function afterReady() {
+      s.baseTitle = document.title;
+      rememberActive();
       updateStorageInfo();
       if (s.fileHandle && s.filePermission !== 'granted') showConnectBanner();
+      else if (s.missingArea) showMissingAreaBanner(s.missingArea);
       setStatus(s.openedFromFile ? t('Aus „{name}“ geladen', { name: s.fileHandle.name })
         : s.mirrorAtStart ? t('Aus Browser-Speicher geladen ({label})', { label: Store.browserStore.label() })
         : t('Neue Datenbank'), 'saved');
@@ -163,8 +161,8 @@
         const snap = snapshot(s.db); // was gleich geschrieben wird; danach die Grundlage für das Zusammenführen
         const bytes = DB.exportBytes(s.db);
         try {
-          await Store.browserStore.saveDb(bytes);
-          if (s.channel) { try { s.channel.postMessage({ tab: s.tabId }); } catch (e) { /* egal */ } }
+          await Store.browserStore.saveDb(bytes, s.area.id);
+          if (s.channel) { try { s.channel.postMessage({ tab: s.tabId, area: s.area.id }); } catch (e) { /* egal */ } }
         } catch (e) {
           ok = false;
           console.warn('Browser-Speicher', e);
@@ -277,7 +275,7 @@
       try {
         let bytes;
         if (kind === 'file') bytes = s.pendingFileBytes || await Store.fileAccess.read(s.fileHandle);
-        else bytes = await Store.browserStore.loadDb();
+        else bytes = await Store.browserStore.loadDb(s.area.id);
         s.pendingFileBytes = null;
         if (!bytes || !bytes.length) { s.external = null; host.hideBanner(); return; }
         replaceDb(DB.open(s.SQL, bytes));
@@ -415,18 +413,22 @@
       el.openFileBtn.hidden = !supported;
       el.disconnectBtn.hidden = !s.fileHandle;
 
+      // Mit mehreren Bereichen steht der Name des aktiven vorne
+      const prefix = multiArea() ? s.area.name + ' · ' : '';
       if (s.fileHandle && s.filePermission === 'granted') {
         info.classList.add('connected');
-        label.textContent = s.fileHandle.name + (s.handleRemembered ? '' : ' ' + t('(nur diese Sitzung)'));
+        label.textContent = prefix + s.fileHandle.name + (s.handleRemembered ? '' : ' ' + t('(nur diese Sitzung)'));
         info.title = t('Änderungen werden in diese Datei und in den Browser-Speicher geschrieben.');
       } else if (s.fileHandle) {
         info.classList.add('pending');
-        label.textContent = s.fileHandle.name + ' ' + t('(nicht verbunden)');
+        label.textContent = prefix + s.fileHandle.name + ' ' + t('(nicht verbunden)');
         info.title = t('Die Datei ist gemerkt, aber noch nicht freigegeben.');
       } else {
-        label.textContent = t('Nur Browser-Speicher');
+        label.textContent = prefix + t('Nur Browser-Speicher');
         info.title = t('Daten liegen im {label} dieses Browsers.', { label: Store.browserStore.label() });
       }
+      if (areasPossible()) info.title += '\n' + t('Klicken: Bereich wechseln oder anlegen (Alt+1 … 9, Alt+0).');
+      if (el.areasBtn) el.areasBtn.hidden = !areasPossible();
 
       el.menuHint.textContent = supported
         ? t('Empfohlen: eine Datenbankdatei anlegen. Dann liegt alles in einer echten .sqlite-Datei, die du sichern und mitnehmen kannst.')
@@ -497,10 +499,12 @@
       s.editSeq++;
       const written = persistNow();
       try {
-        await Store.browserStore.saveHandle(handle);
+        await Store.browserStore.saveHandle(handle, s.area.id);
         s.handleRemembered = true;
+        s.sessionHandles.delete(s.area.id);
       } catch (e) {
         console.warn('Datei-Handle kann nicht gemerkt werden', e);
+        s.sessionHandles.set(s.area.id, handle); // wenigstens für diese Sitzung, auch nach einem Wechsel des Bereichs
       }
       updateStorageInfo();
       await written;
@@ -509,7 +513,7 @@
     async function createFile() {
       host.closeMenu();
       try {
-        const handle = await Store.fileAccess.pickNew(DEFAULT_FILENAME);
+        const handle = await Store.fileAccess.pickNew(s.area.id === MAIN && !multiArea() ? DEFAULT_FILENAME : `${s.area.name}.sqlite`);
         const perm = await Store.fileAccess.permission(handle, true);
         if (perm !== 'granted') { setStatus(t('Kein Schreibzugriff auf die Datei'), 'error'); return; }
         await adoptHandle(handle);
@@ -525,6 +529,11 @@
       host.closeMenu();
       try {
         const handle = await Store.fileAccess.pickExisting();
+        const other = await areaOfHandle(handle);
+        if (other && other.id !== s.area.id) { // dieselbe Datei in zwei Bereichen schriebe doppelt: lieber dorthin wechseln
+          if (confirm(t('„{datei}“ gehört zum Bereich „{name}“. Dorthin wechseln?', { datei: handle.name, name: other.name }))) await switchArea(other.id);
+          return;
+        }
         const perm = await Store.fileAccess.permission(handle, true);
         if (perm !== 'granted') { setStatus(t('Kein Schreibzugriff auf die Datei'), 'error'); return; }
         const bytes = await Store.fileAccess.read(handle);
@@ -547,7 +556,8 @@
 
     async function disconnectFile() {
       host.closeMenu();
-      await Store.browserStore.clearHandle();
+      await Store.browserStore.clearHandle(s.area.id);
+      s.sessionHandles.delete(s.area.id);
       s.fileHandle = null;
       s.filePermission = null;
       s.handleRemembered = false;
@@ -597,11 +607,312 @@
       }
     }
 
+    // ---------- Bereiche ----------
+
+    const areasPossible = () => s.storageKind !== null; // ohne Browser-Speicher kein Verzeichnis
+    const multiArea = () => !!(s.areas && s.areas.list.length > 1);
+
+    function urlArea() {
+      try { return new URLSearchParams(global.location.search).get(AREA_PARAM); } catch (e) { return null; }
+    }
+
+    /** Verzeichnis aus dem Browser-Speicher; ohne Eintrag gibt es nur den ersten Bereich (wie vor v2.3.0). */
+    async function loadAreas() {
+      let reg = null;
+      try { reg = await Store.browserStore.loadAreas(); } catch (e) { reg = null; }
+      if (reg) return { list: reg.list.map(a => ({ id: a.id, name: cleanName(a.name) || a.id, createdAt: a.createdAt || null })), last: reg.last || null, implicit: false };
+      return { list: [{ id: MAIN, name: t('Meine Notizen'), createdAt: null }], last: MAIN, implicit: true };
+    }
+
+    /** Name des ersten Bereichs, solange das Verzeichnis noch nicht gespeichert ist: Dateiname, sonst Titel der Mindmap. */
+    function materialize(reg) {
+      if (!reg.implicit) return reg;
+      const first = reg.list[0];
+      if (s.area && s.area.id === first.id) first.name = s.fileHandle ? baseName(s.fileHandle.name) : cleanName(DB.getMapTitle(s.db)) || first.name;
+      reg.implicit = false;
+      return reg;
+    }
+
+    /** Neu aus dem Speicher (ein anderer Tab hat vielleicht geändert), dann ändern und speichern. */
+    async function changeAreas(fn) {
+      const reg = materialize(await loadAreas());
+      const out = await fn(reg);
+      await Store.browserStore.saveAreas(reg);
+      s.areas = reg;
+      if (s.channel) { try { s.channel.postMessage({ tab: s.tabId, type: 'areas' }); } catch (e) { /* egal */ } }
+      return out;
+    }
+
+    function uniqueName(name, list, exceptId) {
+      const taken = new Set(list.filter(a => a.id !== exceptId).map(a => a.name.toLowerCase()));
+      let n = name;
+      for (let i = 2; taken.has(n.toLowerCase()); i++) n = `${name} (${i})`;
+      return n;
+    }
+
+    /** Lädt einen Bereich: Datei, wenn sie freigegeben ist (interactive: bei Bedarf nachfragen, braucht einen Klick), sonst die Browser-Kopie. */
+    async function openArea(area, interactive) {
+      s.area = { id: area.id, name: area.name };
+      s.fileHandle = null;
+      s.filePermission = null;
+      s.handleRemembered = false;
+      s.openedFromFile = false;
+      s.fileHash = null;
+      s.fileStamp = null;
+      s.external = null;
+      s.pendingFileBytes = null;
+      s.editedSinceStart = false;
+      let mirror = null;
+      try { mirror = await Store.browserStore.loadDb(area.id); }
+      catch (e) { console.warn('Browser-Speicher nicht lesbar', e); }
+      s.mirrorAtStart = mirror;
+      let db = null;
+      if (Store.fileAccess.supported) {
+        let handle = s.sessionHandles.get(area.id) || null;
+        if (!handle) { handle = await Store.browserStore.loadHandle(area.id); s.handleRemembered = !!handle; }
+        if (handle) {
+          s.fileHandle = handle;
+          try { s.filePermission = await Store.fileAccess.permission(handle, interactive); }
+          catch (e) { s.filePermission = 'prompt'; }
+          if (s.filePermission === 'granted') {
+            try {
+              const bytes = await Store.fileAccess.read(handle);
+              db = DB.open(s.SQL, bytes);
+              s.openedFromFile = true;
+              await rememberFile(bytes);
+            } catch (e) {
+              console.warn('Datei nicht lesbar, verwende Browser-Kopie', e);
+              s.filePermission = 'prompt';
+            }
+          }
+        }
+      }
+      if (!db) {
+        try { db = DB.open(s.SQL, mirror); }
+        catch (e) { console.warn('Browser-Kopie unbrauchbar, starte mit leerer Datenbank', e); db = DB.open(s.SQL, null); }
+      }
+      if (s.db) replaceDb(db); else s.db = db;
+      s.baseSnap = snapshot(s.db);
+      s.savedSeq = s.editSeq;
+    }
+
+    /** Vor dem Wechsel: alles Ungesicherte schreiben. false, wenn die Person lieber bleibt. */
+    async function leaveCurrent() {
+      if (host.ensureSaved && !(await host.ensureSaved())) return false; // zuerst die offene Notiz (Konflikt: die Person entscheidet)
+      if (s.external) { setStatus(t('Bitte zuerst entscheiden, welche Fassung gilt (Leiste oben).'), 'error'); return false; }
+      clearTimeout(s.saveTimer);
+      for (let tries = 0, waited = 0; tries < 3 && waited < 400;) {
+        if (s.saving) { waited++; await sleep(25); continue; }
+        if (!isDirty() || s.external) break;
+        tries++;
+        await persistNow();
+      }
+      if (isDirty() && !confirm(t('Die Änderungen in „{name}“ konnten nicht gespeichert werden. Trotzdem wechseln? Sie gehen dann verloren.', { name: s.area.name }))) return false;
+      return true;
+    }
+
+    /** Merkt den aktiven Bereich (Tab, Verzeichnis, Adresse, Titel der Seite). */
+    function rememberActive() {
+      try { sessionStorage.setItem(SESSION_AREA_KEY, s.area.id); } catch (e) { /* egal */ }
+      if (s.areas.last !== s.area.id) {
+        s.areas.last = s.area.id;
+        if (!s.areas.implicit) Store.browserStore.saveAreas(s.areas).catch(() => {});
+      }
+      try {
+        const u = new URL(global.location.href);
+        if (multiArea() || u.searchParams.has(AREA_PARAM)) {
+          if (u.searchParams.get(AREA_PARAM) !== s.area.id) {
+            u.searchParams.set(AREA_PARAM, s.area.id);
+            global.history.replaceState(global.history.state, '', u.href);
+          }
+        }
+      } catch (e) { /* Adresse lässt sich hier nicht ändern (manche Browser bei file://) */ }
+      if (s.baseTitle != null) document.title = multiArea() ? `${s.area.name} – ${s.baseTitle}` : s.baseTitle;
+    }
+
+    /** Wechselt in einen Bereich, der schon im Verzeichnis steht. init(db) läuft vor dem Zeichnen (z. B. Titel der Mindmap). */
+    async function enterArea(area, init) {
+      host.hideBanner();
+      await openArea(area, true);
+      if (init) await init();
+      rememberActive();
+      updateStorageInfo();
+      await host.renderAll();
+      if (s.fileHandle && s.filePermission !== 'granted') showConnectBanner();
+      setStatus(s.openedFromFile ? t('Bereich „{name}“: aus „{datei}“ geladen', { name: s.area.name, datei: s.fileHandle.name })
+        : t('Bereich „{name}“', { name: s.area.name }), isDirty() ? 'dirty' : 'saved');
+    }
+
+    async function switchArea(id) {
+      host.closeMenu();
+      const area = s.areas.list.find(a => a.id === id);
+      if (!area || area.id === s.area.id) return false;
+      if (!(await leaveCurrent())) return false;
+      await enterArea(area);
+      return true;
+    }
+
+    /** Legt einen Bereich an und wechselt hinein; die Mindmap trägt seinen Namen. */
+    async function createAreaNamed(rawName) {
+      const name = cleanName(rawName);
+      if (!name) return false;
+      if (!(await leaveCurrent())) return false;
+      const area = await changeAreas(reg => {
+        const a = { id: Store.newAreaId(name, reg.list), name: uniqueName(name, reg.list), createdAt: new Date().toISOString() };
+        reg.list.push(a);
+        return a;
+      });
+      await enterArea(area, async () => { await s.backend.setMapTitle(area.name); });
+      if (Store.fileAccess.supported) {
+        host.showBanner(t('Neuer Bereich „{name}“. Empfohlen: eine eigene Datenbankdatei, damit die Notizen nicht nur im Browser liegen.', { name: area.name }), [
+          { label: t('Datenbankdatei anlegen…'), primary: true, onClick: createFile },
+          { label: t('Später'), onClick: () => host.hideBanner() },
+        ]);
+      }
+      return true;
+    }
+
+    async function newArea() {
+      host.closeMenu();
+      const name = cleanName(global.prompt(t('Name des neuen Bereichs:'), ''));
+      if (!name) return;
+      try { await createAreaNamed(name); }
+      catch (e) { console.error(e); setStatus(t('Bereich anlegen fehlgeschlagen: {fehler}', { fehler: errorText(e) }), 'error'); }
+    }
+
+    /** Bereich, zu dem eine Datei schon gehört (gleiche Datei auf der Platte), oder null. */
+    async function areaOfHandle(handle) {
+      if (!handle || typeof handle.isSameEntry !== 'function') return null;
+      for (const a of s.areas.list) {
+        let h = a.id === s.area.id ? s.fileHandle : s.sessionHandles.get(a.id);
+        if (!h) h = await Store.browserStore.loadHandle(a.id);
+        try { if (h && await h.isSameEntry(handle)) return a; } catch (e) { /* nicht vergleichbar */ }
+      }
+      return null;
+    }
+
+    /** Eine vorhandene Datei als weiteren Bereich öffnen (oder in ihren Bereich wechseln, wenn sie schon einen hat). */
+    async function openFileAsArea() {
+      host.closeMenu();
+      try {
+        const handle = await Store.fileAccess.pickExisting();
+        const existing = await areaOfHandle(handle);
+        if (existing) {
+          if (existing.id !== s.area.id) await switchArea(existing.id);
+          else setStatus(t('„{datei}“ ist schon offen.', { datei: handle.name }), 'saved');
+          return;
+        }
+        const perm = await Store.fileAccess.permission(handle, true);
+        if (perm !== 'granted') { setStatus(t('Kein Schreibzugriff auf die Datei'), 'error'); return; }
+        const bytes = await Store.fileAccess.read(handle);
+        DB.open(s.SQL, bytes).close(); // prüft, ob es eine NoNotes-Datei ist
+        if (!(await leaveCurrent())) return;
+        const area = await changeAreas(reg => {
+          const name = uniqueName(baseName(handle.name), reg.list);
+          const a = { id: Store.newAreaId(name, reg.list), name, createdAt: new Date().toISOString() };
+          reg.list.push(a);
+          return a;
+        });
+        try { await Store.browserStore.saveDb(bytes, area.id); } catch (e) { /* die Datei gilt; die Browser-Kopie folgt beim Speichern */ }
+        try { await Store.browserStore.saveHandle(handle, area.id); }
+        catch (e) { s.sessionHandles.set(area.id, handle); }
+        await enterArea(area);
+      } catch (e) {
+        if (isAbort(e)) return;
+        console.error(e);
+        setStatus(t('Datei öffnen fehlgeschlagen: {fehler}', { fehler: errorText(e) }), 'error');
+      }
+    }
+
+    async function renameArea() {
+      host.closeMenu();
+      const current = materialize(Object.assign({}, s.areas, { list: s.areas.list.map(a => Object.assign({}, a)) })).list.find(a => a.id === s.area.id);
+      const name = cleanName(global.prompt(t('Neuer Name für den Bereich „{name}“:', { name: current.name }), current.name));
+      if (!name) return;
+      try {
+        const final = await changeAreas(reg => {
+          const a = reg.list.find(x => x.id === s.area.id);
+          if (!a) return null;
+          a.name = uniqueName(name, reg.list, a.id);
+          return a.name;
+        });
+        if (!final) return;
+        s.area.name = final;
+        rememberActive();
+        updateStorageInfo();
+        setStatus(t('Der Bereich heisst jetzt „{name}“.', { name: final }), isDirty() ? 'dirty' : 'saved');
+      } catch (e) { console.error(e); setStatus(t('Umbenennen fehlgeschlagen: {fehler}', { fehler: errorText(e) }), 'error'); }
+    }
+
+    /** Entfernt den aktiven Bereich aus der Liste und löscht seine Browser-Kopie; die Datei auf der Platte bleibt. */
+    async function removeArea() {
+      host.closeMenu();
+      if (!multiArea()) return;
+      const file = s.fileHandle ? s.fileHandle.name : null;
+      if (!confirm(t('Bereich „{name}“ aus der Liste entfernen?', { name: s.area.name }) + '\n\n' + (file
+        ? t('Die Kopie im Browser wird gelöscht. Die Datei „{datei}“ bleibt auf der Platte und lässt sich später wieder als Bereich öffnen.', { datei: file })
+        : t('Die Notizen dieses Bereichs liegen nur im Browser-Speicher und werden gelöscht. Vorher «Kopie herunterladen», wenn du sie behalten willst.')))) return;
+      const gone = s.area.id;
+      try {
+        clearTimeout(s.saveTimer);
+        s.savedSeq = s.editSeq; // nichts mehr schreiben: der Bereich verschwindet
+        const next = await changeAreas(reg => {
+          reg.list = reg.list.filter(a => a.id !== gone);
+          reg.last = reg.list[0].id;
+          return reg.list[0];
+        });
+        await Store.browserStore.removeArea(gone);
+        s.sessionHandles.delete(gone);
+        await enterArea(next);
+      } catch (e) { console.error(e); setStatus(t('Entfernen fehlgeschlagen: {fehler}', { fehler: errorText(e) }), 'error'); }
+    }
+
+    /** Ein anderer Tab hat Bereiche angelegt, umbenannt oder entfernt. */
+    async function onAreasChanged() {
+      const reg = await loadAreas();
+      const mine = reg.list.find(a => a.id === s.area.id);
+      s.areas = reg;
+      if (mine) {
+        s.area.name = mine.name;
+        rememberActive();
+        updateStorageInfo();
+        return;
+      }
+      // der eigene Bereich ist weg: nichts mehr dorthin schreiben, in den ersten wechseln
+      const name = s.area.name;
+      clearTimeout(s.saveTimer);
+      s.savedSeq = s.editSeq;
+      await enterArea(reg.list[0]);
+      setStatus(t('Der Bereich „{name}“ wurde in einem anderen Tab entfernt.', { name }), 'error');
+    }
+
+    function showMissingAreaBanner(value) {
+      const name = cleanName(value);
+      host.showBanner(t('Den Bereich „{name}“ gibt es in diesem Browser nicht. Geöffnet ist „{aktiv}“.', { name, aktiv: s.area.name }), [
+        { label: t('Bereich „{name}“ anlegen', { name }), primary: true, onClick: () => { host.hideBanner(); createAreaNamed(name); } },
+        { label: t('Schliessen'), onClick: () => host.hideBanner() },
+      ]);
+    }
+
+    /** Menü der Bereiche, über der Statusleiste. */
+    function showAreaMenu() {
+      if (!areasPossible()) return;
+      host.closeMenu();
+      const items = s.areas.list.map((a, i) => ({ label: a.name, key: i < 9 ? `Alt+${i + 1}` : '', checked: a.id === s.area.id, action: () => switchArea(a.id) }));
+      items.push('sep', { label: t('Neuer Bereich…'), key: 'Alt+0', action: newArea });
+      if (Store.fileAccess.supported) items.push({ label: t('Datei als Bereich öffnen…'), action: openFileAsArea });
+      items.push({ label: t('Bereich umbenennen…'), action: renameArea });
+      if (multiArea()) items.push({ label: t('Bereich entfernen…'), danger: true, action: removeArea });
+      const r = el.storageInfo.getBoundingClientRect();
+      host.showMenu(items, Math.max(8, r.left), r.top, { above: true });
+    }
+
     // ---------- Anzeige für die Hilfe ----------
 
     /** Zeilen für «Aktueller Stand» in der Hilfe (ohne den Inhalt, den kennt das Backend). */
     function storageLines() {
       const lines = [];
+      if (multiArea()) lines.push(t('Bereich: „{name}“ (einer von {n}; Adresse: index.html?w={id})', { name: s.area.name, n: s.areas.list.length, id: s.area.id }));
       lines.push(t('Browser-Speicher: {label}', { label: Store.browserStore.label() }) + (s.mirrorAtStart ? ' ' + t('(Kopie vorhanden)') : ''));
       if (s.fileHandle && s.filePermission === 'granted') {
         lines.push(t('Datenbankdatei: „{name}“, verbunden', { name: s.fileHandle.name }) + (s.handleRemembered ? t(', wird gemerkt') : ' ' + t('(nur diese Sitzung)')));
@@ -628,6 +939,26 @@
       el.downloadBtn.addEventListener('click', downloadCopy);
       el.importBtn.addEventListener('click', startImport);
       el.importInput.addEventListener('change', importFromInput);
+      if (areasPossible()) {
+        const info = el.storageInfo;
+        info.classList.add('clickable');
+        info.setAttribute('role', 'button');
+        info.tabIndex = 0;
+        info.addEventListener('click', e => { e.stopPropagation(); showAreaMenu(); }); // sonst schliesst der Klick das Menü gleich wieder
+        info.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showAreaMenu(); } });
+        if (el.areasBtn) el.areasBtn.addEventListener('click', e => { e.stopPropagation(); showAreaMenu(); });
+        // Alt+1 … 9: Bereich nach seiner Stelle in der Liste; Alt+0: Menü der Bereiche (unabhängig vom Tastaturlayout über e.code)
+        document.addEventListener('keydown', e => {
+          if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+          const m = /^(?:Digit|Numpad)([0-9])$/.exec(e.code || '');
+          if (!m) return;
+          if (m[1] === '0') { e.preventDefault(); showAreaMenu(); return; }
+          const target = s.areas.list[Number(m[1]) - 1];
+          if (!target || !multiArea()) return;
+          e.preventDefault();
+          switchArea(target.id);
+        });
+      }
       global.addEventListener('beforeunload', e => {
         if (isDirty()) { e.preventDefault(); e.returnValue = ''; }
       });
@@ -640,7 +971,12 @@
       if (typeof global.BroadcastChannel === 'function') {
         try {
           s.channel = new global.BroadcastChannel('nonotes-mirror');
-          s.channel.onmessage = e => { if (e.data && e.data.tab !== s.tabId) onOtherTab(); };
+          s.channel.onmessage = e => {
+            const d = e.data;
+            if (!d || d.tab === s.tabId) return;
+            if (d.type === 'areas') { onAreasChanged().catch(err => console.warn('Bereiche', err)); return; }
+            if ((d.area || MAIN) === s.area.id) onOtherTab(); // andere Bereiche gehen diesen Tab nichts an
+          };
         } catch (e) { s.channel = null; }
       }
     }
@@ -648,6 +984,10 @@
     return {
       id: 'local',
       start, afterReady, bind,
+      /** Aktiver Bereich und Verzeichnis (für Tests und Erweiterungen). */
+      get area() { return s.area ? { id: s.area.id, name: s.area.name } : null; },
+      get areas() { return s.areas ? s.areas.list.map(a => ({ id: a.id, name: a.name })) : []; },
+      switchArea,
       flush: persistNow,
       isDirty,
       storageLines, saveLine,

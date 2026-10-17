@@ -125,6 +125,8 @@ body.editor-open .statusbar.has-note .sb-note, body.view-list .statusbar.has-not
 .storage.connected .dot { background: var(--ok); }
 .storage.pending .dot { background: var(--warn); }
 .storage.connected .label { color: var(--text); }
+.storage.clickable { cursor: pointer; border-radius: 6px; padding: 1px 4px; margin: -1px -4px; }
+.storage.clickable:hover, .storage.clickable:focus-visible { background: var(--hover); outline: none; }
 
 /* ---------- Menü ---------- */
 
@@ -158,6 +160,7 @@ body.editor-open .statusbar.has-note .sb-note, body.view-list .statusbar.has-not
 .menu-panel button.danger { color: var(--danger); }
 .menu-panel button.danger:hover { background: var(--hover); color: var(--danger); }
 /* Symbol vor dem Text (Linien in der Textfarbe); Einträge ohne Symbol bekommen einen leeren Platzhalter, damit der Text bündig bleibt */
+.menu-panel .key { margin-left: auto; padding-left: 16px; color: var(--muted); font-size: 12px; }
 .menu-panel .mi { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; opacity: .8; }
 .menu-panel .plugin-menu { display: flex; flex-direction: column; }
 .menu-panel .sep { height: 1px; background: var(--border); margin: 6px 0; }
@@ -488,6 +491,8 @@ body:not(.view-list).editor-open #editorPane { max-width: 1000px; }
 .context-menu button { text-align: left; background: none; border: 0; padding: 8px 10px; border-radius: 6px; display: flex; justify-content: space-between; gap: 16px; }
 .context-menu button:hover { background: var(--hover); }
 .context-menu button .key { color: var(--muted); font-size: 12px; }
+.context-menu button.checked { font-weight: 600; }
+.context-menu button.checked > span:first-child::before { content: "✓ "; color: var(--accent); }
 .context-menu .sep { height: 1px; background: var(--border); margin: 6px 0; }
 
 @media (max-width: 760px) {

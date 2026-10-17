@@ -13,7 +13,7 @@ packages/
   agent/        Werkzeuge für KI-Agenten über das Backend (catalog.js), Anmeldung beim Agenten des Browsers (webmcp.js),
                 MCP ohne Transport für Ausprägungen mit Server (protocol.js); siehe AGENTS.md
   store-local/  alles, was nur die lokale Ausprägung braucht: Backend über db.js, lokale Hülle
-                (Speichern, Datei, Browser-Speicher), Persistenz (IndexedDB, File System Access)
+                (Speichern, Datei, Browser-Speicher, Bereiche), Persistenz (IndexedDB, File System Access)
   ui/           Oberfläche: app.js (Ablauf), Mindmap, Druck, Scroll-Sync, app.css
 editions/
   local/        edition.json (Skripte, Hilfeabschnitt, Dateien), edition.js, Startskripte: setzt die lokale Version zusammen;
@@ -44,6 +44,27 @@ Verbindungen halten, Menüs der Ausprägung bedienen (bei der lokalen Version: D
 trennen, Kopie, Import). Die Oberfläche gibt der Hülle über `host` nur Rückrufe (`setStatus`, `renderAll`,
 `onDatabaseReplaced` …) und fragt sie nach ihrem Zustand (`storageLines`, `isDirty`).
 
+
+## Bereiche der lokalen Ausprägung (v2.3.0)
+
+Die lokale Hülle führt mehrere Datenbanken nebeneinander. `storage.js` legt je Bereich eine Browser-Kopie und ein gemerktes
+Datei-Handle ab; der erste Bereich (`main`) behält die bisherigen Schlüssel `db` und `fileHandle`, weitere stehen unter
+`area:<id>:db` und `area:<id>:handle`, das Verzeichnis unter `areas` (`{ list: [{ id, name, createdAt }], last }`). Solange es nur
+den ersten gibt, wird kein Verzeichnis geschrieben, und alles verhält sich wie vor v2.3.0.
+
+- **Aktiver Bereich je Tab:** aus der Adresse (`?w=<kennung>`, Name als Kennung oder Stelle 1 … 9), sonst aus dem Sitzungsspeicher
+  des Tabs, sonst der zuletzt benutzte. Nach jedem Wechsel steht die Kennung in der Adresse (`history.replaceState`) und der Name im
+  Titel des Tabs.
+- **Wechsel:** die Oberfläche schreibt zuerst die offene Notiz (`host.ensureSaved`), die Hülle sichert ausstehende Änderungen, lädt
+  den anderen Bereich (Datei, wenn freigegeben, sonst Browser-Kopie; die Freigabe fragt sie im selben Klick an) und tauscht die
+  Datenbank aus (`onDatabaseReplaced`, danach `renderAll`). Das Backend bleibt dasselbe Objekt; es liest die Datenbank über `getDb()`.
+  Plugins, Agenten-Werkzeuge (WebMCP) und Ansichten arbeiten damit immer auf dem aktiven Bereich.
+- **Tabs:** Nachrichten auf dem Kanal `nonotes-mirror` tragen den Bereich (`{ tab, area }`); andere Bereiche ignorieren sie. Änderungen
+  am Verzeichnis gehen als `{ type: 'areas' }` an alle Tabs. Wird der eigene Bereich anderswo entfernt, wechselt der Tab in den ersten.
+- **Menü:** die Hülle baut es und zeigt es über `host.showMenu(items, x, y, { above: true })` (dasselbe Menü wie in der Mindmap).
+- **Agenten:** `NoNotesAgent.multi()` in `packages/agent/catalog.js` macht aus mehreren Katalogen einen mit `list_workspaces` und dem
+  Parameter `workspace`; das Programm `agent/nonotes-mcp.cjs` nutzt es für mehrere Dateien. Kennungen bildet `NoNotesAgent.slug()`
+  gleich wie die App.
 ## Asynchron arbeiten
 
 Weil jedes Backend im Netz liegen kann, ist jeder Datenzugriff asynchron. Für Code in der Oberfläche gelten

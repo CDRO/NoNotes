@@ -591,5 +591,82 @@
     };
   }
 
-  global.NoNotesAgent = { create, validate, ERRORS, INSTRUCTIONS, toolNames: () => TOOLS.map(t => t.name) };
+  // ---------- Mehrere Datenbanken (Bereiche) ----------
+
+  /** Kennung aus einem Namen, gleich wie die Bereiche der App («Projekt Ä» → «projekt-ae»). */
+  function slug(name) {
+    const s = String(name || '').toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+      .normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30).replace(/-+$/, '');
+    return s || 'workspace';
+  }
+
+  const WORKSPACE_PARAM = { type: 'string', description: 'Workspace id (see list_workspaces).' };
+  const LIST_WORKSPACES = {
+    name: 'list_workspaces', title: 'List workspaces',
+    description: 'The workspaces (separate NoNotes databases) you may use, with id and name. Call this first; every other tool takes one of these ids as "workspace".',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    annotations: { title: 'List workspaces', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  };
+  const MULTI_NOTE = 'This server has several workspaces (separate databases): call list_workspaces first; every other tool takes "workspace" (an id from that list). Notes, questions, decisions and tasks never span workspaces.';
+
+  /**
+   * Ein Katalog über mehrere Datenbanken: jedes Werkzeug bekommt den Parameter «workspace», list_workspaces nennt sie.
+   * o: { workspaces() → [{ id, name, ...angaben }] (auch async), catalogFor(id) → Katalog von create() (auch async), readOnly, log }
+   */
+  function multi(o) {
+    const readOnly = !!o.readOnly;
+    const template = create({}, { readOnly });
+    const tools = template.list().map(t => Object.assign({}, t, {
+      inputSchema: Object.assign({}, t.inputSchema, { properties: Object.assign({ workspace: WORKSPACE_PARAM }, t.inputSchema.properties), required: ['workspace', ...(t.inputSchema.required || [])] }),
+    }));
+    const names = new Set(tools.map(t => t.name));
+    const workspaces = async () => (await o.workspaces()).map(w => Object.assign({}, w));
+    async function resolve(ref) {
+      const v = String(ref == null ? '' : ref).trim().toLowerCase();
+      const list = await workspaces();
+      return list.find(w => w.id === v) || list.find(w => slug(w.name) === slug(v)) || null;
+    }
+    const fail = (code, message) => ({ content: [{ type: 'text', text: `Error (${code}): ${message}` }], structuredContent: { error: { code, message } }, isError: true });
+
+    async function call(name, input) {
+      if (name === 'list_workspaces') {
+        const items = await workspaces();
+        const text = items.length ? items.map(w => `[${w.id}] ${w.name}${w.file ? ` (${w.file})` : ''}`).join('\n') : 'No workspaces.';
+        return { content: [{ type: 'text', text }], structuredContent: { workspaces: items } };
+      }
+      if (!names.has(name)) return fail('UNKNOWN_TOOL', `Unknown tool: ${name}`);
+      const args = input && typeof input === 'object' && !Array.isArray(input) ? Object.assign({}, input) : {};
+      const ref = args.workspace;
+      delete args.workspace;
+      if (ref == null || ref === '') return fail('INVALID_INPUT', 'Invalid input: workspace: required (see list_workspaces)');
+      const w = await resolve(ref);
+      if (!w) return fail('WORKSPACE_NOT_FOUND', `Unknown workspace: ${ref}. Call list_workspaces for the ids you may use.`);
+      const cat = await o.catalogFor(w.id);
+      return cat.call(name, args);
+    }
+
+    async function readResource(uri) {
+      const m = /^nonotes:\/\/([a-z0-9-]+)\/(overview|note\/\d+)$/.exec(String(uri || ''));
+      const w = m ? await resolve(m[1]) : null;
+      if (!w) throw Object.assign(new Error(`Unknown resource: ${uri}`), { code: 'RESOURCE_NOT_FOUND' });
+      const inner = await (await o.catalogFor(w.id)).readResource(`nonotes://${m[2]}`);
+      return { uri: String(uri), mimeType: inner.mimeType, text: inner.text };
+    }
+
+    return {
+      readOnly, instructions: `${INSTRUCTIONS} ${MULTI_NOTE}`,
+      list: () => [Object.assign({}, LIST_WORKSPACES), ...tools],
+      has: name => name === 'list_workspaces' || names.has(name),
+      call,
+      resources: async () => (await workspaces()).map(w => ({ uri: `nonotes://${w.id}/overview`, name: `${w.id} overview`, title: `Overview of ${w.name}`, description: `Counts of notes, open questions, decisions and tasks in ${w.name}.`, mimeType: 'text/plain' })),
+      resourceTemplates: () => [
+        { uriTemplate: 'nonotes://{workspace}/overview', name: 'overview', title: 'Workspace overview', description: 'Counts of notes, open questions, decisions and tasks.', mimeType: 'text/plain' },
+        { uriTemplate: 'nonotes://{workspace}/note/{id}', name: 'note', title: 'A note as Markdown', description: 'Title and body of one note.', mimeType: 'text/markdown' },
+      ],
+      readResource,
+      workspaces,
+    };
+  }
+
+  global.NoNotesAgent = { create, multi, slug, validate, ERRORS, INSTRUCTIONS, toolNames: () => TOOLS.map(t => t.name) };
 })(window);

@@ -61,7 +61,7 @@
     storageInfo: $('#storageInfo'), banner: $('#banner'),
     menuBtn: $('#menuBtn'), menu: $('#menu'), menuHint: $('#menuHint'), noteMenuBtn: $('#noteMenuBtn'), noteMenu: $('#noteMenu'),
     statusbar: $('#statusbar'), toast: $('#toast'), toastText: $('#toastText'), toastCloseBtn: $('#toastCloseBtn'),
-    createFileBtn: $('#createFileBtn'), openFileBtn: $('#openFileBtn'), disconnectBtn: $('#disconnectBtn'),
+    createFileBtn: $('#createFileBtn'), openFileBtn: $('#openFileBtn'), disconnectBtn: $('#disconnectBtn'), areasBtn: $('#areasBtn'),
     downloadBtn: $('#downloadBtn'), importBtn: $('#importBtn'), importInput: $('#importInput'),
     viewMapBtn: $('#viewMapBtn'), viewListBtn: $('#viewListBtn'), viewQuestionsBtn: $('#viewQuestionsBtn'),
     questionsView: $('#questionsView'), qFilter: $('#qFilter'), qSearch: $('#qSearch'),
@@ -299,9 +299,11 @@
       el: {
         createFileBtn: el.createFileBtn, openFileBtn: el.openFileBtn, disconnectBtn: el.disconnectBtn,
         downloadBtn: el.downloadBtn, importBtn: el.importBtn, importInput: el.importInput,
-        storageInfo: el.storageInfo, menuHint: el.menuHint,
+        storageInfo: el.storageInfo, menuHint: el.menuHint, areasBtn: el.areasBtn,
       },
       setStatus, showBanner, hideBanner, closeMenu,
+      showMenu: (items, x, y, opts) => showContextMenu(items, x, y, opts),
+      ensureSaved: () => ensureSaved(),
       renderAll: () => renderAll(),
       onDatabaseReplaced,
     };
@@ -3294,7 +3296,8 @@
 
   // ---------- Kontextmenü ----------
 
-  function showContextMenu(items, x, y) {
+  /** items: { label, key, action, danger, write, checked } oder 'sep'; opts.above: Menü endet über y (etwa über der Statusleiste). */
+  function showContextMenu(items, x, y, opts) {
     const menu = el.contextMenu;
     menu.replaceChildren();
     if (readOnly()) { // Lesemodus: nur Einträge ohne Schreibzugriff, ohne verwaiste Trennlinien
@@ -3321,13 +3324,16 @@
         b.appendChild(k);
       }
       if (item.danger) b.classList.add('danger');
+      if (item.checked) { b.classList.add('checked'); b.setAttribute('aria-current', 'true'); }
       b.addEventListener('click', () => { hideContextMenu(); item.action(); });
       menu.appendChild(b);
     }
     menu.hidden = false;
     const w = menu.offsetWidth, h = menu.offsetHeight;
     menu.style.left = `${Math.min(x, window.innerWidth - w - 8)}px`;
-    menu.style.top = `${Math.min(y, window.innerHeight - h - 8)}px`;
+    menu.style.top = opts && opts.above ? `${Math.max(8, y - h - 6)}px` : `${Math.min(y, window.innerHeight - h - 8)}px`;
+    const first = menu.querySelector('button');
+    if (opts && opts.above && first) first.focus(); // per Tastatur geöffnet: gleich bedienbar
   }
 
   function hideContextMenu() {

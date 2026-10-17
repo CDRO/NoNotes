@@ -8,6 +8,15 @@
         <p>Die App merkt sich die Datei. Der Browser verlangt für lokal geöffnete Seiten bei jedem Start eine Freigabe, deshalb erscheint oben eine Leiste mit <strong>Mit Datei verbinden</strong>. Bis zum Klick arbeitest du auf der Browser-Kopie; beim Verbinden gleicht die App beide Stände ab und fragt nur nach, wenn die Datei zwischenzeitlich von aussen verändert wurde.</p>
         <h3>Wenn die Datei sich von aussen ändert</h3>
         <p>Beschreibt ein anderes Programm (etwa ein KI-Agent, siehe Hilfe «Editor») oder ein anderer Tab die verbundene Datei (oder den Browser-Speicher), merkt die App es beim Zurückkehren in den Tab, alle 30 Sekunden und kurz vor dem Speichern. Hast du nichts Ungesichertes, wird der neue Stand still geladen. Sonst führt die App beides Notiz für Notiz zusammen. Nur wenn dieselbe Notiz an derselben Stelle geändert wurde oder deine Änderung den Baum, Bilder, Papierkorb oder Archiv betrifft, fragt sie: <strong>Datei laden</strong> verwirft deine ungesicherten Änderungen, <strong>Meine Fassung behalten</strong> überschreibt die Datei. Bis zur Entscheidung wird nichts geschrieben.</p>
+        <h3>Mehrere Bereiche</h3>
+        <p>Für getrennte Themen, etwa Arbeit und Privat, legst du <strong>Bereiche</strong> an: jeder ist eine eigene Datenbank mit eigener Browser-Kopie, eigener Datei und eigener Hauptfarbe. Bearbeitet wird immer der aktive Bereich; Listen, Fragen, Entscheide, Aufgaben und Suche zeigen nur ihn.</p>
+        <ul class="help-list">
+          <li><strong>Wechseln:</strong> Klick auf die Ablage unten links in der Statusleiste, <em>Datenbank → Bereiche…</em>, <kbd>Alt</kbd>+<kbd>1</kbd> … <kbd>9</kbd> für die Stelle in der Liste, <kbd>Alt</kbd>+<kbd>0</kbd> für das Menü. Die offene Notiz wird vorher gespeichert.</li>
+          <li><strong>Anlegen:</strong> <em>Neuer Bereich…</em> beginnt leer; danach eine eigene Datenbankdatei anlegen. <em>Datei als Bereich öffnen…</em> nimmt eine vorhandene NoNotes-Datei als weiteren Bereich auf.</li>
+          <li><strong>Über die Adresse:</strong> <code>index.html?w=arbeit</code> öffnet den Bereich «Arbeit» direkt, auch als Lesezeichen oder Verknüpfung. Die Kennung steht nach einem Wechsel in der Adresse; <code>?w=2</code> öffnet den zweiten Bereich der Liste.</li>
+          <li><strong>Zwei Tabs</strong> dürfen verschiedene Bereiche offen haben, ohne sich zu stören. Nach einem Neustart des Browsers fragt er für jede Datei einmal um Freigabe, beim ersten Wechsel in ihren Bereich.</li>
+          <li><strong>Entfernen</strong> nimmt den Bereich aus der Liste und löscht seine Kopie im Browser; die Datei auf der Platte bleibt.</li>
+        </ul>
         <h3>Kopien, Umzug, Export</h3>
         <ul class="help-list">
           <li><strong>Kopie herunterladen</strong> legt den aktuellen Stand als <code>NoNotes-Datum.sqlite</code> in den Download-Ordner, <strong>Aus Datei importieren…</strong> liest eine solche Kopie wieder ein.</li>
