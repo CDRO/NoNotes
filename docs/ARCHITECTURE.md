@@ -56,6 +56,10 @@ den ersten gibt, wird kein Verzeichnis geschrieben, und alles verhält sich wie 
   aus dem Sitzungsspeicher des Tabs, sonst der zuletzt benutzte. Nach jedem Wechsel steht die Kennung als `#w=…` in der Adresse
   (`history.replaceState`) und der Name im Titel des Tabs. Der Teil nach `#` gilt, weil er Weiterleitungen eines Webservers übersteht
   (`npx serve` leitet `index.html?w=…` auf `/` um und verliert den Parameter); `hashchange` wechselt ohne Neuladen.
+- **Startdatei:** «Startdatei für den Desktop…» schreibt eine kleine HTML-Datei (Speicherdialog ab dem Desktop, sonst Download), die per
+  `location.replace` und `meta refresh` auf `…/index.html#w=<kennung>` weiterleitet. Grund: Windows macht aus Verknüpfungen auf
+  `file:///…`-Adressen einen Dateipfad und wirft `?…` und `#…` weg; ein Doppelklick auf die Startdatei öffnet sie im Browser, die
+  Weiterleitung geschieht dort.
 - **Wechsel:** die Oberfläche schreibt zuerst die offene Notiz (`host.ensureSaved`), die Hülle sichert ausstehende Änderungen, lädt
   den anderen Bereich (Datei, wenn freigegeben, sonst Browser-Kopie; die Freigabe fragt sie im selben Klick an) und tauscht die
   Datenbank aus (`onDatabaseReplaced`, danach `renderAll`). Das Backend bleibt dasselbe Objekt; es liest die Datenbank über `getDb()`.

@@ -78,9 +78,12 @@ Entscheide, Aufgaben und Suche zeigen nur ihn.
   `?w=arbeit` geht ebenfalls, aber ein Webserver, der weiterleitet, wirft diesen Teil weg (etwa `npx serve`, das `index.html` auf `/`
   umleitet); der Teil nach `#` bleibt bei Weiterleitungen erhalten (seit 2.3.2). Eine Änderung von `#w=…` in der Adressleiste wechselt
   den Bereich ohne Neuladen.
-- **Verknüpfung auf dem Desktop** (seit 2.3.1): im Menü der Bereiche «Adresse kopieren», dann unter Windows Rechtsklick auf den
-  Desktop, «Neu → Verknüpfung», Adresse einfügen. Verweigert der Browser die Zwischenablage, zeigt die App die Adresse markiert zum
-  Kopieren mit `Ctrl+C`.
+- **Auf dem Desktop** (seit 2.3.3): im Menü der Bereiche «Startdatei für den Desktop…». Die App legt eine kleine Datei wie
+  `NoNotes Arbeit.html` an, am liebsten gleich auf dem Desktop; ein Doppelklick öffnet im Browser genau diesen Bereich. Eine
+  Windows-Verknüpfung auf eine `file:///…`-Adresse taugt dafür nicht: Windows macht daraus einen Dateipfad und wirft den Teil nach
+  `?` und `#` weg, der Browser öffnet dann den zuletzt benutzten Bereich. Wird der Ordner der App verschoben, eine neue Startdatei anlegen.
+- **Adresse kopieren** (seit 2.3.1) legt die Adresse des Bereichs in die Zwischenablage, für Lesezeichen im Browser. Verweigert der
+  Browser die Zwischenablage, zeigt die App die Adresse zum Kopieren mit `Ctrl+C`.
 - **Tabs:** Jeder Tab hat seinen eigenen aktiven Bereich; zwei Tabs mit verschiedenen Bereichen stören sich nicht. Der Titel des Tabs
   nennt den Bereich.
 - **Freigaben:** Nach einem Neustart des Browsers fragt er für jede Datei einmal um Erlaubnis, beim ersten Wechsel in ihren Bereich.

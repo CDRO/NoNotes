@@ -1,6 +1,6 @@
 {
   "name": "nonotes",
-  "version": "2.3.2",
+  "version": "2.3.3",
   "private": true,
   "description": "Lokale Notiz-App: läuft als Datei im Browser, speichert in SQLite (sql.js). Kein Server, keine Installation.",
   "license": "UNLICENSED",

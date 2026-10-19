@@ -925,6 +925,49 @@
       }
     }
 
+    /** Kleine HTML-Datei, die im Browser genau diesen Bereich öffnet. Windows wirft bei Verknüpfungen auf file://-Adressen
+     *  den Teil nach ? und # weg; eine eigene Datei braucht keinen solchen Teil, die Weiterleitung geschieht im Browser. */
+    function startFileHtml(url, name) {
+      const esc = v => String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const js = JSON.stringify(url).replace(/</g, '\\u003c');
+      return `<!doctype html>
+<html lang="${esc(I18n.language())}">
+<head>
+<meta charset="utf-8">
+<title>${esc(name)} – NoNotes</title>
+<meta http-equiv="refresh" content="0; url=${esc(url)}">
+<script>location.replace(${js});</script>
+</head>
+<body>
+<p>${esc(t('NoNotes öffnet den Bereich „{name}“.', { name }))} <a href="${esc(url)}">${esc(t('Falls nichts geschieht: hier klicken.'))}</a></p>
+<p>${esc(t('Diese Datei wurde von NoNotes angelegt. Wird der Ordner der App verschoben, eine neue anlegen.'))}</p>
+</body>
+</html>
+`;
+    }
+
+    /** Speichert die Startdatei des aktiven Bereichs, am liebsten direkt auf den Desktop; sonst als Download. */
+    async function saveStartFile() {
+      host.closeMenu();
+      const name = s.area.name;
+      const fileName = `NoNotes ${name}`.replace(/[\u0000-\u001f\u007f<>:"/\\|?*]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) + '.html';
+      const bytes = new TextEncoder().encode(startFileHtml(areaUrl(), name));
+      const done = isDirty() ? 'dirty' : 'saved';
+      if (Store.fileAccess.supported) {
+        try {
+          const handle = await Store.fileAccess.pickNew(fileName, [{ description: t('Startdatei (HTML)'), accept: { 'text/html': ['.html'] } }], 'desktop');
+          await Store.fileAccess.write(handle, bytes);
+          setStatus(t('Startdatei „{datei}“ gespeichert. Ein Doppelklick öffnet den Bereich „{name}“.', { datei: handle.name, name }), done);
+          return;
+        } catch (e) {
+          if (isAbort(e)) return;
+          console.warn('Startdatei: Speichern im Dialog ging nicht, lade herunter', e);
+        }
+      }
+      Store.download(bytes, fileName, 'text/html');
+      setStatus(t('Startdatei „{datei}“ heruntergeladen. Auf den Desktop verschieben; ein Doppelklick öffnet den Bereich „{name}“.', { datei: fileName, name }), done);
+    }
+
     /** Menü der Bereiche, über der Statusleiste. */
     function showAreaMenu() {
       if (!areasPossible()) return;
@@ -934,6 +977,7 @@
       if (Store.fileAccess.supported) items.push({ label: t('Datei als Bereich öffnen…'), action: openFileAsArea });
       items.push({ label: t('Bereich umbenennen…'), action: renameArea });
       items.push({ label: t('Adresse kopieren'), action: copyAreaUrl });
+      items.push({ label: t('Startdatei für den Desktop…'), action: saveStartFile });
       if (multiArea()) items.push({ label: t('Bereich entfernen…'), danger: true, action: removeArea });
       const r = el.storageInfo.getBoundingClientRect();
       host.showMenu(items, Math.max(8, r.left), r.top, { above: true });

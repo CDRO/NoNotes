@@ -207,8 +207,11 @@
       && typeof global.showOpenFilePicker === 'function',
     ICS_TYPES,
 
-    async pickNew(suggestedName, types) {
-      return global.showSaveFilePicker({ suggestedName, types: types || FILE_TYPES });
+    /** startIn: bekannter Ordner, in dem der Dialog beginnt (etwa 'desktop'). */
+    async pickNew(suggestedName, types, startIn) {
+      const opts = { suggestedName, types: types || FILE_TYPES };
+      if (startIn) opts.startIn = startIn;
+      return global.showSaveFilePicker(opts);
     },
 
     async pickExisting() {
@@ -244,8 +247,8 @@
 
   // ---------- Download / Import (funktioniert überall) ----------
 
-  function download(bytes, filename) {
-    const blob = new Blob([bytes], { type: 'application/vnd.sqlite3' });
+  function download(bytes, filename, type) {
+    const blob = new Blob([bytes], { type: type || 'application/vnd.sqlite3' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

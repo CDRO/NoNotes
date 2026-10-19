@@ -2342,8 +2342,9 @@ async function runAreas(browser, part, step) {
       return h;
     };
     window.__pickNew = [];
+    window.__pickOpts = [];
     window.__nextOpen = null;
-    window.showSaveFilePicker = async opts => { window.__pickNew.push(opts.suggestedName); return window.__mkHandle(opts.suggestedName); };
+    window.showSaveFilePicker = async opts => { window.__pickNew.push(opts.suggestedName); window.__pickOpts.push({ name: opts.suggestedName, startIn: opts.startIn || null }); return window.__mkHandle(opts.suggestedName); };
     window.showOpenFilePicker = async () => [window.__nextOpen];
     // Zwischenablage nachgebaut: window.__clip hält den kopierten Text, window.__clipFail lässt das Kopieren scheitern
     window.__clip = null;
@@ -2401,7 +2402,7 @@ async function runAreas(browser, part, step) {
     await page.keyboard.press('Alt+1');
     assert.equal(await label(page), 'Nur Browser-Speicher', 'Alt+1 ohne zweiten Bereich tut nichts');
     let items = await menuItems(page);
-    assert.deepEqual(items.map(x => x.replace(/Alt\+\d/, '')), ['Meine Notizen', 'Neuer Bereich…', 'Datei als Bereich öffnen…', 'Bereich umbenennen…', 'Adresse kopieren'], 'Menü mit einem Bereich: kein «entfernen»');
+    assert.deepEqual(items.map(x => x.replace(/Alt\+\d/, '')), ['Meine Notizen', 'Neuer Bereich…', 'Datei als Bereich öffnen…', 'Bereich umbenennen…', 'Adresse kopieren', 'Startdatei für den Desktop…'], 'Menü mit einem Bereich: kein «entfernen»');
     assert.equal(await page.locator('#contextMenu button.checked').textContent(), 'Meine NotizenAlt+1');
     await page.keyboard.press('Escape');
     part('Ein Bereich: Statusleiste, Titel und Adresse wie bisher; Alt+0 öffnet das Menü der Bereiche');
@@ -2442,7 +2443,7 @@ async function runAreas(browser, part, step) {
     assert.ok(!/Zug buchen/.test(await page.textContent('main')), 'Aufgaben nur aus dem aktiven Bereich');
     await page.click('#viewListBtn');
     items = await menuItems(page);
-    assert.deepEqual(items.map(x => x.replace(/Alt\+\d/, '')), ['Meine Notizen', 'Privat', 'Neuer Bereich…', 'Datei als Bereich öffnen…', 'Bereich umbenennen…', 'Adresse kopieren', 'Bereich entfernen…']);
+    assert.deepEqual(items.map(x => x.replace(/Alt\+\d/, '')), ['Meine Notizen', 'Privat', 'Neuer Bereich…', 'Datei als Bereich öffnen…', 'Bereich umbenennen…', 'Adresse kopieren', 'Startdatei für den Desktop…', 'Bereich entfernen…']);
     await page.click('#contextMenu button:has-text("Privat")');
     await waitLabel(page, /^Privat · /);
     part('Wechseln über Alt+1/2 und das Menü: Liste, Aufgaben und Editor nur aus dem aktiven Bereich; die offene Notiz wird vorher geschrieben');
@@ -2513,6 +2514,28 @@ async function runAreas(browser, part, step) {
     await page.evaluate(() => { window.__clipFail = false; });
     part('Adresse kopieren: in die Zwischenablage, öffnet genau den Bereich; ohne Zwischenablage ein Fenster mit der markierten Adresse');
 
+    // ---------- Startdatei für den Desktop (Windows wirft bei Verknüpfungen ? und # weg) ----------
+    await choose(page, 'Startdatei für den Desktop…');
+    await page.waitForFunction(() => window.__files['NoNotes Privat.html'] && window.__files['NoNotes Privat.html'].writes >= 1);
+    assert.deepEqual(await page.evaluate(() => window.__pickOpts.at(-1)), { name: 'NoNotes Privat.html', startIn: 'desktop' }, 'der Dialog beginnt auf dem Desktop');
+    const startHtml = await page.evaluate(() => new TextDecoder().decode(window.__files['NoNotes Privat.html'].bytes));
+    assert.ok(startHtml.includes(`location.replace(${JSON.stringify(APP_URL + '#w=privat')})`), 'leitet im Browser weiter: ' + startHtml);
+    assert.ok(startHtml.includes(`<meta http-equiv="refresh" content="0; url=${APP_URL}#w=privat">`), 'auch ohne Skript');
+    assert.match(await page.textContent('#status'), /Startdatei „NoNotes Privat\.html“ gespeichert\. Ein Doppelklick öffnet den Bereich „Privat“\./);
+    const startDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nonotes-start-'));
+    const startPath = path.join(startDir, 'NoNotes Privat.html');
+    fs.writeFileSync(startPath, startHtml);
+    const viaStart = await ctx.newPage();
+    const startErrors = watch(viaStart);
+    await viaStart.goto('file://' + startPath); // wie ein Doppelklick auf die Datei auf dem Desktop
+    await viaStart.waitForURL(APP_URL + '#w=privat');
+    await viaStart.waitForSelector(READY);
+    assert.match(await label(viaStart), /^Privat · /, 'die Startdatei öffnet genau den Bereich');
+    assert.deepEqual(startErrors, []);
+    await viaStart.close();
+    fs.rmSync(startDir, { recursive: true, force: true });
+    part('Startdatei für den Desktop: Dialog beginnt auf dem Desktop, Datei leitet im Browser auf #w=… weiter und öffnet genau den Bereich');
+
     // ---------- zwei Tabs, verschiedene Bereiche ----------
     await page.reload(); // erfährt den dritten Bereich ohnehin über den Kanal
     await page.waitForSelector(READY);
@@ -2548,7 +2571,7 @@ async function runAreas(browser, part, step) {
     await waitLabel(p2.page, /^Meine Notizen · /);
     items = await menuItems(p2.page);
     assert.deepEqual(items.map(x => x.replace(/Alt\+\d/, '')).slice(0, 2), ['Meine Notizen', 'Familie']);
-    assert.equal(items.length, 7);
+    assert.equal(items.length, 8);
     await p2.page.keyboard.press('Escape');
     const gone = await p2.page.evaluate(() => new Promise(res => { const r = indexedDB.open('nonotes'); r.onsuccess = () => { const q = r.result.transaction('kv').objectStore('kv').get('area:projekt-x:db'); q.onsuccess = () => res(q.result === undefined); }; }));
     assert.equal(gone, true, 'die Browser-Kopie des entfernten Bereichs ist gelöscht');
@@ -2558,7 +2581,7 @@ async function runAreas(browser, part, step) {
     await page.click('#menuBtn');
     await page.click('#createFileBtn');
     await waitLabel(page, /^Familie · Familie\.sqlite/);
-    assert.deepEqual(await page.evaluate(() => window.__pickNew), ['Familie.sqlite'], 'Vorschlag: Name des Bereichs');
+    assert.deepEqual((await page.evaluate(() => window.__pickNew)).filter(n => n.endsWith('.sqlite')), ['Familie.sqlite'], 'Vorschlag: Name des Bereichs');
     await page.waitForFunction(() => window.__files['Familie.sqlite'].writes >= 1);
     await page.keyboard.press('Alt+1');
     await waitLabel(page, /^Meine Notizen · Nur Browser-Speicher$/);
@@ -2605,6 +2628,27 @@ async function runAreas(browser, part, step) {
     assert.deepEqual([...errors, ...p2.errors], [], 'keine Fehler im Browser');
   } finally {
     await ctx.close();
+  }
+
+  // ---------- Startdatei als Download, wenn der Browser keinen Speicherdialog kennt ----------
+  const dctx = await browser.newContext({ locale: 'de-CH', acceptDownloads: true });
+  await dctx.addInitScript(() => { delete window.showSaveFilePicker; delete window.showOpenFilePicker; });
+  try {
+    const dpage = await dctx.newPage();
+    const derrors = watch(dpage);
+    await dpage.goto(APP_URL);
+    await dpage.waitForSelector(READY);
+    await dpage.keyboard.press('Alt+0');
+    await dpage.waitForSelector('#contextMenu:not([hidden])');
+    const [download] = await Promise.all([dpage.waitForEvent('download'), dpage.click('#contextMenu button:has-text("Startdatei für den Desktop…")')]);
+    assert.equal(download.suggestedFilename(), 'NoNotes Meine Notizen.html');
+    const text = fs.readFileSync(await download.path(), 'utf8');
+    assert.ok(text.includes(JSON.stringify(APP_URL + '#w=main')), 'auch der erste Bereich hat eine Startdatei');
+    assert.match(await dpage.textContent('#status'), /heruntergeladen\. Auf den Desktop verschieben/);
+    assert.deepEqual(derrors, []);
+    part('Startdatei ohne Speicherdialog: als Download, mit Hinweis');
+  } finally {
+    await dctx.close();
   }
 
   // ---------- über einen Webserver, der weiterleitet wie «npx serve» (index.html → /index → /, ohne ?…) ----------
