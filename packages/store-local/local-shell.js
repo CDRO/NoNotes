@@ -12,7 +12,8 @@
      ensureSaved()           schreibt die offene Notiz; false, wenn die Person bei einem Konflikt erst entscheiden muss
 
    Bereiche (ab v2.3.0): mehrere Datenbanken, je mit eigener Browser-Kopie und eigener Datei. Bearbeitet wird immer nur der
-   aktive Bereich; gewechselt wird über die Statusleiste, «Bereiche…» im Menü, Alt+1 … 9 oder die Adresse (index.html?w=<bereich>).
+   aktive Bereich; gewechselt wird über die Statusleiste, «Bereiche…» im Menü, Alt+1 … 9 oder die Adresse (index.html#w=<bereich>;
+   ?w=<bereich> geht auch, überlebt aber keine Weiterleitung eines Webservers, der Teil nach # schon).
    Jeder Tab hat seinen eigenen aktiven Bereich; zwei Tabs mit verschiedenen Bereichen stören sich nicht.
    Beschreibung der Ausprägungen: docs/ARCHITECTURE.md */
 (function (global) {
@@ -27,7 +28,7 @@
 
   const DEFAULT_FILENAME = 'NoNotes.sqlite';
   const SAVE_DELAY_MS = 600;
-  const AREA_PARAM = 'w';                     // index.html?w=<bereich>
+  const AREA_PARAM = 'w';                     // index.html#w=<bereich> (oder ?w=<bereich>)
   const SESSION_AREA_KEY = 'nonotes.area';    // aktiver Bereich dieses Tabs (übersteht Neuladen)
   const MAIN = Store.MAIN_AREA;
 
@@ -612,8 +613,13 @@
     const areasPossible = () => s.storageKind !== null; // ohne Browser-Speicher kein Verzeichnis
     const multiArea = () => !!(s.areas && s.areas.list.length > 1);
 
+    /** Bereich aus der Adresse: zuerst #w=… (übersteht Weiterleitungen, etwa von «npx serve» auf /), sonst ?w=…. */
     function urlArea() {
-      try { return new URLSearchParams(global.location.search).get(AREA_PARAM); } catch (e) { return null; }
+      try {
+        const fromHash = new URLSearchParams(String(global.location.hash || '').replace(/^#/, '')).get(AREA_PARAM);
+        if (fromHash) return fromHash;
+        return new URLSearchParams(global.location.search).get(AREA_PARAM);
+      } catch (e) { return null; }
     }
 
     /** Verzeichnis aus dem Browser-Speicher; ohne Eintrag gibt es nur den ersten Bereich (wie vor v2.3.0). */
@@ -719,10 +725,15 @@
         if (!s.areas.implicit) Store.browserStore.saveAreas(s.areas).catch(() => {});
       }
       try {
+        // In der Adresse steht der Bereich als #w=<kennung>; ein ?w=… von aussen wird dabei umgeschrieben
         const u = new URL(global.location.href);
-        if (multiArea() || u.searchParams.has(AREA_PARAM)) {
-          if (u.searchParams.get(AREA_PARAM) !== s.area.id) {
-            u.searchParams.set(AREA_PARAM, s.area.id);
+        const hash = new URLSearchParams(u.hash.replace(/^#/, ''));
+        const inQuery = u.searchParams.has(AREA_PARAM);
+        if (multiArea() || inQuery || hash.has(AREA_PARAM)) {
+          if (inQuery || hash.get(AREA_PARAM) !== s.area.id) {
+            u.searchParams.delete(AREA_PARAM);
+            hash.set(AREA_PARAM, s.area.id);
+            u.hash = hash.toString();
             global.history.replaceState(global.history.state, '', u.href);
           }
         }
@@ -896,10 +907,9 @@
 
     /** Adresse, die genau diesen Bereich öffnet (für Lesezeichen und Verknüpfungen auf dem Desktop). */
     function areaUrl() {
-      const u = new URL(global.location.href);
-      u.hash = '';
+      const u = new URL(global.location.href); // genau der Pfad, unter dem die App gerade läuft (index.html oder /)
       u.search = '';
-      u.searchParams.set(AREA_PARAM, s.area.id);
+      u.hash = `${AREA_PARAM}=${encodeURIComponent(s.area.id)}`;
       return u.href;
     }
 
@@ -934,7 +944,7 @@
     /** Zeilen für «Aktueller Stand» in der Hilfe (ohne den Inhalt, den kennt das Backend). */
     function storageLines() {
       const lines = [];
-      if (multiArea()) lines.push(t('Bereich: „{name}“ (einer von {n}; Adresse: index.html?w={id})', { name: s.area.name, n: s.areas.list.length, id: s.area.id }));
+      if (multiArea()) lines.push(t('Bereich: „{name}“ (einer von {n}; Adresse: index.html#w={id})', { name: s.area.name, n: s.areas.list.length, id: s.area.id }));
       lines.push(t('Browser-Speicher: {label}', { label: Store.browserStore.label() }) + (s.mirrorAtStart ? ' ' + t('(Kopie vorhanden)') : ''));
       if (s.fileHandle && s.filePermission === 'granted') {
         lines.push(t('Datenbankdatei: „{name}“, verbunden', { name: s.fileHandle.name }) + (s.handleRemembered ? t(', wird gemerkt') : ' ' + t('(nur diese Sitzung)')));
@@ -981,6 +991,14 @@
           switchArea(target.id);
         });
       }
+      // #w=… von Hand in der Adressleiste geändert: kein Neuladen, also hier wechseln
+      global.addEventListener('hashchange', () => {
+        const v = urlArea();
+        if (!v || !s.areas) return;
+        const a = Store.findArea(s.areas.list, v);
+        if (!a) { showMissingAreaBanner(v); return; }
+        if (a.id !== s.area.id) switchArea(a.id);
+      });
       global.addEventListener('beforeunload', e => {
         if (isDirty()) { e.preventDefault(); e.returnValue = ''; }
       });

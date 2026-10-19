@@ -2368,7 +2368,7 @@ async function runAreas(browser, part, step) {
   const label = page => page.textContent('#storageInfo .label');
   const titles = page => page.evaluate(() => [...document.querySelectorAll('#list .note-title')].map(x => x.textContent));
   const saved = page => page.waitForFunction(SAVED);
-  const area = page => page.evaluate(() => new URLSearchParams(location.search).get('w'));
+  const area = page => page.evaluate(() => new URLSearchParams(location.hash.slice(1)).get('w'));
   const addNote = async (page, title, body) => {
     await page.click('#newBtn');
     await page.fill('#title', title);
@@ -2411,7 +2411,7 @@ async function runAreas(browser, part, step) {
     await choose(page, 'Neuer Bereich…');
     await waitLabel(page, /^Privat · Nur Browser-Speicher$/);
     assert.equal(await page.title(), 'Privat – NoNotes');
-    assert.equal(await area(page), 'privat', 'die Adresse nennt den Bereich');
+    assert.equal(await area(page), 'privat', 'die Adresse nennt den Bereich (#w=…)');
     assert.deepEqual(await titles(page), [], 'der neue Bereich ist leer');
     assert.match(await page.textContent('#banner'), /Neuer Bereich „Privat“\. Empfohlen: eine eigene Datenbankdatei/);
     await page.click('#banner button:has-text("Später")');
@@ -2419,7 +2419,7 @@ async function runAreas(browser, part, step) {
     await page.click('#viewMapBtn');
     await page.waitForFunction(() => [...document.querySelectorAll('.mm-node > text')].some(x => x.textContent === 'Privat'));
     await page.click('#viewListBtn');
-    part('Neuer Bereich: leer, Name in Statusleiste, Tab-Titel, Adresse ?w=privat und als Titel der Mindmap; Hinweis auf eine eigene Datei');
+    part('Neuer Bereich: leer, Name in Statusleiste, Tab-Titel, Adresse #w=privat und als Titel der Mindmap; Hinweis auf eine eigene Datei');
 
     // ---------- wechseln ----------
     await page.click('#title');
@@ -2479,6 +2479,12 @@ async function runAreas(browser, part, step) {
     await p2.page.waitForSelector(READY);
     assert.match(await label(p2.page), /^Meine Notizen · /, 'Stelle in der Liste wie bei Alt+1');
     assert.equal(await area(p2.page), 'main', 'die Adresse zeigt danach die Kennung');
+    assert.equal(await p2.page.evaluate(() => location.search), '', 'ein ?w=… wird zu #w=… umgeschrieben');
+    await p2.page.goto(APP_URL + '#w=privat');
+    await p2.page.waitForSelector(READY);
+    assert.match(await label(p2.page), /^Privat · /, '#w=… beim Öffnen');
+    await p2.page.evaluate(() => { location.hash = 'w=main'; });
+    await waitLabel(p2.page, /^Meine Notizen · /); // von Hand in der Adressleiste geändert: Wechsel ohne Neuladen
     await p2.page.goto(APP_URL + '?w=Projekt%20X');
     await p2.page.waitForSelector(READY);
     assert.match(await p2.page.textContent('#banner'), /Den Bereich „Projekt X“ gibt es in diesem Browser nicht\. Geöffnet ist „Meine Notizen“\./);
@@ -2486,13 +2492,13 @@ async function runAreas(browser, part, step) {
     await waitLabel(p2.page, /^Projekt X · /);
     assert.equal(await area(p2.page), 'projekt-x');
     await p2.page.click('#banner button:has-text("Später")');
-    part('Adresse: ?w=<kennung>, Gross/Klein egal, ?w=1 … 9 nach der Stelle; unbekannt → Hinweis mit «anlegen»; Neuladen bleibt im Bereich');
+    part('Adresse: #w=<kennung> und ?w=<kennung>, Gross/Klein egal, 1 … 9 nach der Stelle; ?w= wird zu #w=; #w= von Hand ändern wechselt; unbekannt → Hinweis mit «anlegen»; Neuladen bleibt im Bereich');
 
     // ---------- Adresse kopieren (für Verknüpfungen) ----------
     await choose(page, 'Adresse kopieren');
     await page.waitForFunction(() => window.__clip);
     const copied = await page.evaluate(() => window.__clip);
-    assert.equal(copied, APP_URL + '?w=privat', 'die Adresse öffnet genau diesen Bereich, ohne weitere Angaben');
+    assert.equal(copied, APP_URL + '#w=privat', 'die Adresse öffnet genau diesen Bereich, ohne weitere Angaben');
     assert.equal(await page.textContent('#status'), 'Adresse von „Privat“ kopiert');
     const viaLink = await open(ctx, copied.slice(APP_URL.length));
     assert.match(await label(viaLink.page), /^Privat · /, 'die kopierte Adresse öffnet den Bereich');
@@ -2502,7 +2508,7 @@ async function runAreas(browser, part, step) {
     await choose(page, 'Adresse kopieren');
     for (let i = 0; i < 50 && !prompts.length; i++) await page.waitForTimeout(20);
     assert.equal(prompts.length, 1, 'ohne Zwischenablage: Fenster mit der Adresse');
-    assert.equal(prompts[0].value, APP_URL + '?w=privat');
+    assert.equal(prompts[0].value, APP_URL + '#w=privat');
     assert.match(prompts[0].message, /Adresse des Bereichs „Privat“ \(mit Ctrl\+C kopieren\)/);
     await page.evaluate(() => { window.__clipFail = false; });
     part('Adresse kopieren: in die Zwischenablage, öffnet genau den Bereich; ohne Zwischenablage ein Fenster mit der markierten Adresse');
@@ -2600,10 +2606,61 @@ async function runAreas(browser, part, step) {
   } finally {
     await ctx.close();
   }
+
+  // ---------- über einen Webserver, der weiterleitet wie «npx serve» (index.html → /index → /, ohne ?…) ----------
+  const http = require('node:http');
+  const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json' };
+  const server = http.createServer((req, res) => {
+    const p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+    if (p === '/index.html') { res.writeHead(301, { location: '/index' }); res.end(); return; }
+    if (p === '/index') { res.writeHead(301, { location: '/' }); res.end(); return; }
+    const file = path.join(DIST, p === '/' ? 'index.html' : p);
+    if (!file.startsWith(DIST) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' });
+    res.end(fs.readFileSync(file));
+  });
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const hctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'de-CH' });
+  await hctx.addInitScript(MOCK_FS);
+  try {
+    const hpage = await hctx.newPage();
+    const herrors = watch(hpage);
+    hpage.on('dialog', d => (d.type() === 'prompt' ? d.accept('Privat') : d.accept()));
+    await hpage.goto(base + '/index.html');
+    await hpage.waitForSelector(READY);
+    assert.equal(new URL(hpage.url()).pathname, '/', 'der Server hat weitergeleitet');
+    await hpage.keyboard.press('Alt+0');
+    await hpage.waitForSelector('#contextMenu:not([hidden])');
+    await hpage.click('#contextMenu button:has-text("Neuer Bereich…")');
+    await waitLabel(hpage, /^Privat · /);
+    assert.equal(hpage.url(), base + '/#w=privat');
+    await hpage.keyboard.press('Alt+0');
+    await hpage.waitForSelector('#contextMenu:not([hidden])');
+    await hpage.click('#contextMenu button:has-text("Adresse kopieren")');
+    await hpage.waitForFunction(() => window.__clip);
+    assert.equal(await hpage.evaluate(() => window.__clip), base + '/#w=privat', 'kopiert wird der Pfad, unter dem die App läuft');
+    await hpage.keyboard.press('Alt+1');
+    await waitLabel(hpage, /^Meine Notizen · /);
+    const h2 = await hctx.newPage();
+    const h2errors = watch(h2);
+    await h2.goto(base + '/index.html#w=privat'); // zwei Weiterleitungen: der Teil nach # bleibt
+    await h2.waitForSelector(READY);
+    assert.equal(h2.url(), base + '/#w=privat');
+    assert.match(await label(h2), /^Privat · /, '#w=… übersteht die Weiterleitung');
+    await h2.goto(base + '/index.html?w=privat'); // so ging es in v2.3.1 verloren: der Server wirft ?w=… weg
+    await h2.waitForSelector(READY);
+    assert.equal(new URL(h2.url()).search, '', 'der Server hat ?w=… verworfen (so wie npx serve)');
+    assert.deepEqual([...herrors, ...h2errors], []);
+    part('Webserver mit Weiterleitung (wie npx serve): #w=… übersteht index.html → /index → /, «Adresse kopieren» nimmt den Pfad, unter dem die App läuft');
+  } finally {
+    await hctx.close();
+    await new Promise(r => server.close(r));
+  }
 }
 
 suite('App-Test', [
   { name: null, run: runSmoke }, // druckt seine Gruppen selbst
-  { name: 'Bereiche: anlegen, wechseln (Statusleiste, Menü, Alt+1 … 9), Adresse ?w=…, Datei und Hauptfarbe je Bereich, umbenennen, entfernen, Datei als Bereich, zwei Tabs', run: runAreas },
+  { name: 'Bereiche: anlegen, wechseln (Statusleiste, Menü, Alt+1 … 9), Adresse #w=… und ?w=…, Weiterleitung eines Webservers, Datei und Hauptfarbe je Bereich, umbenennen, entfernen, Datei als Bereich, zwei Tabs', run: runAreas },
   { name: 'Backend-Vertrag: Methodenliste, JSON-sichere Rückgaben, Änderungsmeldung, Fehlerkennungen', run: runBackend },
 ], { browser: true });

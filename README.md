@@ -72,9 +72,12 @@ Entscheide, Aufgaben und Suche zeigen nur ihn.
   der Liste, `Alt+0` für das Menü. Die offene Notiz wird vorher gespeichert; der Wechsel dauert Sekundenbruchteile.
 - **Anlegen:** «Neuer Bereich…» beginnt leer (danach eine eigene Datenbankdatei anlegen); «Datei als Bereich öffnen…» nimmt eine
   vorhandene NoNotes-Datei als weiteren Bereich auf. Dieselbe Datei in zwei Bereichen gibt es nicht: die App wechselt dann dorthin.
-- **Adresse:** `index.html?w=arbeit` öffnet den Bereich «Arbeit» direkt, als Lesezeichen oder Verknüpfung auf dem Desktop. Die
+- **Adresse:** `index.html#w=arbeit` öffnet den Bereich «Arbeit» direkt, als Lesezeichen oder Verknüpfung auf dem Desktop. Die
   Kennung entsteht aus dem Namen (klein, ohne Umlaute: «Projekt Ä» → `projekt-ae`) und bleibt beim Umbenennen gleich; der neue Name
-  gilt in der Adresse ebenfalls. `?w=2` öffnet den zweiten Bereich der Liste. Gibt es den Bereich nicht, bietet die App an, ihn anzulegen.
+  gilt in der Adresse ebenfalls. `#w=2` öffnet den zweiten Bereich der Liste. Gibt es den Bereich nicht, bietet die App an, ihn anzulegen.
+  `?w=arbeit` geht ebenfalls, aber ein Webserver, der weiterleitet, wirft diesen Teil weg (etwa `npx serve`, das `index.html` auf `/`
+  umleitet); der Teil nach `#` bleibt bei Weiterleitungen erhalten (seit 2.3.2). Eine Änderung von `#w=…` in der Adressleiste wechselt
+  den Bereich ohne Neuladen.
 - **Verknüpfung auf dem Desktop** (seit 2.3.1): im Menü der Bereiche «Adresse kopieren», dann unter Windows Rechtsklick auf den
   Desktop, «Neu → Verknüpfung», Adresse einfügen. Verweigert der Browser die Zwischenablage, zeigt die App die Adresse markiert zum
   Kopieren mit `Ctrl+C`.

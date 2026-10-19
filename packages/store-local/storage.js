@@ -284,7 +284,7 @@
     return id;
   }
 
-  /** Bereich zu einem Wert aus der Adresse (?w=…): Kennung, Name als Kennung geschrieben, oder 1 … 9 für die Stelle in der Liste. */
+  /** Bereich zu einem Wert aus der Adresse (#w=… oder ?w=…): Kennung, Name als Kennung geschrieben, oder 1 … 9 für die Stelle in der Liste. */
   function findArea(list, value) {
     const v = String(value == null ? '' : value).trim().toLowerCase();
     if (!v) return null;

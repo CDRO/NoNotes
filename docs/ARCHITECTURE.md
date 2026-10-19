@@ -52,9 +52,10 @@ Datei-Handle ab; der erste Bereich (`main`) behält die bisherigen Schlüssel `d
 `area:<id>:db` und `area:<id>:handle`, das Verzeichnis unter `areas` (`{ list: [{ id, name, createdAt }], last }`). Solange es nur
 den ersten gibt, wird kein Verzeichnis geschrieben, und alles verhält sich wie vor v2.3.0.
 
-- **Aktiver Bereich je Tab:** aus der Adresse (`?w=<kennung>`, Name als Kennung oder Stelle 1 … 9), sonst aus dem Sitzungsspeicher
-  des Tabs, sonst der zuletzt benutzte. Nach jedem Wechsel steht die Kennung in der Adresse (`history.replaceState`) und der Name im
-  Titel des Tabs.
+- **Aktiver Bereich je Tab:** aus der Adresse (`#w=<kennung>`, ersatzweise `?w=<kennung>`; Name als Kennung oder Stelle 1 … 9), sonst
+  aus dem Sitzungsspeicher des Tabs, sonst der zuletzt benutzte. Nach jedem Wechsel steht die Kennung als `#w=…` in der Adresse
+  (`history.replaceState`) und der Name im Titel des Tabs. Der Teil nach `#` gilt, weil er Weiterleitungen eines Webservers übersteht
+  (`npx serve` leitet `index.html?w=…` auf `/` um und verliert den Parameter); `hashchange` wechselt ohne Neuladen.
 - **Wechsel:** die Oberfläche schreibt zuerst die offene Notiz (`host.ensureSaved`), die Hülle sichert ausstehende Änderungen, lädt
   den anderen Bereich (Datei, wenn freigegeben, sonst Browser-Kopie; die Freigabe fragt sie im selben Klick an) und tauscht die
   Datenbank aus (`onDatabaseReplaced`, danach `renderAll`). Das Backend bleibt dasselbe Objekt; es liest die Datenbank über `getDb()`.
