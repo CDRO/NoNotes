@@ -34,6 +34,7 @@ Namen und Beschreibungen sind Englisch, weil Agenten sie lesen. Inhalte bleiben,
 | `list_decisions`, `record_decision` | Entscheide (`?!`-Zeilen, auch in Listen und als Block) auflisten, mit Beschreibung (`details`), Block (`parent_id`) und Zählern der Unter-Einträge (`sub_entries`); Entscheid als `!!`-Zeile mit Datum festhalten, auch im Block |
 | `list_tasks`, `complete_task`, `reopen_task` | Aufgaben mit Fälligkeit und Unteraufgaben; abschliessen erst, wenn die Unteraufgaben erledigt sind |
 | `list_people` | alle `@kürzel` aus Fragen und Entscheiden |
+| `list_templates`, `create_note_from_template` | Vorlagen auflisten; neue Notiz samt Unternotizen aus einer Vorlage, Platzhalter ersetzt (seit v2.5.0; nur, wo es Vorlagen gibt: lokal der Ordner `templates/` neben der App oder `--templates <Ordner>`, im Dienst die Vorlagen des Arbeitsbereichs) |
 | `get_history` | frühere Fassungen einer Notiz lesen |
 
 Dazu zwei **Ressourcen** für Agenten, die lieber lesen als Werkzeuge rufen: `nonotes://overview` und `nonotes://note/<id>`

@@ -172,6 +172,21 @@
       throw new Error(t('Kein Browser-Speicher verfügbar'));
     },
 
+    /** Kleine Werte für alle Bereiche (zum Beispiel Vorlagen ohne Ordner) unter eigenem Schlüssel; JSON-tauglich. */
+    async loadValue(key) {
+      try {
+        if (this.backend === 'indexeddb') { const v = await idbGet('value:' + key); return v == null ? null : v; }
+        if (this.backend === 'localstorage') { const s = localStorage.getItem('nonotes.value.' + key); return s ? JSON.parse(s) : null; }
+      } catch (e) { /* nichts gemerkt */ }
+      return null;
+    },
+
+    async saveValue(key, value) {
+      if (this.backend === 'indexeddb') { await idbSet('value:' + key, value); return; }
+      if (this.backend === 'localstorage') { localStorage.setItem('nonotes.value.' + key, JSON.stringify(value)); return; }
+      throw new Error(t('Kein Browser-Speicher verfügbar'));
+    },
+
     /** Weitere gemerkte Datei-Handles (z. B. die Kalenderdatei) unter eigenem Schlüssel. */
     async loadHandleKey(key) {
       if (this.backend !== 'indexeddb') return null;

@@ -114,6 +114,18 @@
     viewDecisionsBtn: $('#viewDecisionsBtn'), qPersonFilter: $('#qPersonFilter'), qAnsweredBtn: $('#qAnsweredBtn'), decisionBtn: $('#decisionBtn'),
     mentionPopup: $('#mentionPopup'), qaPrintTitle: $('#qaPrintTitle'), qaScopeOpen: $('#qaScopeOpen'), qaScopeAnswered: $('#qaScopeAnswered'),
     qaScopeAll: $('#qaScopeAll'), qaLinesLabel: $('#qaLinesLabel'),
+    mapTemplateBtn: $('#mapTemplateBtn'), newTemplateBtn: $('#newTemplateBtn'), templatesBtn: $('#templatesBtn'),
+    childTemplateBtn: $('#childTemplateBtn'), insertTemplateBtn: $('#insertTemplateBtn'), saveTemplateBtn: $('#saveTemplateBtn'),
+    templateSaveDialog: $('#templateSaveDialog'), templateName: $('#templateName'), templateDescription: $('#templateDescription'),
+    templateChildren: $('#templateChildren'), templateChildrenLabel: $('#templateChildrenLabel'), templateStripAnswers: $('#templateStripAnswers'),
+    templateReopenTasks: $('#templateReopenTasks'), templateStripDates: $('#templateStripDates'), templateToday: $('#templateToday'), templateTodayLabel: $('#templateTodayLabel'), templateSaveFields: $('#templateSaveFields'),
+    templateSaveWhere: $('#templateSaveWhere'), templateSaveHint: $('#templateSaveHint'), templateSaveGoBtn: $('#templateSaveGoBtn'),
+    templatePickDialog: $('#templatePickDialog'), templatePickTitle: $('#templatePickTitle'), templatePickLead: $('#templatePickLead'),
+    templatePickList: $('#templatePickList'), templatePickPreview: $('#templatePickPreview'), templatePickEmpty: $('#templatePickEmpty'),
+    templatePickGoBtn: $('#templatePickGoBtn'), templatePickManageBtn: $('#templatePickManageBtn'),
+    templatesDialog: $('#templatesDialog'), templatesLead: $('#templatesLead'), templatesFolder: $('#templatesFolder'), templatesList: $('#templatesList'),
+    templatesEmpty: $('#templatesEmpty'), templatesImportBtn: $('#templatesImportBtn'), templatesManageBtn: $('#templatesManageBtn'),
+    templatesPlaceholders: $('#templatesPlaceholders'), templateInput: $('#templateInput'),
   };
 
   const state = {
@@ -358,6 +370,7 @@
     await setView(['list', 'questions', 'decisions', 'tasks'].includes(view) ? view : 'map');
     await renderAll();
     shell.afterReady();
+    setupTemplates();
     Mentions.provide(localPeople); // Kürzel, die in der Datei schon vorkommen
     await Plugins.activateAll(pluginContext);
     renderPlugins();
@@ -371,7 +384,7 @@
   async function attachAgent() {
     if (!window.NoNotesAgent || !window.NoNotesWebMcp) return;
     try {
-      state.agent = window.NoNotesAgent.create(B, { readOnly: readOnly(), author: shell.userName || null, log: console.warn });
+      state.agent = window.NoNotesAgent.create(B, { readOnly: readOnly(), author: shell.userName || null, log: console.warn, templates: templateStore(), templateContext });
       state.webmcp = await window.NoNotesWebMcp.attach({ catalog: state.agent, onChange: async () => { markEdited(); await renderAll(); }, log: console.warn });
     } catch (e) { console.warn('WebMCP', e); }
   }
@@ -1474,6 +1487,7 @@
     el.deleteBtn.hidden = trashed || readOnly();
     el.historyBtn.hidden = trashed;
     el.childBtn.hidden = locked;
+    syncTemplateMenu(locked, trashed);
     el.archiveBtn.hidden = locked;
     for (const b of el.mdToolbar.querySelectorAll('button')) b.disabled = locked;
     el.headingSelect.disabled = locked;
@@ -2357,6 +2371,391 @@
     await applyEdit(E.setHeading(el.body.value, el.body.selectionStart || 0, el.body.selectionEnd || 0, Number(v)));
   }
 
+  // ---------- Vorlagen (v2.5.0) ----------
+  // Woher Vorlagen kommen, sagt die Hülle (shell.templates: lokal der Ordner templates/ und der Browser, im Dienst der Server);
+  // Dateiformat, Platzhalter und das Anlegen der Notizen stehen in packages/core/templates.js.
+
+  const Tpl = window.NoNotesTemplates;
+  const templateStore = () => (Tpl && shell && shell.templates) || null;
+  const canSaveTemplates = () => { const p = templateStore(); return !!p && (!p.canSave || p.canSave()); };
+
+  function showDialog(d) {
+    if (typeof d.showModal === 'function') { if (!d.open) d.showModal(); }
+    else d.setAttribute('open', '');
+  }
+
+  /** Einträge für Vorlagen zeigen, wenn die Hülle welche kennt. */
+  function setupTemplates() {
+    const on = !!templateStore();
+    el.mapTemplateBtn.hidden = !on;
+    el.newTemplateBtn.hidden = !on;
+    el.templatesBtn.hidden = !on;
+  }
+
+  /** Die Einträge im Menü «Notiz» passend zur offenen Notiz (gesperrt: nur speichern). */
+  function syncTemplateMenu(locked, trashed) {
+    const on = !!templateStore();
+    el.childTemplateBtn.hidden = !on || locked;
+    el.insertTemplateBtn.hidden = !on || locked;
+    el.saveTemplateBtn.hidden = !on || trashed || !canSaveTemplates();
+  }
+
+  function templateContext() {
+    const p = templateStore();
+    return Object.assign({ now: new Date(), locale: I18n.locale() }, p && p.context ? p.context() : {});
+  }
+
+  /** Platzhalter als Hinweis: «{{datum}} (20.10.2026), {{datum+7}} (in sieben Tagen), …» in der Sprache der Oberfläche. */
+  function placeholderText() {
+    const parts = [];
+    for (const p of Tpl.placeholders(templateContext())) {
+      parts.push(`{{${p.name}}}` + (p.example ? ` (${p.example})` : ''));
+      if (p.offset) parts.push(`{{${p.name}+7}} (${t('in sieben Tagen')})`);
+    }
+    return t('Platzhalter, die beim Anlegen ersetzt werden: {liste}', { liste: parts.join(', ') });
+  }
+
+  /** Eine Notiz und (wahlweise) ihre Unternotizen in Baumreihenfolge, mit Text und Tags; archivierte bleiben draussen. */
+  async function subtreeOf(id, withChildren) {
+    const rows = await B.getTree();
+    const kids = new Map();
+    for (const r of rows) {
+      const k = r.parent_id == null ? null : r.parent_id;
+      if (!kids.has(k)) kids.set(k, []);
+      kids.get(k).push(r);
+    }
+    const out = [];
+    const walk = async (nid, depth) => {
+      const n = await B.getNote(nid);
+      if (!n) return;
+      out.push({ depth, title: n.title, body: n.body, tags: await B.getTags(nid) });
+      if (withChildren) for (const c of kids.get(nid) || []) await walk(c.id, depth + 1);
+    };
+    await walk(id, 0);
+    return out;
+  }
+
+  async function descendantCount(id) {
+    const rows = await B.getTree();
+    let n = 0;
+    const walk = pid => { for (const r of rows) if (r.parent_id === pid) { n++; walk(r.id); } };
+    walk(id);
+    return n;
+  }
+
+  /** Zusätzliche Felder der Hülle (zum Beispiel «Sichtbar für» im Dienst) als Auswahlfelder. */
+  function renderTemplateFields(p) {
+    el.templateSaveFields.replaceChildren();
+    for (const f of (p.saveFields ? p.saveFields() : []) || []) {
+      const label = document.createElement('label');
+      label.className = 'dialog-field';
+      const span = document.createElement('span');
+      span.textContent = f.label;
+      const sel = document.createElement('select');
+      sel.dataset.field = f.id;
+      for (const o of f.options) {
+        const opt = document.createElement('option');
+        opt.value = o.value;
+        opt.textContent = o.label;
+        sel.appendChild(opt);
+      }
+      if (f.value != null) sel.value = f.value;
+      label.append(span, sel);
+      el.templateSaveFields.appendChild(label);
+    }
+  }
+
+  function templateFieldValues() {
+    const out = {};
+    for (const sel of el.templateSaveFields.querySelectorAll('select[data-field]')) out[sel.dataset.field] = sel.value;
+    return out;
+  }
+
+  async function openTemplateSave(noteId) {
+    const p = templateStore();
+    hideContextMenu();
+    closeNoteMenu();
+    if (!p || noteId == null || !canSaveTemplates()) return;
+    if (state.currentId === noteId && !(await ensureSaved())) return;
+    const note = await B.getNote(noteId);
+    if (!note) return;
+    state.templateSaveId = noteId;
+    const below = await descendantCount(noteId);
+    el.templateName.value = (note.title || '').trim();
+    el.templateDescription.value = '';
+    el.templateChildren.checked = below > 0;
+    el.templateChildren.disabled = below === 0;
+    el.templateChildrenLabel.textContent = below ? tn('Unternotiz mitnehmen ({n})', 'Unternotizen mitnehmen ({n})', below) : t('Keine Unternotizen');
+    el.templateTodayLabel.textContent = t('Heutiges Datum ({datum}) durch {platzhalter} ersetzen', { datum: Dates.formatDue(Dates.todayIso()), platzhalter: `{{${Tpl.placeholderName('date')}}}` });
+    renderTemplateFields(p);
+    el.templateSaveWhere.textContent = p.saveHint ? await p.saveHint() : '';
+    el.templateSaveHint.textContent = placeholderText();
+    showDialog(el.templateSaveDialog);
+    el.templateName.focus();
+    el.templateName.select();
+  }
+
+  async function saveTemplate() {
+    const p = templateStore();
+    const id = state.templateSaveId;
+    const name = el.templateName.value.trim();
+    if (!p || id == null) return;
+    if (!name) { el.templateName.focus(); return; }
+    el.templateSaveGoBtn.disabled = true;
+    try {
+      const children = el.templateChildren.checked;
+      const r = Tpl.fromNotes(await subtreeOf(id, children), {
+        name, description: el.templateDescription.value, children,
+        stripAnswers: el.templateStripAnswers.checked, reopenTasks: el.templateReopenTasks.checked, stripDates: el.templateStripDates.checked,
+        todayToPlaceholder: el.templateToday.checked,
+      });
+      const res = await p.save(r.template, templateFieldValues());
+      el.templateSaveDialog.close();
+      const done = res.where === 'folder' ? t('Vorlage «{name}» im Ordner «{ordner}» gespeichert.', { name, ordner: res.folder || 'templates' })
+        : res.where === 'download' ? t('Vorlage «{name}» heruntergeladen und in diesem Browser gemerkt.', { name })
+        : t('Vorlage «{name}» gespeichert.', { name });
+      hint(done + (r.images ? ' ' + tn('{n} Bild weggelassen.', '{n} Bilder weggelassen.', r.images) : ''));
+      emitPlugins('template:saved', { name, where: res.where, id: res.id });
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+      setStatus(t('Vorlage konnte nicht gespeichert werden: {fehler}', { fehler: errorText(e) }), 'error');
+    } finally {
+      el.templateSaveGoBtn.disabled = false;
+    }
+  }
+
+  /** Auswahl einer Vorlage: mode 'new' (neue Notiz unter parentId, null = oberste Stufe) oder 'insert' (in die offene Notiz). */
+  async function openTemplatePick(mode, parentId) {
+    const p = templateStore();
+    hideContextMenu();
+    closeNoteMenu();
+    if (!p || denyWrite()) return;
+    if (mode === 'insert' && (state.currentId == null || el.body.readOnly)) return;
+    if (mode === 'new' && parentId != null && await B.isArchived(parentId)) { hint(t('Unter einer archivierten Notiz lässt sich nichts anlegen. Erst zurückholen.')); return; }
+    state.templatePick = { mode, parentId: parentId == null ? null : parentId, selected: null, caret: mode === 'insert' ? el.body.selectionStart || 0 : null };
+    el.templatePickTitle.textContent = mode === 'insert' ? t('Vorlage einfügen') : t('Neue Notiz aus Vorlage');
+    el.templatePickGoBtn.textContent = mode === 'insert' ? t('Einfügen') : t('Anlegen');
+    let lead;
+    if (mode === 'insert') lead = t('Der Text der Vorlage kommt an die Stelle des Cursors, ihre Unternotizen unter diese Notiz.');
+    else if (parentId != null) { const n = await B.getNote(parentId); lead = t('Die neue Notiz kommt unter «{titel}».', { titel: (n && n.title.trim()) || t('Ohne Titel') }); }
+    else lead = t('Die neue Notiz kommt auf die oberste Stufe.');
+    el.templatePickLead.textContent = lead;
+    el.templatePickList.replaceChildren();
+    el.templatePickPreview.replaceChildren();
+    showDialog(el.templatePickDialog);
+    await renderTemplatePick();
+  }
+
+  const templateSource = it => it.sourceLabel || (it.source === 'folder' ? t('im Ordner') : it.source === 'browser' ? t('nur in diesem Browser') : '');
+
+  async function templateItems(p) {
+    // Ein verbundener Ordner braucht nach einem Neustart des Browsers wieder die Erlaubnis: der Klick, der den Dialog öffnete, reicht dafür
+    if (p.folder) { try { const f = await p.folder(); if (f.permission === 'prompt') await p.grant(); } catch (e) { /* dann eben ohne Ordner */ } }
+    return p.list();
+  }
+
+  async function renderTemplatePick() {
+    const p = templateStore();
+    const pick = state.templatePick;
+    let items = [];
+    let error = null;
+    try { items = await templateItems(p); } catch (e) { error = e; }
+    if (state.templatePick !== pick) return;
+    el.templatePickList.replaceChildren();
+    for (const it of items) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'template-item';
+      b.setAttribute('role', 'option');
+      b.dataset.id = it.id;
+      const n = document.createElement('strong');
+      n.textContent = it.name;
+      const d = document.createElement('small');
+      d.textContent = [it.description, tn('{n} Notiz', '{n} Notizen', it.notes || 1), templateSource(it)].filter(Boolean).join(' · ');
+      b.append(n, d);
+      b.addEventListener('click', () => selectTemplate(it.id));
+      b.addEventListener('dblclick', () => runTemplatePick());
+      el.templatePickList.appendChild(b);
+    }
+    el.templatePickEmpty.hidden = items.length > 0 && !error;
+    el.templatePickEmpty.textContent = error ? errorText(error) : (p.emptyHint ? await p.emptyHint() : t('Noch keine Vorlagen.'));
+    el.templatePickGoBtn.disabled = !items.length;
+    if (items.length) await selectTemplate(items[0].id);
+  }
+
+  async function selectTemplate(id) {
+    const p = templateStore();
+    const pick = state.templatePick;
+    if (!pick) return;
+    for (const b of el.templatePickList.querySelectorAll('.template-item')) b.setAttribute('aria-selected', String(b.dataset.id === id));
+    let tpl;
+    try { tpl = await p.get(id); } catch (e) { el.templatePickPreview.textContent = errorText(e); pick.selected = null; el.templatePickGoBtn.disabled = true; return; }
+    if (state.templatePick !== pick) return;
+    pick.selected = { id, tpl };
+    el.templatePickGoBtn.disabled = false;
+    const notes = Tpl.instantiate(tpl, templateContext());
+    const frag = document.createDocumentFragment();
+    if (pick.mode !== 'insert' && notes[0]) {
+      const h = document.createElement('h3');
+      h.textContent = notes[0].title || t('Ohne Titel');
+      frag.appendChild(h);
+    }
+    const body = document.createElement('div');
+    body.innerHTML = M.render(notes[0] ? notes[0].body : '', { embeds: false });
+    frag.appendChild(body);
+    if (notes.length > 1) {
+      const sub = document.createElement('p');
+      sub.className = 'template-sub';
+      sub.textContent = tn('Dazu {n} Unternotiz:', 'Dazu {n} Unternotizen:', notes.length - 1);
+      const ul = document.createElement('ul');
+      ul.className = 'template-subs';
+      for (const n of notes.slice(1)) {
+        const li = document.createElement('li');
+        li.style.marginLeft = `${(n.depth - 1) * 16}px`;
+        li.textContent = n.title || t('Ohne Titel');
+        ul.appendChild(li);
+      }
+      frag.append(sub, ul);
+    }
+    el.templatePickPreview.replaceChildren(frag);
+  }
+
+  async function runTemplatePick() {
+    const pick = state.templatePick;
+    if (!pick || !pick.selected || denyWrite()) return;
+    const { tpl } = pick.selected;
+    el.templatePickDialog.close();
+    const ctx = templateContext();
+    try {
+      if (pick.mode === 'insert') {
+        if (state.currentId == null || el.body.readOnly) return;
+        const r = await Tpl.insert(B, tpl, state.currentId, el.body.value, pick.caret, ctx, { author: meName() });
+        el.body.value = r.body;
+        el.body.focus();
+        el.body.setSelectionRange(r.caret, r.caret);
+        await onEdit();
+        if (r.children.length) { state.mapDirty = true; await renderList(); await renderCount(); }
+        hint(t('Vorlage «{name}» eingefügt.', { name: tpl.name }));
+      } else {
+        const parentId = pick.parentId;
+        if (parentId != null && state.map) {
+          const info = state.map.nodeInfo(parentId);
+          if (info && info.collapsed) await B.setCollapsed(parentId, false);
+        }
+        const id = await Tpl.apply(B, tpl, parentId, ctx, { author: meName() });
+        markEdited();
+        state.mapSelection = id;
+        state.mapDirty = true;
+        await renderAll();
+        await openNote(id);
+        hint(t('Notiz aus Vorlage «{name}» angelegt.', { name: tpl.name }));
+      }
+      emitPlugins('template:applied', { name: tpl.name, mode: pick.mode });
+    } catch (e) {
+      setStatus(t('Vorlage konnte nicht angewendet werden: {fehler}', { fehler: errorText(e) }), 'error');
+    }
+    state.templatePick = null;
+  }
+
+  async function openTemplatesDialog() {
+    closeMenu();
+    hideContextMenu();
+    if (!templateStore()) return;
+    showDialog(el.templatesDialog);
+    await renderTemplatesDialog();
+  }
+
+  function smallButton(text, onClick, cls) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = cls || '';
+    b.textContent = text;
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  /** Zustand des verbundenen Ordners (lokal) mit den passenden Knöpfen. */
+  async function renderTemplateFolder(p) {
+    el.templatesFolder.replaceChildren();
+    if (!p.folder) { el.templatesFolder.hidden = true; return; }
+    el.templatesFolder.hidden = false;
+    const f = await p.folder();
+    const text = document.createElement('p');
+    text.className = 'dialog-lead';
+    const row = document.createElement('div');
+    row.className = 'row';
+    const act = fn => async () => {
+      try { await fn(); } catch (e) { if (!e || e.name !== 'AbortError') setStatus(errorText(e), 'error'); }
+      await renderTemplatesDialog();
+    };
+    if (!f.supported) {
+      text.textContent = t('Dieser Browser kann keine Ordner verbinden: Vorlagen werden heruntergeladen und in diesem Browser gemerkt. In Edge oder Chrome lässt sich der Ordner templates/ verbinden.');
+    } else if (!f.name) {
+      text.textContent = t('Kein Ordner verbunden. Verbinde den Ordner templates/ neben index.html: NoNotes liest dann die Vorlagen darin und speichert neue direkt dort, für alle Bereiche.');
+      row.append(smallButton(t('Ordner verbinden…'), act(() => p.connectFolder()), 'primary'));
+    } else if (f.permission === 'granted') {
+      text.textContent = t('Verbunden mit dem Ordner «{ordner}».', { ordner: f.name });
+      row.append(smallButton(t('Anderen Ordner wählen…'), act(() => p.connectFolder())), smallButton(t('Trennen'), act(() => p.disconnectFolder()), 'ghost'));
+    } else if (f.permission === 'prompt') {
+      text.textContent = t('Verbunden mit dem Ordner «{ordner}». Der Browser braucht noch deine Erlaubnis, ihn zu lesen.', { ordner: f.name });
+      row.append(smallButton(t('Zugriff erlauben'), act(() => p.grant()), 'primary'), smallButton(t('Trennen'), act(() => p.disconnectFolder()), 'ghost'));
+    } else {
+      text.textContent = t('Der Browser hat den Zugriff auf den Ordner «{ordner}» verweigert.', { ordner: f.name });
+      row.append(smallButton(t('Anderen Ordner wählen…'), act(() => p.connectFolder())), smallButton(t('Trennen'), act(() => p.disconnectFolder()), 'ghost'));
+    }
+    el.templatesFolder.append(text, row);
+  }
+
+  async function renderTemplatesDialog() {
+    const p = templateStore();
+    if (!p) return;
+    el.templatesLead.textContent = p.manageLead ? p.manageLead() : t('Vorlagen sind Markdown-Dateien (.md) mit Titel, Text und Unternotizen. Sie gelten für alle Bereiche in diesem Browser.');
+    await renderTemplateFolder(p);
+    let items = [];
+    let error = null;
+    try { items = await p.list(); } catch (e) { error = e; }
+    el.templatesList.replaceChildren();
+    for (const it of items) {
+      const row = document.createElement('div');
+      row.className = 'template-row';
+      row.dataset.id = it.id;
+      const info = document.createElement('div');
+      const n = document.createElement('strong');
+      n.textContent = it.name;
+      const d = document.createElement('small');
+      d.textContent = [it.description, tn('{n} Notiz', '{n} Notizen', it.notes || 1), templateSource(it)].filter(Boolean).join(' · ');
+      info.append(n, d);
+      const actions = document.createElement('div');
+      actions.className = 'template-actions';
+      if (p.download) actions.append(smallButton(t('Herunterladen'), async () => { try { await p.download(it.id); } catch (e) { setStatus(errorText(e), 'error'); } }));
+      if (it.canRemove && canSaveTemplates()) {
+        actions.append(smallButton(t('Entfernen'), async () => {
+          if (!window.confirm(t('Vorlage «{name}» entfernen?', { name: it.name }))) return;
+          try { await p.remove(it.id); hint(t('Vorlage «{name}» entfernt.', { name: it.name })); } catch (e) { setStatus(errorText(e), 'error'); }
+          await renderTemplatesDialog();
+        }, 'danger'));
+      }
+      row.append(info, actions);
+      el.templatesList.appendChild(row);
+    }
+    el.templatesEmpty.hidden = items.length > 0 && !error;
+    el.templatesEmpty.textContent = error ? errorText(error) : (p.emptyHint ? await p.emptyHint() : t('Noch keine Vorlagen.'));
+    el.templatesImportBtn.hidden = !p.importFile || !canSaveTemplates();
+    el.templatesManageBtn.hidden = !p.manageUrl;
+    el.templatesPlaceholders.textContent = placeholderText();
+  }
+
+  async function importTemplateFiles(files) {
+    const p = templateStore();
+    if (!p || !p.importFile) return;
+    let ok = 0;
+    for (const file of files) {
+      try { await p.importFile(file); ok++; } catch (e) { setStatus(t('«{datei}»: {fehler}', { datei: file.name, fehler: errorText(e) }), 'error'); }
+    }
+    if (ok) hint(tn('{n} Vorlage hinzugefügt.', '{n} Vorlagen hinzugefügt.', ok));
+    if (el.templatesDialog.open) await renderTemplatesDialog();
+  }
+
   // ---------- Hilfe ----------
 
   async function openHelp(tab) {
@@ -3054,7 +3453,8 @@
   }
 
   function anyDialogOpen() {
-    return [el.exportDialog, el.printDialog, el.qaPrintDialog, el.taskPrintDialog, el.helpDialog, el.calDialog, el.pluginsDialog, el.historyDialog, el.conflictDialog].some(d => d.open);
+    return [el.exportDialog, el.printDialog, el.qaPrintDialog, el.taskPrintDialog, el.helpDialog, el.calDialog, el.pluginsDialog, el.historyDialog, el.conflictDialog,
+      el.templateSaveDialog, el.templatePickDialog, el.templatesDialog].some(d => d.open);
   }
 
   function onQuestionSearchInput() {
@@ -3374,9 +3774,11 @@
   }
 
   function showNodeMenu(id, x, y) {
+    const fromTemplate = parent => (templateStore() ? [{ write: true, label: parent == null ? t('Neue Notiz aus Vorlage…') : t('Unternotiz aus Vorlage…'), action: () => openTemplatePick('new', parent) }] : []);
     if (id == null) {
       showContextMenu([
         { write: true, label: t('Neue Notiz'), key: 'Tab', action: () => newNoteInMap(null) },
+        ...fromTemplate(null),
         { label: t('Einpassen'), key: '0', action: () => state.map.fit() },
         'sep',
         { label: t('Alles ausklappen'), action: () => setAllCollapsed(false) },
@@ -3387,6 +3789,7 @@
     if (id === 'root') {
       showContextMenu([
         { write: true, label: t('Neue Notiz'), key: 'Tab', action: () => newNoteInMap(null) },
+        ...fromTemplate(null),
         { write: true, label: t('Titel ändern'), key: 'F2', action: () => beginRename('root') },
         'sep',
         { label: t('Alles ausklappen'), action: () => setAllCollapsed(false) },
@@ -3412,11 +3815,13 @@
     const items = [
       { label: t('Öffnen'), key: 'Enter', action: () => openNote(id) },
       { write: true, label: t('Unternotiz anlegen'), key: 'Tab', action: () => newNoteInMap(id) },
+      ...fromTemplate(id),
       { write: true, label: t('Umbenennen'), key: 'F2', action: () => beginRename(id) },
     ];
     if (info && info.childCount) {
       items.push({ label: info.collapsed ? t('Ausklappen') : t('Einklappen'), action: () => toggleCollapse(id) });
     }
+    if (templateStore() && canSaveTemplates()) items.push({ label: t('Als Vorlage speichern…'), action: () => openTemplateSave(id) });
     items.push(
       { label: t('Drucken…'), action: () => openPrintDialog({ noteId: id, scope: 'subtree' }) },
       { write: true, label: t('Archivieren…'), action: () => archiveNotes([id]) },
@@ -3545,6 +3950,29 @@
     setupTheme();
     setupPluginHelp();
     el.pluginsBtn.addEventListener('click', openPluginsDialog);
+    el.templatesBtn.addEventListener('click', openTemplatesDialog);
+    el.mapTemplateBtn.addEventListener('click', () => openTemplatePick('new', selectionAsParent()));
+    el.newTemplateBtn.addEventListener('click', () => openTemplatePick('new', null));
+    el.childTemplateBtn.addEventListener('click', () => openTemplatePick('new', state.currentId));
+    el.insertTemplateBtn.addEventListener('click', () => openTemplatePick('insert', null));
+    el.saveTemplateBtn.addEventListener('click', () => openTemplateSave(state.currentId));
+    el.templateSaveGoBtn.addEventListener('click', saveTemplate);
+    el.templateSaveForm = el.templateSaveDialog.querySelector('form');
+    el.templateSaveForm.addEventListener('submit', e => { if (e.submitter && e.submitter.value === 'cancel') return; e.preventDefault(); saveTemplate(); });
+    el.templatePickGoBtn.addEventListener('click', runTemplatePick);
+    el.templatePickManageBtn.addEventListener('click', async () => { el.templatePickDialog.close(); await openTemplatesDialog(); });
+    el.templatePickList.addEventListener('keydown', async e => {
+      const items = [...el.templatePickList.querySelectorAll('.template-item')];
+      const i = items.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const next = items[Math.max(0, Math.min(items.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))];
+        if (next) { next.focus(); await selectTemplate(next.dataset.id); }
+      } else if (e.key === 'Enter' && i >= 0) { e.preventDefault(); await selectTemplate(items[i].dataset.id); await runTemplatePick(); }
+    });
+    el.templatesImportBtn.addEventListener('click', () => el.templateInput.click());
+    el.templateInput.addEventListener('change', async () => { const files = [...el.templateInput.files]; el.templateInput.value = ''; await importTemplateFiles(files); });
+    el.templatesManageBtn.addEventListener('click', () => { const p = templateStore(); if (p && p.manageUrl) window.open(p.manageUrl(), '_blank', 'noopener'); });
     el.pluginLoadBtn.addEventListener('click', loadPluginFromInput);
     el.pluginFile.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); loadPluginFromInput(); } });
     el.storageHelpBtn.addEventListener('click', () => openHelp('storage'));

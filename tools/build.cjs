@@ -18,7 +18,7 @@
    Der Ordner darf ausserhalb dieses Projekts liegen (--edition-dir); sein Name im Ergebnis ist js/<Dateiname>.
 
    Ergebnis (Ausprägung "local"), genau das, was im ZIP liegt:
-     index.html  css/  js/  lang/  vendor/  plugins/  docs/  start.ps1  start.cmd  README.md  NOTICE
+     index.html  css/  js/  lang/  vendor/  plugins/  templates/  docs/  start.ps1  start.cmd  README.md  NOTICE
 
    Erweiterungen: Der Ordner plugins/ geht mit (include "plugins"; eine Ausprägung kann über "copy" weitere Dateien
    nach plugins/ legen). --plugins <Ordner> nimmt zusätzlich die Erweiterungen eines anderen Ordners oder Repositorys
@@ -218,6 +218,12 @@ function main() {
   const pluginsDir = path.join(ROOT, 'plugins');
   if (include.has('plugins') && fs.existsSync(pluginsDir)) {
     for (const abs of walk(pluginsDir)) place(abs, path.relative(ROOT, abs).split(path.sep).join('/'));
+  }
+
+  // Vorlagen: Beispiele und Anleitung im Ordner templates/ (lokal einmal verbinden, siehe packages/store-local/templates-local.js)
+  const templatesDir = path.join(ROOT, 'templates');
+  if (include.has('templates') && fs.existsSync(templatesDir)) {
+    for (const abs of walk(templatesDir)) place(abs, path.relative(ROOT, abs).split(path.sep).join('/'));
   }
 
   // Weitere Dateien, die die Ausprägung mitbringen will (Ordner relativ zu ihrem Ordner)

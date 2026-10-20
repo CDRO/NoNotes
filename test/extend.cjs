@@ -1241,6 +1241,188 @@ async function runDecisions(browser, part, step) {
 }
 
 // ============================================================
+// ============================================================
+/* Vorlagen in der lokalen Ausprägung (v2.5.0): Ordner templates/ verbinden (nachgebaut im Speicher), als Vorlage speichern (Ordner,
+   sonst Download und Browser), neue Notiz und Unternotiz aus Vorlage, Vorlage einfügen, Erlaubnis nach einem Neustart, Datei
+   hinzufügen, entfernen. */
+async function runTemplatesUi(browser, part, step) {
+  const examples = {};
+  for (const f of fs.readdirSync(path.join(DIST, 'templates'))) examples[f] = fs.readFileSync(path.join(DIST, 'templates', f), 'utf8');
+  const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 }, locale: 'de-CH', acceptDownloads: true });
+  await ctx.addInitScript(files => {
+    // Ein Ordner im Speicher: Dateinamen → Text; die Erlaubnis lässt sich auf 'prompt' setzen (wie nach einem Neustart des Browsers)
+    const store = new Map(Object.entries(files));
+    window.__tplFiles = store;
+    window.__dirPerm = 'granted';
+    window.__dirAsked = 0;
+    const fileHandle = name => ({
+      kind: 'file', name,
+      getFile: async () => new File([store.get(name)], name),
+      createWritable: async () => {
+        let text = '';
+        return { write: async d => { text += typeof d === 'string' ? d : new TextDecoder().decode(d); }, close: async () => { store.set(name, text); }, abort: async () => {} };
+      },
+      queryPermission: async () => window.__dirPerm, requestPermission: async () => window.__dirPerm,
+    });
+    window.__dir = {
+      kind: 'directory', name: 'templates',
+      queryPermission: async () => window.__dirPerm,
+      requestPermission: async () => { window.__dirAsked++; window.__dirPerm = 'granted'; return 'granted'; },
+      entries: async function* () { for (const name of [...store.keys()]) yield [name, fileHandle(name)]; },
+      getFileHandle: async (name, o) => {
+        if (!store.has(name)) { if (!o || !o.create) throw new DOMException('fehlt', 'NotFoundError'); store.set(name, ''); }
+        return fileHandle(name);
+      },
+      removeEntry: async name => { store.delete(name); },
+    };
+    window.showDirectoryPicker = async () => window.__dir;
+    // Handles lassen sich im Test nicht in IndexedDB ablegen (Funktionen): die Hülle merkt sie sich hier
+    const saved = {};
+    let ns;
+    Object.defineProperty(window, 'NoNotesStorage', {
+      configurable: true, get: () => ns,
+      set: v => {
+        ns = v;
+        v.browserStore.saveHandleKey = async (k, h) => { saved[k] = h; };
+        v.browserStore.loadHandleKey = async k => saved[k] || null;
+        v.browserStore.clearHandleKey = async k => { delete saved[k]; };
+      },
+    });
+  }, examples);
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  page.on('dialog', d => d.accept());
+  await page.goto('file://' + path.join(DIST, 'index.html'));
+  await page.waitForSelector(READY, { timeout: 30000 });
+  const todayText = () => { const d = new Date(); return `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`; };
+
+  // Verwalten: Ordner verbinden, die Beispiele erscheinen (ohne README)
+  assert.equal(await page.locator('#mapTemplateBtn').isVisible(), true);
+  await page.click('#menuBtn');
+  await page.click('#templatesBtn');
+  await page.waitForSelector('#templatesDialog[open]');
+  await page.waitForFunction(() => /Kein Ordner verbunden/.test(document.querySelector('#templatesFolder').textContent));
+  assert.equal(await page.locator('.template-row').count(), 0);
+  assert.match(await page.locator('#templatesPlaceholders').innerText(), /\{\{datum\}\} \(\d+\.\d+\.\d{4}\), \{\{datum\+7\}\} \(in sieben Tagen\), \{\{zeit\}\}/);
+  await page.locator('#templatesFolder button', { hasText: 'Ordner verbinden' }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.template-row').length === 2);
+  assert.match(await page.locator('#templatesFolder').innerText(), /Verbunden mit dem Ordner «templates»\./);
+  assert.deepEqual(await page.locator('.template-row strong').allInnerTexts(), ['Entscheidungsvorlage', 'Sitzungsprotokoll']);
+  assert.match(await page.locator('.template-row').nth(1).innerText(), /3 Notizen · im Ordner/);
+  await page.locator('#templatesDialog button[value="close"]').click();
+  part('Vorlagen verwalten: Ordner templates/ verbinden, Beispiele aus dem Ordner (ohne README), Platzhalter in der Sprache der Oberfläche');
+
+  // Als Vorlage speichern: aus einer Notiz mit Unternotiz, bereinigt, heutiges Datum als Platzhalter, in den Ordner
+  await page.click('#mapNewBtn');
+  await page.keyboard.type(`Sitzung ${todayText()}`);
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(SAVED);
+  await page.keyboard.press('Tab');
+  await page.keyboard.type('Beschlüsse');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(SAVED);
+  const top = page.locator('#mindmap .mm-node', { hasText: 'Sitzung' }).first();
+  await top.dblclick();
+  await page.waitForSelector('body.editor-open');
+  await page.fill('#body', '- [x] Protokoll genehmigt\n? Budget?\n! 20k');
+  await page.waitForFunction(SAVED);
+  await page.click('#noteMenuBtn');
+  await page.click('#saveTemplateBtn');
+  await page.waitForSelector('#templateSaveDialog[open]');
+  assert.equal(await page.inputValue('#templateName'), `Sitzung ${todayText()}`);
+  assert.equal(await page.locator('#templateChildrenLabel').innerText(), 'Unternotiz mitnehmen (1)');
+  assert.match(await page.locator('#templateTodayLabel').innerText(), new RegExp(`Heutiges Datum \\(${todayText().replace(/\./g, '\\.')}\\) durch \\{\\{datum\\}\\} ersetzen`));
+  assert.match(await page.locator('#templateSaveWhere').innerText(), /Wird im Ordner «templates» gespeichert/);
+  await page.fill('#templateName', 'Meine Sitzung');
+  await page.fill('#templateDescription', 'Für den Vorstand');
+  await page.click('#templateSaveGoBtn');
+  await page.waitForFunction(() => window.__tplFiles.has('Meine Sitzung.md'));
+  assert.match(await page.locator('#status').innerText(), /Vorlage «Meine Sitzung» im Ordner «templates» gespeichert\./);
+  const saved = await page.evaluate(() => window.__tplFiles.get('Meine Sitzung.md'));
+  assert.ok(saved.startsWith('---\nnonotes: 1\nname: "Meine Sitzung"\ndescription: "Für den Vorstand"\ntitle: "Sitzung {{datum}}"\n---\n- [ ] Protokoll genehmigt\n? Budget?\n<!-- nonotes:note {"depth":1,"title":"Beschlüsse","tags":[]} -->'), saved);
+  await page.click('#noteMenuBtn');
+  await page.click('#saveTemplateBtn');
+  await page.fill('#templateName', 'Meine Sitzung');
+  await page.click('#templateSaveGoBtn');
+  await page.waitForFunction(() => window.__tplFiles.has('Meine Sitzung (2).md'), null, {});
+  part('Als Vorlage speichern: Unternotizen, Antworten weg, Aufgaben offen, heutiges Datum als Platzhalter, in den Ordner; gleicher Name wird nummeriert');
+
+  // Neue Unternotiz aus Vorlage (Menü «Notiz»): Auswahl mit Vorschau, Platzhalter ersetzt, Unternotizen der Vorlage
+  await page.click('#noteMenuBtn');
+  await page.click('#childTemplateBtn');
+  await page.waitForSelector('#templatePickDialog[open]');
+  await page.waitForFunction(() => document.querySelectorAll('.template-item').length === 4);
+  assert.match(await page.locator('#templatePickLead').innerText(), new RegExp(`Die neue Notiz kommt unter «Sitzung ${todayText().replace(/\./g, '\\.')}»\\.`));
+  await page.locator('.template-item', { hasText: 'Sitzungsprotokoll' }).click();
+  await page.waitForFunction(() => /Sitzung \d/.test(document.querySelector('#templatePickPreview h3').textContent));
+  assert.equal(await page.locator('#templatePickPreview .template-sub').innerText(), 'Dazu 2 Unternotizen:');
+  assert.deepEqual(await page.locator('#templatePickPreview .template-subs li').allInnerTexts(), ['Entscheide', 'Offene Fragen']);
+  await page.click('#templatePickGoBtn');
+  await page.waitForFunction(t => document.querySelector('#title').value === `Sitzung ${t}` && document.querySelector('#body').value.includes('## Traktanden'), todayText());
+  await page.waitForFunction(SAVED);
+  part('Unternotiz aus Vorlage: Auswahl mit Vorschau und Unternotizen, Platzhalter ersetzt, die neue Notiz ist offen');
+
+  // Vorlage einfügen: an der Cursorstelle, Unternotizen unter die offene Notiz
+  await page.evaluate(() => { const b = document.querySelector('#body'); b.focus(); b.setSelectionRange(0, 0); });
+  await page.click('#noteMenuBtn');
+  await page.click('#insertTemplateBtn');
+  await page.waitForSelector('#templatePickDialog[open]');
+  assert.equal(await page.locator('#templatePickGoBtn').innerText(), 'Einfügen');
+  await page.waitForFunction(() => document.querySelectorAll('.template-item').length === 4);
+  await page.locator('.template-item', { hasText: 'Entscheidungsvorlage' }).click();
+  await page.waitForFunction(() => document.querySelector('#templatePickPreview').textContent.includes('Ausgangslage'));
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.querySelector('#body').value.startsWith('?!``` Entscheid: … @'));
+  await page.waitForFunction(SAVED);
+  part('Vorlage einfügen: an der Cursorstelle, Enter wählt, gespeichert');
+
+  // Nach einem Neustart fragt der Browser wieder: der Klick auf «Aus Vorlage…» holt die Erlaubnis
+  await page.click('#backBtn');
+  await page.evaluate(() => { window.__dirPerm = 'prompt'; });
+  await page.click('#viewMapBtn');
+  await page.click('#mapTemplateBtn');
+  await page.waitForSelector('#templatePickDialog[open]');
+  await page.waitForFunction(() => document.querySelectorAll('.template-item').length === 4);
+  assert.equal(await page.evaluate(() => window.__dirAsked), 1, 'einmal nach der Erlaubnis gefragt');
+  await page.locator('#templatePickDialog button[value="cancel"]').click();
+  const nodes = await page.locator('#mindmap .mm-node').allTextContents();
+  for (const n of ['Beschlüsse', 'Entscheide', 'Offene Fragen']) assert.ok(nodes.some(x => x.includes(n)), `Knoten ${n}: ${nodes}`);
+  part('Erlaubnis nach einem Neustart des Browsers: der Klick, der die Auswahl öffnet, fragt nach');
+
+  // Ohne Ordner: Download und im Browser gemerkt, für alle Bereiche; Datei hinzufügen; entfernen
+  await page.click('#menuBtn');
+  await page.click('#templatesBtn');
+  await page.waitForFunction(() => document.querySelectorAll('.template-row').length === 4);
+  await page.locator('#templatesFolder button', { hasText: 'Trennen' }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.template-row').length === 0);
+  await page.setInputFiles('#templateInput', { name: 'Woche.md', mimeType: 'text/markdown', buffer: Buffer.from('# KW {{woche}}\n- [ ] Plan') });
+  await page.waitForFunction(() => document.querySelectorAll('.template-row').length === 1);
+  assert.match(await page.locator('.template-row').innerText(), /Woche\n1 Notiz · nur in diesem Browser/);
+  await page.locator('#templatesDialog button[value="close"]').click();
+  await page.locator('#mindmap .mm-node', { hasText: 'Sitzung' }).first().click({ button: 'right' });
+  await page.locator('#contextMenu button', { hasText: 'Als Vorlage speichern' }).click();
+  await page.waitForSelector('#templateSaveDialog[open]');
+  assert.match(await page.locator('#templateSaveWhere').innerText(), /heruntergeladen und in diesem Browser/);
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#templateSaveGoBtn')]);
+  assert.match(dl.suggestedFilename(), /^Sitzung .*\.md$/);
+  const text = fs.readFileSync(await dl.path(), 'utf8');
+  assert.match(text, /^---\nnonotes: 1\n/);
+  await page.click('#menuBtn');
+  await page.click('#templatesBtn');
+  await page.waitForFunction(() => document.querySelectorAll('.template-row').length === 2);
+  await page.locator('.template-row', { hasText: 'Woche' }).locator('button', { hasText: 'Entfernen' }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.template-row').length === 1);
+  await page.locator('#templatesDialog button[value="close"]').click();
+  part('Ohne Ordner: Download und im Browser gemerkt, Datei hinzufügen, entfernen');
+
+  assert.deepEqual(errors, [], 'keine Fehler im Browser');
+  part('Keine Fehler im Browser');
+  await ctx.close();
+}
+
+// ============================================================
 /* Sprach-Test: prüft das Sprachsystem in Chromium.
    1. Pseudo-Sprache (qps): jeder feste Text der Oberfläche muss durch t()/tn()/translateDom() gegangen sein.
       Die Seite wird dazu durch alle Ansichten und Dialoge geführt; sichtbarer Text ohne ⟦ ⟧ gilt als
@@ -1785,6 +1967,7 @@ suite('Erweiterungs-Test', [
   { name: 'Videos: Karte statt Rahmen, Klick lädt abgeschottet, Druck und Listen mit Links, ausgeschaltet, Lesemodus', run: runEmbedsUi },
   { name: 'Querverweise: gestrichelte Linien, Schalter, eingeklappte Ziele, Vorschau, Export und Druck, gelöschtes Ziel', run: runLinks },
   { name: 'Entscheide und Personen: Reiter, Ansicht, Entscheiden mit Datum, Vorschau, Toolleiste, Vorschläge beim Tippen von @, Export und Druck', run: runDecisions },
+  { name: 'Vorlagen: Ordner verbinden, speichern, aus Vorlage anlegen und einfügen, Erlaubnis, ohne Ordner, Datei hinzufügen', run: runTemplatesUi },
   { name: 'Sprachen: Pseudo-Sprache durch alle Ansichten, Englisch, Browsersprache, Mehrzahl, Testpaket, Wechsel', run: runI18n },
   { name: 'WebMCP: Werkzeuge für den Agenten des Browsers, Aufrufe ändern Daten und Oberfläche, gespeichert, Lesemodus, ohne Schnittstelle nichts', run: runWebMcp },
 ], { browser: true });

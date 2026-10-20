@@ -1065,9 +1065,13 @@
       }
     }
 
+    // Vorlagen: ein Ordner (templates/) für alle Bereiche, siehe templates-local.js
+    const templates = global.NoNotesTemplatesLocal ? global.NoNotesTemplatesLocal.create({ areaName: () => (s.area ? s.area.name : '') }) : null;
+
     return {
       id: 'local',
       start, afterReady, bind,
+      templates,
       /** Aktiver Bereich und Verzeichnis (für Tests und Erweiterungen). */
       get area() { return s.area ? { id: s.area.id, name: s.area.name } : null; },
       get areas() { return s.areas ? s.areas.list.map(a => ({ id: a.id, name: a.name })) : []; },

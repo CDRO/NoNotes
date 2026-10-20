@@ -100,3 +100,20 @@ lassen sich im Lesemodus nicht ändern (sie gelten für den ganzen Arbeitsbereic
 
 **`embeds`** (seit v1.6.0): `'off'` schaltet das Einbetten von Videos aus (die Vorschau zeigt dann nur Links). Sonst gilt `'ask'`: Videos von YouTube, Vimeo und Dailymotion erscheinen als Karte und laden erst nach einem Klick
 (siehe [EMBEDS.md](EMBEDS.md)). Wer die Seite mit einem Schutzkopf (CSP) ausliefert, muss `frame-src` für die Hosts aus `NoNotesEmbeds.frameHosts()` öffnen, sonst blockiert der Browser den Rahmen.
+
+**`templates`** (seit v2.5.0): die Ablage der Vorlagen; ohne sie gibt es keine Einträge für Vorlagen. Dateiformat, Platzhalter und das
+Anlegen der Notizen stehen in `packages/core/templates.js` (`NoNotesTemplates`); die Hülle sagt nur, wo Vorlagen liegen:
+
+| Methode | Zweck |
+| --- | --- |
+| `list()` | `[{ id, name, description, notes, source?, sourceLabel?, canRemove? }]` (`notes`: Zahl der Notizen) |
+| `get(id)` | die Vorlage `{ name, description, notes: [{ depth, title, body, tags }] }` (Fehler `TEMPLATE_NOT_FOUND`) |
+| `save(template, values)` | speichert; `values` sind die Werte der Felder aus `saveFields()`. Ergebnis `{ id, where: 'folder'\|'download'\|'server', folder? }` |
+| `remove(id)`, `download(id)`, `importFile(file)` | wahlweise: entfernen, als `.md` herunterladen, eine `.md`-Datei aufnehmen |
+| `canSave()` | darf die Person Vorlagen anlegen (sonst fehlt «Als Vorlage speichern…») |
+| `saveFields()` | zusätzliche Auswahlfelder im Dialog `[{ id, label, options: [{ value, label }], value }]`, zum Beispiel «Sichtbar für» im Dienst |
+| `context()` | Werte für Platzhalter: `{ area, me }` (`{{bereich}}`, `{{ich}}`) |
+| `saveHint()`, `emptyHint()`, `manageLead()`, `manageUrl()` | wahlweise: Sätze für die Dialoge, Adresse der Verwaltung ausserhalb der App |
+
+Die lokale Hülle nutzt `packages/store-local/templates-local.js` (Ordner `templates/`, sonst Browser); dieselbe Schnittstelle bekommt der
+Werkzeugkatalog der Agenten als `options.templates` (`list_templates`, `create_note_from_template`).

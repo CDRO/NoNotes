@@ -371,6 +371,31 @@ Ab 1.11. liegen alle Projektordner auf SharePoint.
   macht aus einem Block ein Zitat mit Beschreibung, Unter-Einträge darin werden ein Zitat im Zitat; Einträge in
   Listen bleiben Listenpunkte. Code (```` ``` ```` und `~~~`) zählt weder als Frage noch als Querverweis.
 
+### Vorlagen (seit 2.5.0)
+
+Eine **Vorlage** ist eine Notiz samt Unternotizen als Markdown-Datei, mit Platzhaltern, die beim Anlegen ersetzt werden.
+
+- **Speichern:** *Notiz → Als Vorlage speichern…* (oder Rechtsklick auf einen Knoten der Mindmap). Im Dialog: Name, Beschreibung,
+  *Unternotizen mitnehmen*, *Antworten und Entscheide entfernen*, *Erledigte Aufgaben wieder öffnen*, *Termine am Zeilenende entfernen*
+  und *Heutiges Datum durch {{datum}} ersetzen*. Bilder aus der Datei kommen nicht mit (die Meldung nennt, wie viele weggelassen wurden).
+- **Anwenden:** *Aus Vorlage…* in der Mindmap-Leiste (unter der Auswahl), das Symbol neben *Neue Notiz* in der Liste, *Unternotiz aus
+  Vorlage…* im Menü *Notiz* und im Kontextmenü der Mindmap. *Notiz → Vorlage einfügen…* setzt den Text der Vorlage an die Stelle des
+  Cursors und legt ihre Unternotizen unter der offenen Notiz an. Die Auswahl zeigt eine Vorschau mit ersetzten Platzhaltern.
+- **Platzhalter:** `{{datum}}` (heute), `{{datum+7}}` und `{{datum-1}}` (Tage dazu oder weg, zum Beispiel für Termine:
+  `- [ ] Offerte @{{datum+7}}`), `{{zeit}}`, `{{wochentag}}`, `{{woche}}` (Kalenderwoche), `{{jahr}}`, `{{vorlage}}`, `{{bereich}}`,
+  `{{ich}}` (im Dienst dein `@kürzel`). Die Namen sind übersetzbar (Sprachpaket, Schlüssel `platzhalter:…`) und werden in jeder Sprache
+  erkannt (`{{date}}` geht auch); unbekannte bleiben stehen.
+- **Lokal:** Vorlagen liegen im Ordner `templates/` neben `index.html`, für alle Bereiche gleich. *Datenbank → Vorlagen…* verbindet den
+  Ordner einmal (Edge, Chrome); danach liest NoNotes die `.md`-Dateien darin, und neue Vorlagen landen direkt dort (gleicher Name: `Name (2).md`).
+  Ohne Ordner (oder in Firefox) wird die Vorlage heruntergeladen und in diesem Browser gemerkt. Im selben Dialog: Datei hinzufügen,
+  herunterladen, entfernen. Das ZIP bringt zwei Beispiele mit (*Sitzungsprotokoll*, *Entscheidungsvorlage*) und `templates/README.md`
+  mit dem Dateiformat.
+- **Dateiformat:** ein Kopf mit `name`, `description`, `title`, `tags` (Werte in JSON-Schreibweise), danach der Text; jede Unternotiz
+  beginnt mit `<!-- nonotes:note {"depth":1,"title":"…","tags":[]} -->`. Eine Markdown-Datei ohne Kopf ist auch eine Vorlage.
+- **Agenten:** `list_templates` und `create_note_from_template` (WebMCP in der App, `agent/nonotes-mcp.cjs` mit `templates/` neben der
+  App oder `--templates <Ordner>`).
+- **Im Dienst** liegen Vorlagen auf dem Server: eine Organisation verwaltet sie zentral und weist sie Arbeitsbereichen zu (siehe dort).
+
 ### Aufgaben
 
 Eine Markdown-Checkbox ist eine Aufgabe: `- [ ] Offerte einholen` offen, `- [x] …` erledigt.
@@ -465,6 +490,7 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | --- | --- |
 | Oberfläche | `index.html`, `css/app.css`, `js/app.js` (`packages/ui/`) – reines HTML/CSS/JS, keine Frameworks; der Build kopiert nur |
 | Mindmap | `packages/ui/mindmap.js`: eigenes Layout (links/rechts ausbalanciert), SVG, Zoom, Ziehen, Tastatur; archivierte Knoten blass und gestrichelt |
+| Vorlagen | `packages/core/templates.js` (Dateiformat, Platzhalter, aus Notizen, Anlegen und Einfügen), Ablage über `shell.templates` (lokal `packages/store-local/templates-local.js`: Ordner `templates/` mit der File System Access API, sonst Browser), Beispiele in `templates/`; Tests `test/core.cjs` und `test/extend.cjs` |
 | Fragen und Entscheide | `packages/core/questions.js`: ein Parser für `?`-, `?!`-, `!`- und `!!`-Zeilen samt Datum und `@kürzel`, Einträge in Listen und Blöcke `?!```` … ```` ``` ```` mit Unter-Einträgen (`parseBlock` nutzen auch Vorschau und Export, `nest` die Ansichten und der Druck); Index in der Tabelle `questions` mit `kind`, `decided`, `people`, `details`, `parent_id` (Schema 15), bei jeder Änderung abgeglichen; Vorschläge für Kürzel über `packages/core/mentions.js`; Tests `test/core.cjs` (mehrzeilige Entscheide) und `test/extend.cjs` |
 | Aufgaben | `packages/core/tasks.js`: Parser für `- [ ]`-Zeilen mit `@Datum`, Unteraufgaben über die Einrückung, Abschluss-Regeln als reine Textfunktionen; Index in der Tabelle `tasks`, gleiches Prinzip |
 | Termine | `packages/core/dates.js`: gemeinsame Logik für `@TT.MM.JJJJ` bzw. `@JJJJ-MM-TT`, Dringlichkeit, Anzeige |

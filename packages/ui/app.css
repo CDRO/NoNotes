@@ -918,3 +918,33 @@ body:not(.view-tasks) .tasks-view { display: none; }
 .md-embed-frame { display: block; width: 100%; aspect-ratio: 16 / 9; border: 0; border-radius: var(--radius); background: #000; }
 .md-video-link { white-space: nowrap; }
 @media print { .md-embed { display: none; } }
+
+/* ---------- v2.5.0: Vorlagen ---------- */
+
+.dialog-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.dialog-field input, .dialog-field select { font: inherit; font-size: 14px; color: var(--text); }
+.template-fields { display: flex; flex-direction: column; gap: 10px; }
+.template-fields:empty { display: none; }
+.template-pick { display: grid; grid-template-columns: minmax(200px, 1fr) 1.4fr; gap: 12px; min-height: 220px; }
+.template-list { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow: auto; }
+.template-item { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+.template-item small, .template-row small { color: var(--muted); font-size: 12px; font-weight: 400; }
+.template-item[aria-selected="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.template-preview { border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; background: var(--bg); max-height: 50vh; overflow: auto; font-size: 14px; }
+.template-preview:empty { display: none; }
+.template-preview h3 { margin: 0 0 6px; font-size: 16px; }
+.template-sub { color: var(--muted); font-size: 12px; margin: 10px 0 2px; }
+.template-subs { margin: 0; padding-left: 18px; font-size: 13px; }
+.template-list.manage { gap: 0; }
+.template-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.template-row > div:first-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.template-actions { display: flex; gap: 6px; flex: none; }
+.template-actions button { padding: 4px 10px; font-size: 13px; }
+.templates-folder { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.templates-folder[hidden] { display: none; }
+.templates-folder .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.sidebar-tools .icon-btn { padding: 6px 8px; display: grid; place-items: center; }
+.sidebar-tools .icon-btn svg { width: 16px; height: 16px; }
+@media (max-width: 760px) {
+  .template-pick { grid-template-columns: 1fr; }
+}

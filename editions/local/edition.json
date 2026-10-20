@@ -5,6 +5,7 @@
     "@core/vendor/sql.js/sql-asm.js",
     "@core/packages/data/db.js",
     "@core/packages/store-local/backend-local.js",
+    "@core/packages/store-local/templates-local.js",
     "@core/packages/store-local/local-shell.js",
     "edition.js"
   ],
@@ -19,6 +20,7 @@
     "NOTICE",
     "docs",
     "plugins",
+    "templates",
     "vendor/sql.js"
   ]
 }

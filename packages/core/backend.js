@@ -80,6 +80,9 @@
     ARCHIVED_READONLY: N_('Archivierte Notizen sind schreibgeschützt. Erst zurückholen.'),
     NOTE_CONFLICT: N_('Die Notiz wurde inzwischen von jemand anderem geändert.'),
     READ_ONLY: N_('Nur lesen: In diesem Arbeitsbereich sind Änderungen nicht erlaubt.'),
+    TEMPLATE_EMPTY: N_('Die Vorlage ist leer.'),
+    TEMPLATE_NOT_FOUND: N_('Vorlage nicht gefunden.'),
+    TEMPLATE_INVALID: N_('Diese Datei ist keine Vorlage (Markdown, höchstens 1 MB).'),
   };
 
   /** Ergänzt Fehlerkennungen und ihre (deutschen) Meldungen, zum Beispiel für ein Backend über das Netz. Bestehende Kennungen

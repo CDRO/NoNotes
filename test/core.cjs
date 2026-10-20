@@ -512,7 +512,7 @@ async function runBuild(browser, part, step) {
     r = run(['--edition', 'local', '--out', path.join(tmp, 'lokal'), '--version', 'v1.0.0']);
     assert.equal(r.status, 0, r.stderr);
     const lokal = path.join(tmp, 'lokal');
-    for (const f of ['index.html', 'start.ps1', 'start.cmd', 'README.md', 'NOTICE', 'js/db.js', 'js/local-shell.js', 'js/edition.js', 'js/catalog.js', 'js/protocol.js', 'js/webmcp.js', 'agent/nonotes-mcp.cjs', 'vendor/sql.js/sql-asm.js', 'docs/BACKEND.md', 'docs/AGENTS.md', 'plugins/plugins.js']) {
+    for (const f of ['index.html', 'start.ps1', 'start.cmd', 'README.md', 'NOTICE', 'js/db.js', 'js/local-shell.js', 'js/edition.js', 'js/catalog.js', 'js/protocol.js', 'js/webmcp.js', 'agent/nonotes-mcp.cjs', 'vendor/sql.js/sql-asm.js', 'docs/BACKEND.md', 'docs/AGENTS.md', 'plugins/plugins.js', 'js/templates.js', 'js/templates-local.js', 'templates/Sitzungsprotokoll.md', 'templates/README.md']) {
       assert.ok(fs.existsSync(path.join(lokal, f)), `lokal: ${f}`);
     }
     const lokalCat = JSON.parse(/NoNotesPlugins\.catalog\((\[[\s\S]*?\])\);/.exec(fs.readFileSync(path.join(lokal, 'plugins', 'plugins.js'), 'utf8'))[1]);
@@ -1141,8 +1141,38 @@ async function runAgentProgram(browser, part, step) {
   r = run(['--dir', path.join(tmp, 'leer')]);
   assert.equal(r.status, 2);
   assert.match(r.stderr, /Keine \.sqlite-Datei/);
+
+  // Vorlagen (v2.5.0): templates/ neben der App, eigener Ordner mit --templates, nichts ausserhalb des Ordners
+  {
+    const f = path.join(tmp, 'Vorlagen.sqlite');
+    const c = start(['--file', f, '--create']);
+    await init(c);
+    let rv = await c.request('tools/call', { name: 'list_templates', arguments: {} });
+    assert.ok(!rv.result.isError, JSON.stringify(rv));
+    assert.match(rv.result.content[0].text, /^\[t Entscheidungsvorlage\.md\] "Entscheidungsvorlage" — .*\n\[t Sitzungsprotokoll\.md\] "Sitzungsprotokoll" — .* — 3 notes$/);
+    rv = await c.request('tools/call', { name: 'create_note_from_template', arguments: { template_id: 'Sitzungsprotokoll.md' } });
+    assert.match(rv.result.content[0].text, /^Created note \[1\] "Sitzung \d+\.\d+\.\d{4}" from template "Sitzungsprotokoll" with 2 sub-notes at the root\.$/);
+    assert.equal(await c.stop(), 0);
+    const own = path.join(tmp, 'eigene');
+    fs.mkdirSync(own);
+    fs.writeFileSync(path.join(own, 'Woche.md'), '# KW {{woche}}');
+    fs.writeFileSync(path.join(own, 'README.md'), '# keine Vorlage');
+    const c2 = start(['--file', f, '--templates', own]);
+    await init(c2);
+    rv = await c2.request('tools/call', { name: 'list_templates', arguments: {} });
+    assert.deepEqual(rv.result.structuredContent.items.map(i => i.id), ['Woche.md'], 'README zählt nicht');
+    rv = await c2.request('tools/call', { name: 'create_note_from_template', arguments: { template_id: '../Vorlagen.sqlite' } });
+    assert.equal(rv.result.structuredContent.error.code, 'TEMPLATE_NOT_FOUND', 'nur Dateien im Ordner');
+    rv = await c2.request('tools/call', { name: 'create_note_from_template', arguments: { template_id: 'Woche.md', title: 'Diese Woche' } });
+    assert.ok(!rv.result.isError);
+    assert.equal(await c2.stop(), 0);
+    r = run(['--file', f, '--templates', path.join(tmp, 'fehlt')]);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /Ordner mit Vorlagen fehlt/);
+    assert.match(run(['--help']).stdout, /--templates/);
+  }
   fs.rmSync(tmp, { recursive: true, force: true });
-  part('Programm mit mehreren Dateien (--file mehrmals, --dir): list_workspaces, Kennungen wie in der App, Parameter workspace, jede Änderung in ihrer Datei, Ressourcen je Bereich, Änderung von aussen');
+  part('Programm mit mehreren Dateien (--file mehrmals, --dir): list_workspaces, Kennungen wie in der App, Parameter workspace, jede Änderung in ihrer Datei, Ressourcen je Bereich, Änderung von aussen; Vorlagen aus templates/ oder --templates');
 }
 
 // ============================================================
@@ -1362,10 +1392,130 @@ async function runEntries(browser, part, step) {
   part('Agenten: Beschreibung, Block und Unter-Einträge in list_decisions, Anleitung nennt die Syntax, record_decision im Block');
 }
 
+// ============================================================
+/* Vorlagen (v2.5.0) ohne Browser: Platzhalter in mehreren Sprachen, Bereinigen einer Notiz, Dateiformat hin und zurück, Anlegen und
+   Einfügen über das Backend (mit Unternotizen und Tags), Werkzeuge für Agenten mit und ohne Vorlagen. */
+async function runTemplates(browser, part, step) {
+  const sandbox = { console };
+  sandbox.window = sandbox;
+  const context = vm.createContext(sandbox);
+  for (const f of ['packages/core/i18n.js', 'lang/en.js', 'packages/core/history.js', 'packages/core/dates.js', 'packages/core/questions.js', 'packages/core/tasks.js',
+    'packages/core/links.js', 'packages/core/backend.js', 'packages/core/merge.js', 'packages/core/templates.js', 'packages/data/db.js',
+    'packages/store-local/backend-local.js', 'packages/agent/catalog.js']) {
+    vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
+  }
+  const T = sandbox.NoNotesTemplates;
+  const json = v => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
+  const now = new Date(2026, 9, 20, 9, 5); // Dienstag, KW 43 (fill erkennt das Datum auch aus einem anderen Kontext)
+  const fill = (s, extra) => T.fill(s, Object.assign({ now, template: 'Sitzung', area: 'Arbeit', me: '@anna1234' }, extra));
+
+  // ---------- Platzhalter ----------
+  assert.equal(fill('{{datum}} {{datum+7}} {{datum-1}} {{ zeit }} {{woche}} {{jahr}} {{vorlage}} {{bereich}} {{ich}}'), '20.10.2026 27.10.2026 19.10.2026 09:05 43 2026 Sitzung Arbeit @anna1234');
+  assert.equal(fill('{{date+7}} {{time}} {{week}} {{template}} {{me}} {{DATUM}}'), '27.10.2026 09:05 43 Sitzung @anna1234 20.10.2026', 'englische Namen (aus dem Sprachpaket), Gross-/Kleinschreibung egal');
+  assert.equal(fill('{{unbekannt}} {{zeit+1}} {{datum}}x'), '{{unbekannt}} {{zeit+1}} 20.10.2026x', 'Unbekanntes und Versatz ohne Datum bleiben stehen');
+  assert.equal(fill('{{wochentag}}'), 'Dienstag');
+  assert.equal(fill('{{ich}}', { me: '' }), '', 'ohne Person leer');
+  assert.deepEqual(json(T.placeholders({ now })).map(p => p.name), ['datum', 'zeit', 'wochentag', 'woche', 'jahr', 'vorlage', 'bereich', 'ich']);
+  sandbox.NoNotesI18n.setLanguage('en');
+  assert.deepEqual(json(T.placeholders({ now })).map(p => p.name), ['date', 'time', 'weekday', 'week', 'year', 'template', 'area', 'me'], 'Namen in der Sprache der Oberfläche');
+  assert.equal(fill('{{datum}}/{{date}}'), '20.10.2026/20.10.2026', 'deutsche Namen gelten auch bei englischer Oberfläche');
+  sandbox.NoNotesI18n.setLanguage('de');
+  part('Platzhalter: Datum mit Versatz, Zeit, Woche, Vorlage, Bereich, ich; Namen übersetzbar und in jeder Sprache erkannt');
+
+  // ---------- Aus Notizen ----------
+  const nodes = [
+    { depth: 2, title: 'Sitzung 20.10.2026', tags: ['sitzung'], body: '- [x] Protokoll genehmigt\n? Budget? @15.11.2026\n! 20k\n![Bild](att:3)\nText ![b](att:4) mehr\n```\n! bleibt im Code\n- [x] auch\n```' },
+    { depth: 3, title: 'Beschlüsse', tags: [], body: '?! Variante? @anna\n!! 20.10.2026: B' },
+    { depth: 4, title: 'Details', tags: ['x'], body: 'am 2026-10-20' },
+    { depth: 3, title: 'Pendenzen', tags: [], body: '- [ ] {{ich}} bis {{datum+7}}' },
+  ];
+  let r = json(T.fromNotes(nodes, { description: 'Für Sitzungen', stripDates: true, todayToPlaceholder: true, today: now }));
+  assert.equal(r.images, 2, 'Bilder aus der Datei gezählt und weggelassen');
+  assert.deepEqual(r.template.notes.map(n => [n.depth, n.title]), [[0, 'Sitzung {{datum}}'], [1, 'Beschlüsse'], [2, 'Details'], [1, 'Pendenzen']]);
+  assert.equal(r.template.notes[0].body, '- [ ] Protokoll genehmigt\n? Budget?\nText mehr\n```\n! bleibt im Code\n- [x] auch\n```', 'Antworten weg, Aufgaben offen, Termin weg, Code unverändert');
+  assert.equal(r.template.notes[1].body, '?! Variante? @anna');
+  assert.equal(r.template.notes[2].body, 'am {{datum}}');
+  assert.equal(r.template.name, 'Sitzung {{datum}}');
+  r = json(T.fromNotes(nodes, { name: 'Nur oben', children: false, stripAnswers: false, reopenTasks: false }));
+  assert.equal(r.template.notes.length, 1);
+  assert.match(r.template.notes[0].body, /^- \[x\] Protokoll genehmigt\n\? Budget\? @15\.11\.2026\n! 20k/, 'ohne Bereinigen bleibt alles');
+  assert.throws(() => T.fromNotes([], {}), e => e.code === 'TEMPLATE_EMPTY');
+  part('Aus Notizen: Unternotizen mit relativer Tiefe, Antworten weg, Aufgaben offen, Termine weg, heutiges Datum als Platzhalter, Bilder weg, Code bleibt');
+
+  // ---------- Datei ----------
+  const tpl = json(T.fromNotes(nodes, { name: 'Sitzung', description: 'Mit "Anführung" --> und <b>' })).template;
+  tpl.notes[1].title = 'Titel mit --> drin';
+  const md = T.toMarkdown(tpl);
+  assert.match(md, /^---\nnonotes: 1\nname: "Sitzung"\ndescription: "Mit \\"Anführung\\" --\\u003e und \\u003cb\\u003e"\ntitle: "Sitzung 20.10.2026"\ntags: \["sitzung"\]\n---\n/);
+  assert.ok(md.includes('<!-- nonotes:note {"depth":1,"title":"Titel mit --\\u003e drin","tags":[]} -->\n'), 'Kommentar kann nicht vorzeitig enden');
+  assert.deepEqual(json(T.parse(md, 'x.md')), tpl, 'hin und zurück gleich');
+  assert.deepEqual(json(T.parse('# Plan\nText', 'Mein Plan.md')), { name: 'Mein Plan', description: '', notes: [{ depth: 0, title: 'Mein Plan', tags: [], body: '# Plan\nText' }] }, 'ohne Kopf: aus dem Dateinamen');
+  const jump = json(T.parse('---\ntitle: A\ntags: a, b\n---\nx\n<!-- nonotes:note {"depth":3,"title":"Zu tief"} -->\ny\n<!-- nonotes:note {kaputt} -->\nz', 'j.md'));
+  assert.deepEqual(jump.notes.map(n => [n.depth, n.title, n.tags]), [[0, 'A', ['a', 'b']], [1, 'Zu tief', []]], 'Tiefe nie mehr als eine Stufe tiefer; kaputter Kommentar bleibt Text');
+  assert.equal(jump.notes[1].body, 'y\n<!-- nonotes:note {kaputt} -->\nz');
+  assert.equal(T.fileName('a/b:c*?"<>|  d'), 'a b c d.md');
+  assert.equal(T.fileName('...'), 'Vorlage.md');
+  part('Dateiformat: Kopf in JSON-Schreibweise, Unternotizen als Kommentar, hin und zurück gleich, Datei ohne Kopf, sichere Dateinamen');
+
+  // ---------- Anlegen und Einfügen über das Backend ----------
+  const SQL = await initSqlJs();
+  const db = sandbox.NoNotesDB.open(SQL, null);
+  const B = sandbox.NoNotesBackendLocal.create({ getDb: () => db, onChange: () => {} });
+  const parent = await B.createNote(null);
+  await B.updateNote(parent, 'Projekt', 'Hier: ', {});
+  const sitz = T.parse(fs.readFileSync(path.join(ROOT, 'templates', 'Sitzungsprotokoll.md'), 'utf8'), 'Sitzungsprotokoll.md');
+  const id = await T.apply(B, sitz, parent, { now, me: '@anna1234' }, { author: 'Test' });
+  const tree = json(await B.getTree());
+  const byId = new Map(tree.map(n => [n.id, n]));
+  assert.equal(byId.get(id).parent_id, parent);
+  assert.equal(byId.get(id).title, 'Sitzung 20.10.2026');
+  assert.deepEqual(tree.filter(n => n.parent_id === id).map(n => n.title), ['Entscheide', 'Offene Fragen'], 'Unternotizen in ihrer Reihenfolge');
+  assert.deepEqual(json(await B.getTags(id)), ['sitzung']);
+  const created = json(await B.getNote(id));
+  assert.ok(created.body.includes('**Protokoll:** @anna1234') && created.body.includes('- [ ] … @27.10.2026'), created.body);
+  assert.equal(json(await B.listTasks({ status: 'open' })).find(tk => tk.note_id === id).due, '2026-10-27', 'Termin aus {{datum+7}} zählt');
+  const deep = { name: 'Tief', notes: [{ depth: 0, title: 'A', tags: [], body: 'Oben' }, { depth: 1, title: 'B', tags: [], body: '' }, { depth: 2, title: 'C', tags: [], body: '' }, { depth: 1, title: 'D', tags: [], body: '' }] };
+  const ins = await T.insert(B, deep, parent, 'Hier: X', 6, { now }, {});
+  assert.equal(ins.body, 'Hier: \nOben\nX', 'Text an der Stelle, mit Zeilenumbrüchen davor und danach');
+  assert.equal(ins.caret, 'Hier: \nOben'.length);
+  const t2 = json(await B.getTree());
+  assert.deepEqual(t2.filter(n => n.parent_id === parent).map(n => n.title), ['Sitzung 20.10.2026', 'B', 'D'], 'Unternotizen der Vorlage unter der Notiz');
+  assert.equal(t2.find(n => n.title === 'C').parent_id, t2.find(n => n.title === 'B').id);
+  await assert.rejects(T.apply(B, { name: 'Leer', notes: [] }, null, {}), e => e.code === 'TEMPLATE_EMPTY');
+  part('Anlegen: oberste Notiz unter der gewählten, Unternotizen nach Tiefe, Tags, Platzhalter, Termin zählt; Einfügen an der Cursorstelle mit Unternotizen');
+
+  // ---------- Agenten ----------
+  const store = new Map([['sitz', sitz], ['tief', deep]]);
+  const provider = {
+    list: async () => [...store.entries()].map(([k, v]) => ({ id: k, name: v.name, description: v.description || '', notes: v.notes.length })),
+    get: async k => { if (!store.has(k)) throw Object.assign(new Error('weg'), { code: 'TEMPLATE_NOT_FOUND' }); return store.get(k); },
+    context: () => ({ area: 'Arbeit' }),
+  };
+  const cat = sandbox.NoNotesAgent.create(B, { author: 'Agent-Test', templates: provider, templateContext: () => ({ now, me: '@agent' }) });
+  assert.ok(cat.list().some(x => x.name === 'list_templates') && cat.list().some(x => x.name === 'create_note_from_template'));
+  let res = await cat.call('list_templates', {});
+  assert.ok(!res.isError);
+  assert.match(res.content[0].text, /^\[t sitz\] "Sitzungsprotokoll" — Sitzung mit Traktanden.* — 3 notes\n\[t tief\] "Tief" — 4 notes$/);
+  res = await cat.call('create_note_from_template', { template_id: 'sitz', parent_id: parent, title: 'Sitzung Vorstand' });
+  assert.ok(!res.isError, res.content[0].text);
+  assert.match(res.content[0].text, /^Created note \[\d+\] "Sitzung Vorstand" from template "Sitzungsprotokoll" with 2 sub-notes under note \d+\.$/);
+  assert.equal(json(res.structuredContent).ids.length, 3);
+  assert.ok(json(await B.getNote(json(res.structuredContent).id)).body.includes('**Protokoll:** @agent'));
+  res = await cat.call('create_note_from_template', { template_id: 'fehlt' });
+  assert.equal(json(res.structuredContent).error.code, 'TEMPLATE_NOT_FOUND');
+  res = await cat.call('create_note_from_template', { template_id: 'sitz', parent_id: 99999 });
+  assert.equal(json(res.structuredContent).error.code, 'TARGET_NOT_FOUND');
+  const ro = sandbox.NoNotesAgent.create(B, { readOnly: true, templates: provider });
+  assert.ok(ro.list().some(x => x.name === 'list_templates') && !ro.list().some(x => x.name === 'create_note_from_template'), 'Lesemodus: nur auflisten');
+  assert.ok(!sandbox.NoNotesAgent.create(B, {}).list().some(x => /template/.test(x.name)), 'ohne Vorlagen keine Werkzeuge dafür');
+  part('Agenten: list_templates und create_note_from_template (Titel, Platzhalter, Unternotizen, Fehler), nur lesen im Lesemodus, ohne Vorlagen nichts');
+}
+
 suite('Kern-Test', [
   { name: 'Zusammenführen: Myers-Vergleich, Dreiwege-Zusammenführung mit Zufallsdaten, Konflikte, Cursor', run: runMerge },
   { name: 'Datenbank: Standardschema, Angleichen alter Dateien (Schema 1, 11, 12, 13), Konflikterkennung, Autor im Verlauf, Querverweise, Entscheide und Personen', run: runDb },
   { name: 'Mehrzeilige Entscheide und Fragen: Parser, Index (Schema 15), Antworten, Angleichen, Vorschau, Export, Editor, Agenten', run: runEntries },
+  { name: 'Vorlagen: Platzhalter in mehreren Sprachen, aus Notizen, Dateiformat, Anlegen und Einfügen, Agenten', run: runTemplates },
   { name: 'Build: fremde Ausprägung, Verzeichnis der Erweiterungen, --plugins, klare Fehler', run: runBuild },
   { name: 'Videoadressen: YouTube, Vimeo, Dailymotion, Fälschungen, Karte im Markdown, maskierte Titel', run: runEmbeds },
   { name: 'Agenten: Werkzeugkatalog (Notizen, Fragen, Entscheide, Aufgaben, Verlauf, Archiv, Papierkorb, Lesemodus, Ressourcen) und MCP-Protokoll aller Fassungen', run: runAgent },

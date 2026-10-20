@@ -126,6 +126,8 @@ läuft weiter.
 | `mindmap:rendered` | Die Mindmap wurde (neu) gezeichnet. Die Verbindungslinien sind `path.mm-edge` mit `data-from` (Kennung der Elternnotiz, bei der Wurzel `root`), `data-to` (Kennung der Unternotiz) und den Endpunkten `data-x1`, `data-y1`, `data-x2`, `data-y2` | `{}` |
 | `mindmap:select` | Die Auswahl in der Mindmap hat sich geändert (Klick, Tastatur, Neuzeichnen mit anderer Auswahl) | `{ id }`: Notizkennung, `'root'` für die Wurzel oder `null` ohne Auswahl |
 | `database:replaced` | Eine andere Datei wurde geöffnet oder importiert | `{}` |
+| `template:saved` | Eine Vorlage wurde gespeichert (seit 2.5.0) | `{ name, where, id }`: `where` ist `'folder'`, `'download'` oder `'server'` |
+| `template:applied` | Eine Vorlage wurde angewendet (seit 2.5.0) | `{ name, mode }`: `mode` ist `'new'` (neue Notiz) oder `'insert'` (in die offene Notiz) |
 | `questions:rendered` | Die Ansicht «Fragen» oder «Entscheide» wurde (neu) gezeichnet (seit 1.11.0) | `{ kind, items }`: `kind` ist `'question'` oder `'decision'`, `items` die gezeigten Einträge mit `id`, `noteId`, `kind`, `text`, `answer`, `decided`, `due`, `people` (`[{ handle, optional }]`), seit 2.4.0 `details` (Beschreibung eines Blocks oder `null`) und `parentId` (Block eines Unter-Eintrags oder `null`), und `element` (der Eintrag in der Liste, zum Beispiel um Knöpfe oder Marken anzuhängen) |
 
 Rückrufe dürfen `async` sein. Die App wartet nicht auf sie. Jedes Ereignis geht zusätzlich als DOM-Ereignis `nonotes:<name>` am `document`

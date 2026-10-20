@@ -9,7 +9,7 @@
    unter einer Sperre (NoNotes.sqlite.lock), damit zwei Agenten sich nicht überschreiben. Die App merkt die Änderung von aussen
    und lädt sie nach. Alle Meldungen gehen auf die Fehlerausgabe; auf der Standardausgabe stehen nur MCP-Antworten.
 
-   Aufruf:  node agent/nonotes-mcp.cjs --file <Pfad zur NoNotes.sqlite> [--file <weitere>] [--dir <Ordner>] [--read-only] [--create] [--verbose]
+   Aufruf:  node agent/nonotes-mcp.cjs --file <Pfad zur NoNotes.sqlite> [--file <weitere>] [--dir <Ordner>] [--templates <Ordner>] [--read-only] [--create] [--verbose]
             node agent/nonotes-mcp.cjs --config [<Datei> …] [--dir <Ordner>]   Einträge für Claude Code, VS Code, Claude Desktop, Copilot CLI
             node agent/nonotes-mcp.cjs --help | --version
    Mehrere Dateien (Bereiche der App, ab v2.3.0): jede wird ein «workspace» mit der Kennung aus ihrem Namen (Arbeit.sqlite → arbeit);
@@ -24,8 +24,8 @@ const crypto = require('node:crypto');
 const readline = require('node:readline');
 
 const HERE = __dirname;
-const CORE_FILES = ['i18n', 'history', 'dates', 'questions', 'tasks', 'links', 'backend', 'merge', 'db', 'backend-local', 'catalog', 'protocol'];
-const PACKAGE_OF = { i18n: 'core', history: 'core', dates: 'core', questions: 'core', tasks: 'core', links: 'core', backend: 'core', merge: 'core', db: 'data', 'backend-local': 'store-local', catalog: 'agent', protocol: 'agent' };
+const CORE_FILES = ['i18n', 'history', 'dates', 'questions', 'tasks', 'links', 'backend', 'merge', 'templates', 'db', 'backend-local', 'catalog', 'protocol'];
+const PACKAGE_OF = { i18n: 'core', history: 'core', dates: 'core', questions: 'core', tasks: 'core', links: 'core', backend: 'core', merge: 'core', templates: 'core', db: 'data', 'backend-local': 'store-local', catalog: 'agent', protocol: 'agent' };
 const LOCK_WAIT_MS = 25;
 const LOCK_TIMEOUT_MS = 5000;
 const LOCK_STALE_MS = 30000;
@@ -56,7 +56,33 @@ async function loadCore() {
     vm.runInContext(fs.readFileSync(file, 'utf8'), context, { filename: file });
   }
   const SQL = await require(where.sql)();
-  return { SQL, DB: sandbox.NoNotesDB, Backend: sandbox.NoNotesBackend, BackendLocal: sandbox.NoNotesBackendLocal, Agent: sandbox.NoNotesAgent, Mcp: sandbox.NoNotesMcp, version: where.version };
+  return { SQL, DB: sandbox.NoNotesDB, Backend: sandbox.NoNotesBackend, BackendLocal: sandbox.NoNotesBackendLocal, Agent: sandbox.NoNotesAgent, Mcp: sandbox.NoNotesMcp, Templates: sandbox.NoNotesTemplates, version: where.version };
+}
+
+// ---------- Vorlagen: die .md-Dateien eines Ordners (Standard: templates/ neben der App), nur lesen ----------
+
+/** Ordner mit Vorlagen: --templates, sonst templates/ neben der App (ausgeliefert) oder im Projekt; null, wenn keiner da ist. */
+function templatesDir(arg) {
+  if (arg) return path.resolve(arg);
+  for (const dir of [path.resolve(HERE, '..', 'templates'), path.resolve(HERE, '..', '..', '..', 'templates')]) if (fs.existsSync(dir)) return dir;
+  return null;
+}
+
+/** Dieselbe Schnittstelle wie shell.templates in der App, nur lesend: list(), get(id), context(). area: Name des Bereichs. */
+function folderTemplates(core, dir, area) {
+  const files = () => {
+    try { return fs.readdirSync(dir).filter(n => /\.(md|markdown)$/i.test(n) && !n.startsWith('.') && !/^(readme|liesmich)\.md$/i.test(n)).sort((a, b) => a.localeCompare(b)); } catch (e) { return []; }
+  };
+  const read = name => {
+    const file = path.join(dir, name);
+    if (path.dirname(file) !== dir || !fs.existsSync(file) || fs.statSync(file).size > 1024 * 1024) throw Object.assign(new Error('Template not found.'), { code: 'TEMPLATE_NOT_FOUND' });
+    return core.Templates.parse(fs.readFileSync(file, 'utf8'), name);
+  };
+  return {
+    list: async () => files().map(name => { const t = read(name); return { id: name, name: t.name, description: t.description, notes: t.notes.length }; }),
+    get: async id => read(path.basename(String(id))),
+    context: () => ({ area }),
+  };
 }
 
 // ---------- Die Datei: lesen, Änderungen erkennen, atomar schreiben, Sperre ----------
@@ -200,7 +226,7 @@ function usage() {
     'NoNotes als MCP-Server für Agenten auf diesem Rechner (Claude Code, VS Code mit Copilot, Claude Desktop, Copilot CLI).',
     '',
     'Aufruf:',
-    '  node agent/nonotes-mcp.cjs --file <Pfad zur NoNotes.sqlite> [--file …] [--dir <Ordner>] [--read-only] [--create] [--verbose]',
+    '  node agent/nonotes-mcp.cjs --file <Pfad zur NoNotes.sqlite> [--file …] [--dir <Ordner>] [--templates <Ordner>] [--read-only] [--create] [--verbose]',
     '  node agent/nonotes-mcp.cjs --config [<Datei> …] [--dir <Ordner>]   Einträge für die Agenten zum Kopieren',
     '  node agent/nonotes-mcp.cjs --help | --version',
     '',
@@ -209,6 +235,7 @@ function usage() {
     '  --dir        alle .sqlite-Dateien dieses Ordners als Bereiche (beim Start gelesen)',
     '  --read-only  nur lesende Werkzeuge, es wird nie geschrieben',
     '  --create     legt die Datei an, wenn sie fehlt',
+    '  --templates  Ordner mit Vorlagen (.md) für list_templates und create_note_from_template; ohne Angabe templates/ neben der App',
     '  --verbose    jeden Werkzeugaufruf auf der Fehlerausgabe melden',
     '',
     'Das Programm spricht MCP über Standardeingabe und -ausgabe; es wird vom Agenten gestartet, nicht von Hand. Beschreibung: docs/AGENTS.md',
@@ -246,11 +273,12 @@ function configText(files, dirs, order) {
 }
 
 function parseArgs(argv) {
-  const a = { files: [], dirs: [], sources: [], readOnly: false, create: false, verbose: false, config: false, help: false, version: false, rest: [] };
+  const a = { files: [], dirs: [], sources: [], templates: null, readOnly: false, create: false, verbose: false, config: false, help: false, version: false, rest: [] };
   for (let i = 0; i < argv.length; i++) {
     const x = argv[i];
     if (x === '--file') { if (argv[i + 1] !== undefined) { a.files.push(argv[++i]); a.sources.push({ file: argv[i] }); } }
     else if (x === '--dir') { if (argv[i + 1] !== undefined) { a.dirs.push(argv[++i]); a.sources.push({ dir: argv[i] }); } }
+    else if (x === '--templates') { if (argv[i + 1] !== undefined) a.templates = argv[++i]; }
     else if (x === '--read-only') a.readOnly = true;
     else if (x === '--create') a.create = true;
     else if (x === '--verbose') a.verbose = true;
@@ -300,7 +328,12 @@ async function main() {
     }
     stores.push(store);
   }
-  const catalogOf = store => guardedCatalog(core.Agent.create(core.BackendLocal.create({ getDb: () => store.db, onChange: () => {} }), { readOnly: args.readOnly, log }), store, log);
+  const tplDir = templatesDir(args.templates);
+  if (args.templates && (!tplDir || !fs.existsSync(tplDir))) { console.error(`Ordner mit Vorlagen fehlt: ${path.resolve(args.templates)}`); return 2; }
+  if (tplDir) log(`Vorlagen aus ${tplDir}`);
+  const areaName = store => path.basename(store.file).replace(/\.(sqlite3?|db)$/i, '');
+  const catalogOf = store => guardedCatalog(core.Agent.create(core.BackendLocal.create({ getDb: () => store.db, onChange: () => {} }),
+    { readOnly: args.readOnly, log, templates: tplDir ? folderTemplates(core, tplDir, areaName(store)) : null }), store, log);
 
   let catalog;
   let where;

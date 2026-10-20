@@ -93,6 +93,23 @@
     return wrap(format(text, all));
   }
 
+  /** Übersetzung eines Texts in der Sprache der Oberfläche, roh (ohne Pseudo-Klammern), oder null, wenn es keine gibt. */
+  function variant(key) {
+    const p = pack();
+    const v = p && !p.source ? p.messages.get(key) : null;
+    return typeof v === 'string' && v !== '' ? v : null;
+  }
+
+  /** Alle Übersetzungen eines Texts über alle Sprachpakete (zum Beispiel die Namen der Platzhalter in Vorlagen). */
+  function variants(key) {
+    const out = [];
+    for (const p of packs.values()) {
+      const v = p.messages.get(key);
+      if (typeof v === 'string' && v !== '' && !out.includes(v)) out.push(v);
+    }
+    return out;
+  }
+
   function locale() {
     const p = pack();
     return p ? p.locale : 'de-CH';
@@ -202,5 +219,5 @@
 
   function collect(root) { return walk(root || global.document.body, false); }
 
-  global.NoNotesI18n = { SOURCE, PSEUDO, N_, register, extend, available, init, setLanguage, language, locale, t, tn, translateDom, collect, format };
+  global.NoNotesI18n = { SOURCE, PSEUDO, N_, register, extend, available, init, setLanguage, language, locale, t, tn, translateDom, collect, format, variant, variants };
 })(window);

@@ -48,6 +48,9 @@
     IN_TRASH: 'The note is in the trash; restore it first.',
     INVALID_INPUT: 'Invalid input.',
     UNKNOWN_TOOL: 'Unknown tool.',
+    TEMPLATE_NOT_FOUND: 'Template not found; call list_templates.',
+    TEMPLATE_EMPTY: 'The template is empty.',
+    TEMPLATE_LIMIT: 'The plan of this workspace allows no more templates.',
   };
 
   // ---------- Eingaben prüfen (kleine Teilmenge von JSON Schema, genug für diese Werkzeuge) ----------
@@ -533,6 +536,37 @@
         return result(list.length ? list.map(v => `[v ${v.id}] ${v.at}${v.author ? ` by ${v.author}` : ''} — +${v.added}/−${v.removed} characters${v.titleChanged ? ', title changed' : ''}`).join('\n') : 'No earlier versions.', { id: n.id, versions: items });
       },
     },
+    // Vorlagen (v2.5.0): nur, wenn die Ausprägung welche kennt (options.templates, dieselbe Schnittstelle wie shell.templates)
+    {
+      name: 'list_templates', title: 'List templates', readOnly: true, needs: 'templates',
+      description: 'Templates for new notes: a note with optional sub-notes; placeholders such as {{date}} or {{date+7}} are filled in when a note is created from it. Each item has an id for create_note_from_template.',
+      inputSchema: schema({}),
+      async run(B, input, ctx) {
+        const items = (await ctx.templates.list()).map(i => ({ id: String(i.id), name: i.name, description: i.description || '', notes: i.notes || 1 }));
+        const text = items.length ? items.map(i => `[t ${i.id}] ${quote(i.name)}${i.description ? ` — ${i.description}` : ''} — ${plural(i.notes, 'note', 'notes')}`).join('\n') : 'No templates.';
+        return result(text, { total: items.length, items });
+      },
+    },
+    {
+      name: 'create_note_from_template', title: 'Create a note from a template', readOnly: false, needs: 'templates',
+      description: 'Create a new note, together with the sub-notes of the template, under a parent note or at the root. Placeholders are filled in; title replaces the title of the template. Returns the id of the new note.',
+      inputSchema: schema({
+        template_id: STR('Template id (from list_templates).', { minLength: 1, maxLength: 300 }),
+        parent_id: { type: ['integer', 'null'], minimum: 1, description: 'Parent note; omit or null for the root.' },
+        title: STR('Title instead of the one in the template.', { minLength: 1, maxLength: 300 }),
+      }, ['template_id']),
+      async run(B, input, ctx) {
+        if (input.parent_id != null) await liveNote(B, input.parent_id).catch(e => { throw Object.assign(e, { code: e.code === 'NOTE_NOT_FOUND' || e.code === 'IN_TRASH' ? 'TARGET_NOT_FOUND' : e.code }); });
+        const T = global.NoNotesTemplates;
+        const tpl = await ctx.templates.get(input.template_id);
+        const fill = Object.assign({}, ctx.templates.context ? ctx.templates.context() : {}, ctx.templateContext ? ctx.templateContext() : {});
+        const notes = T.instantiate(tpl, fill);
+        if (!notes.length) throw Object.assign(new Error('empty template'), { code: 'TEMPLATE_EMPTY' });
+        if (input.title) notes[0].title = input.title.trim();
+        const ids = await T.createNotes(B, notes, input.parent_id == null ? null : input.parent_id, { author: ctx.author });
+        return result(`Created note [${ids[0]}] ${quote(notes[0].title)} from template ${quote(tpl.name)}${ids.length > 1 ? ` with ${plural(ids.length - 1, 'sub-note', 'sub-notes')}` : ''}${input.parent_id != null ? ` under note ${input.parent_id}` : ' at the root'}.`, { id: ids[0], ids });
+      },
+    },
   ];
 
   async function listQuestionsLike(B, input, kind) {
@@ -564,8 +598,9 @@
   function create(backend, options) {
     const o = options || {};
     const readOnly = !!o.readOnly;
-    const ctx = { author: o.author || null, now: typeof o.now === 'function' ? o.now : () => new Date().toISOString() };
-    const available = TOOLS.filter(t => !readOnly || t.readOnly);
+    const ctx = { author: o.author || null, now: typeof o.now === 'function' ? o.now : () => new Date().toISOString(),
+      templates: o.templates || null, templateContext: typeof o.templateContext === 'function' ? o.templateContext : null };
+    const available = TOOLS.filter(t => (!readOnly || t.readOnly) && (t.needs !== 'templates' || (ctx.templates && global.NoNotesTemplates)));
     const byName = new Map(available.map(t => [t.name, t]));
 
     async function call(name, input) {

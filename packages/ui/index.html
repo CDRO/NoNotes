@@ -39,6 +39,7 @@
           <button type="button" id="importBtn" data-write role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 10V2 M5 5l3-3 3 3 M2.5 12.5v1h11v-1"/></svg>Aus Datei importieren…</button>
           <div class="sep" role="separator"></div>
           <button type="button" id="exportBtn" role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5l3 3v10H4z M9 1.5v3h3 M6 8h4 M6 10.5h4"/></svg>Als Markdown exportieren…</button>
+          <button type="button" id="templatesBtn" role="menuitem" hidden><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 1.5h6l3 3v10h-9z M9.5 1.5v3h3 M5.5 7.5h5 M5.5 10h5 M5.5 12.5h3"/></svg>Vorlagen…</button>
           <button type="button" id="calendarBtn" data-write role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v10h-11z M2.5 6.5h11 M5 1.5v3 M11 1.5v3"/></svg>Termine in Kalender exportieren (.ics)…</button>
           <div class="sep" role="separator"></div>
           <button type="button" id="storageHelpBtn" role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2c3.3 0 5.5.9 5.5 2s-2.2 2-5.5 2S2.5 5.1 2.5 4s2.2-2 5.5-2z M2.5 4v8c0 1.1 2.2 2 5.5 2s5.5-.9 5.5-2V4 M2.5 8c0 1.1 2.2 2 5.5 2s5.5-.9 5.5-2"/></svg>Datenablage erklärt…</button>
@@ -76,6 +77,7 @@
       <section class="map-view" id="mapView" aria-label="Mindmap">
         <div class="map-toolbar">
           <button type="button" id="mapNewBtn" data-write class="primary" title="Neue Notiz unter der Auswahl (Tab)">Neue Notiz</button>
+          <button type="button" id="mapTemplateBtn" data-write title="Neue Notiz aus einer Vorlage unter der Auswahl" hidden>Aus Vorlage…</button>
           <button type="button" id="mapFitBtn" title="Alles einpassen (0)">Einpassen</button>
           <button type="button" id="mapZoomOutBtn" title="Verkleinern (−)" aria-label="Verkleinern">−</button>
           <button type="button" id="mapZoomInBtn" title="Vergrössern (+)" aria-label="Vergrössern">+</button>
@@ -138,6 +140,7 @@
         <div class="sidebar-tools">
           <input type="search" id="search" placeholder="Suchen…" aria-label="Notizen durchsuchen" autocomplete="off">
           <button type="button" id="newBtn" data-write class="primary" title="Neue Notiz (Alt+N)">Neue Notiz</button>
+          <button type="button" id="newTemplateBtn" data-write class="icon-btn" title="Neue Notiz aus Vorlage…" aria-label="Neue Notiz aus Vorlage…" hidden><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 1.5h6l3 3v10h-9z M9.5 1.5v3h3 M5.5 7.5h5 M5.5 10h5 M5.5 12.5h3" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></button>
         </div>
         <div class="sidebar-filters">
           <select id="listScope" aria-label="Bereich">
@@ -168,6 +171,9 @@
               <button type="button" id="noteMenuBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="noteMenu" title="Aktionen zu dieser Notiz">Notiz ▾</button>
               <div id="noteMenu" class="menu-panel" role="menu" hidden>
                 <button type="button" id="childBtn" data-write role="menuitem" title="Eine neue Notiz unter dieser anlegen"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 2.5v6a2 2 0 0 0 2 2h7.5 M9.5 7.5l3 3-3 3"/></svg>Unternotiz anlegen</button>
+                <button type="button" id="childTemplateBtn" data-write role="menuitem" title="Eine neue Notiz aus einer Vorlage unter dieser anlegen" hidden><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 1.5h6l3 3v10h-9z M9.5 1.5v3h3 M5.5 7.5h5 M5.5 10h5 M5.5 12.5h3"/></svg>Unternotiz aus Vorlage…</button>
+                <button type="button" id="insertTemplateBtn" data-write role="menuitem" title="Den Text einer Vorlage an der Cursorstelle einfügen, ihre Unternotizen unter dieser Notiz" hidden><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 1.5h6l3 3v10h-9z M9.5 1.5v3h3 M5.5 7.5h5 M5.5 10h5 M5.5 12.5h3"/></svg>Vorlage einfügen…</button>
+                <button type="button" id="saveTemplateBtn" role="menuitem" title="Diese Notiz (mit Unternotizen) als Vorlage speichern" hidden><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 1.5h6l3 3v10h-9z M9.5 1.5v3h3 M5.5 7.5h5 M5.5 10h5 M5.5 12.5h3"/></svg>Als Vorlage speichern…</button>
                 <button type="button" id="historyBtn" role="menuitem" title="Frühere Fassungen dieser Notiz ansehen und wiederherstellen"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9 M2.5 2.5v3h3 M8 5v3.5l2.3 1.4"/></svg>Verlauf…</button>
                 <button type="button" id="printBtn" role="menuitem" title="Diese Notiz drucken"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6V2.5h7V6 M4.5 11H3a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1.5 M4.5 9.5h7v4h-7z"/></svg>Drucken… (Ctrl+P)</button>
                 <div class="sep" role="separator"></div>
@@ -416,6 +422,62 @@
     </form>
   </dialog>
 
+  <dialog id="templateSaveDialog" class="dialog" aria-labelledby="templateSaveTitle">
+    <form method="dialog" id="templateSaveForm">
+      <h2 id="templateSaveTitle">Als Vorlage speichern</h2>
+      <label class="dialog-field"><span>Name</span><input type="text" id="templateName" maxlength="80" autocomplete="off" data-i18n-skip></label>
+      <label class="dialog-field"><span>Beschreibung (wahlweise)</span><input type="text" id="templateDescription" maxlength="200" autocomplete="off" data-i18n-skip></label>
+      <fieldset class="dialog-fieldset">
+        <legend>Inhalt</legend>
+        <label class="suboption"><input type="checkbox" id="templateChildren" checked> <span id="templateChildrenLabel">Unternotizen mitnehmen</span></label>
+        <label class="suboption"><input type="checkbox" id="templateStripAnswers" checked> Antworten und Entscheide entfernen</label>
+        <label class="suboption"><input type="checkbox" id="templateReopenTasks" checked> Erledigte Aufgaben wieder öffnen</label>
+        <label class="suboption"><input type="checkbox" id="templateStripDates"> Termine am Zeilenende entfernen</label>
+        <label class="suboption"><input type="checkbox" id="templateToday" checked> <span id="templateTodayLabel">Heutiges Datum durch einen Platzhalter ersetzen</span></label>
+      </fieldset>
+      <div id="templateSaveFields" class="template-fields"></div>
+      <p class="dialog-lead" id="templateSaveWhere"></p>
+      <p class="hint" id="templateSaveHint"></p>
+      <div class="row">
+        <button type="button" id="templateSaveGoBtn" class="primary">Speichern</button>
+        <button type="submit" value="cancel" class="ghost">Abbrechen</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="templatePickDialog" class="dialog dialog-wide" aria-labelledby="templatePickTitle">
+    <form method="dialog" id="templatePickForm">
+      <h2 id="templatePickTitle">Neue Notiz aus Vorlage</h2>
+      <p class="dialog-lead" id="templatePickLead"></p>
+      <div class="template-pick">
+        <div id="templatePickList" class="template-list" role="listbox" aria-label="Vorlagen"></div>
+        <div id="templatePickPreview" class="template-preview md" aria-live="polite"></div>
+      </div>
+      <p class="hint" id="templatePickEmpty" hidden></p>
+      <div class="row">
+        <button type="button" id="templatePickGoBtn" class="primary">Anlegen</button>
+        <button type="button" id="templatePickManageBtn">Vorlagen verwalten…</button>
+        <button type="submit" value="cancel" class="ghost">Abbrechen</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="templatesDialog" class="dialog dialog-wide" aria-labelledby="templatesTitle">
+    <form method="dialog" id="templatesForm">
+      <h2 id="templatesTitle">Vorlagen</h2>
+      <p class="dialog-lead" id="templatesLead"></p>
+      <div id="templatesFolder" class="templates-folder"></div>
+      <div id="templatesList" class="template-list manage"></div>
+      <p class="hint" id="templatesEmpty" hidden></p>
+      <div class="row">
+        <button type="button" id="templatesImportBtn">Datei hinzufügen…</button>
+        <button type="button" id="templatesManageBtn" hidden>In der Organisation verwalten…</button>
+        <button type="submit" value="close" class="primary">Schliessen</button>
+      </div>
+      <p class="hint" id="templatesPlaceholders"></p>
+    </form>
+  </dialog>
+
   <dialog id="helpDialog" class="dialog dialog-wide" aria-labelledby="helpTitle">
     <form method="dialog" class="help">
       <div class="help-head">
@@ -458,6 +520,7 @@
             <tr><td>Mehrzeiliger Entscheid</td><td><code>?!```&nbsp;Titel @anna @15.11.2026</code>, darunter die Beschreibung, am Schluss eine Zeile <code>```</code>; der Entscheid folgt direkt danach mit <code>!!</code>. Ohne Titel gilt die erste Zeile. Mit <code>?```</code> eine mehrzeilige Frage.</td><td>Ein Kasten mit Titel und Beschreibung; die Ansicht «Entscheide» zeigt die ersten Zeilen der Beschreibung, «Mehr anzeigen» den Rest. Mehrere Zeilen markieren und <strong>?!</strong> drücken macht daraus einen Block; <kbd>Enter</kbd> nach <code>?!```&nbsp;Titel</code> setzt das <code>```</code> darunter.</td></tr>
             <tr><td>Unterentscheid</td><td>Im Block eine Zeile <code>?! Wer migriert die Altdaten? @ben</code> mit <code>!!</code> darunter (auch <code>?</code> und <code>!</code>, auch in einer Liste)</td><td>Ein eigener Entscheid, in der Ansicht unter dem Block eingerückt. Der Block zeigt «1 von 2 Unterentscheiden offen» und darf vorher entschieden werden. Code im Block steht zwischen <code>~~~</code> oder beginnt mit <code>```sprache</code>.</td></tr>
             <tr><td>Person</td><td><code>@kürzel</code> im Text einer Frage oder eines Entscheids, <code>(@kürzel)</code> für jemanden, der wahlweise dabei ist</td><td>Wer antworten oder entscheiden soll. Beim Tippen von <code>@</code> schlägt der Editor bekannte Kürzel vor; die Ansichten «Fragen» und «Entscheide» filtern nach Person.</td></tr>
+            <tr><td>Vorlage</td><td><em>Notiz → Als Vorlage speichern…</em> (oder Rechtsklick in der Mindmap) macht aus einer Notiz samt Unternotizen eine Vorlage; <em>Aus Vorlage…</em>, <em>Unternotiz aus Vorlage…</em> und <em>Notiz → Vorlage einfügen…</em> wenden sie an</td><td>Antworten, erledigte Aufgaben und das heutige Datum lassen sich beim Speichern bereinigen. Platzhalter für Datum, Zeit, Woche, Bereich und Person werden beim Anlegen ersetzt; die Liste steht unter <em>Datenbank → Vorlagen…</em>.</td></tr>
             <tr><td>Verweis</td><td><code>[[Titel einer Notiz]]</code></td><td>Klick in der Vorschau öffnet die Notiz; fehlt sie, wird sie auf Wunsch als Unternotiz angelegt.</td></tr>
             <tr><td>Querverweis</td><td><code>[[Titel einer Notiz*]]</code> (Stern am Ende)</td><td>Wie ein Verweis, dazu zieht die Mindmap eine gestrichelte Linie zu dieser Notiz, quer zur Hierarchie. Der Schalter «Verweise» in der Mindmap-Leiste blendet alle Linien ein oder aus.</td></tr>
             <tr><td>Bild aus der Datenbank</td><td><code>![Name](att:ID)</code>, entsteht beim Einfügen über den Bild-Knopf, per <code>Ctrl+V</code> oder Ablegen</td><td>Das Bild liegt in der SQLite-Datei und wird mitexportiert.</td></tr>
@@ -574,6 +637,7 @@
 
   <input type="file" id="importInput" accept=".sqlite,.sqlite3,.db,application/vnd.sqlite3,application/x-sqlite3" hidden>
   <input type="file" id="attachInput" accept="image/*" multiple hidden>
+  <input type="file" id="templateInput" accept=".md,.markdown,text/markdown" multiple hidden>
 
   <script src="version.js"></script>
   <script src="../core/i18n.js"></script>
@@ -590,6 +654,7 @@
   <script src="../core/embeds.js"></script>
   <script src="../core/markdown.js"></script>
   <script src="../core/editing.js"></script>
+  <script src="../core/templates.js"></script>
   <script src="../core/backend.js"></script>
   <script src="../agent/catalog.js"></script>
   <script src="../agent/protocol.js"></script>
