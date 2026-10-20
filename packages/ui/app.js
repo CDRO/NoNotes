@@ -2710,6 +2710,7 @@
     const p = templateStore();
     if (!p) return;
     el.templatesLead.textContent = p.manageLead ? p.manageLead() : t('Vorlagen sind Markdown-Dateien (.md) mit Titel, Text und Unternotizen. Sie gelten für alle Bereiche in diesem Browser.');
+    el.templatesPlaceholders.textContent = placeholderText(); // gleich, nicht erst nach Ordner und Liste
     await renderTemplateFolder(p);
     let items = [];
     let error = null;
@@ -2742,7 +2743,6 @@
     el.templatesEmpty.textContent = error ? errorText(error) : (p.emptyHint ? await p.emptyHint() : t('Noch keine Vorlagen.'));
     el.templatesImportBtn.hidden = !p.importFile || !canSaveTemplates();
     el.templatesManageBtn.hidden = !p.manageUrl;
-    el.templatesPlaceholders.textContent = placeholderText();
   }
 
   async function importTemplateFiles(files) {

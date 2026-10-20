@@ -1339,7 +1339,7 @@ async function runTemplatesUi(browser, part, step) {
   await page.fill('#templateDescription', 'Für den Vorstand');
   await page.click('#templateSaveGoBtn');
   await page.waitForFunction(() => window.__tplFiles.has('Meine Sitzung.md'));
-  assert.match(await page.locator('#status').innerText(), /Vorlage «Meine Sitzung» im Ordner «templates» gespeichert\./);
+  await page.waitForFunction(() => /Vorlage «Meine Sitzung» im Ordner «templates» gespeichert\./.test(document.querySelector('#status').textContent));
   const saved = await page.evaluate(() => window.__tplFiles.get('Meine Sitzung.md'));
   assert.ok(saved.startsWith('---\nnonotes: 1\nname: "Meine Sitzung"\ndescription: "Für den Vorstand"\ntitle: "Sitzung {{datum}}"\n---\n- [ ] Protokoll genehmigt\n? Budget?\n<!-- nonotes:note {"depth":1,"title":"Beschlüsse","tags":[]} -->'), saved);
   await page.click('#noteMenuBtn');
