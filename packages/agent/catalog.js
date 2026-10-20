@@ -21,7 +21,8 @@
 
   const INSTRUCTIONS = [
     'NoNotes is a personal and team note-taking app: notes form a tree (a mind map), each note has a title and a Markdown body.',
-    'Conventions inside the body: a line starting with "?" is a question, "?!" is a decision to take; answer lines start with "!" (questions) or "!!" (decisions).',
+    'Conventions inside the body: a line starting with "?" is a question, "?!" is a decision to take; answer lines start with "!" (questions) or "!!" (decisions), directly below.',
+    'The same works in a list ("- ?! Buy the tool?" with the answer indented below) and over several lines: "?!``` Title" opens a block that a line "```" closes; the lines inside describe it, single-line "?!"/"?" lines inside are sub-decisions/sub-questions with their own answers, and the block\'s own answer follows right after "```".',
     'Tasks are Markdown checkboxes "- [ ] text"; indented checkboxes are subtasks. A due date is written at the end of a line as "@YYYY-MM-DD" or "@DD.MM.YYYY".',
     '"@handle" names a person who should answer or decide; "(@handle)" marks an optional participant.',
     'Prefer the dedicated tools (answer_question, record_decision, complete_task, append_to_note) over rewriting a whole note; when you must rewrite, pass base_updated_at from get_note so concurrent edits are detected.',
@@ -172,19 +173,29 @@
   }
 
   function questionItem(r) {
+    const sub = r.sub ? { decisions: r.sub.decisions, open_decisions: r.sub.decisionsOpen, questions: r.sub.questions, open_questions: r.sub.questionsOpen } : null;
     return {
       id: r.id, note_id: r.note_id, note_title: r.note_title, kind: r.kind, text: r.text, answer: r.answer, due: r.due,
       people: r.people || [], decided: r.decided || null, created_at: r.created_at, answered_at: r.answered_at,
+      details: r.details || null, parent_id: r.parent_id == null ? null : r.parent_id, sub_entries: sub,
     };
   }
 
   function questionLine(r) {
     const tag = r.kind === 'decision' ? 'd' : 'q';
     const parts = [`[${tag} ${r.id}] (note ${r.note_id} ${quote(r.note_title)}) ${r.text}`];
+    if (r.parent_id != null) parts.push(`inside [${r.parent_kind === 'decision' ? 'd' : 'q'} ${r.parent_id}]${r.parent_text ? ' ' + quote(r.parent_text) : ''}`);
     if (r.due) parts.push(`due ${r.due}`); // die @kürzel stehen schon im Text der Frage
     if (r.answer) parts.push(r.kind === 'decision' ? `decided${r.decided ? ' ' + r.decided : ''}: ${r.answer.replace(/\n/g, ' / ')}` : `answered: ${r.answer.replace(/\n/g, ' / ')}`);
     else parts.push('open');
-    return parts.join(' — ');
+    if (r.sub) {
+      const subs = [];
+      if (r.sub.decisions) subs.push(`${r.sub.decisionsOpen} of ${r.sub.decisions} sub-decisions open`);
+      if (r.sub.questions) subs.push(`${r.sub.questionsOpen} of ${r.sub.questions} sub-questions open`);
+      parts.push(subs.join(', '));
+    }
+    const line = parts.join(' — ');
+    return r.details ? line + '\n    ' + r.details.replace(/\n/g, '\n    ') : line; // die Beschreibung eingerückt darunter
   }
 
   function taskItem(r) {

@@ -2514,7 +2514,8 @@
       cnt.textContent = decision ? tn('{n} Entscheid', '{n} Entscheide', g.items.length) : tn('{n} Frage', '{n} Fragen', g.items.length);
       h.appendChild(cnt);
       section.appendChild(h);
-      for (const r of g.items) section.appendChild(renderQuestionItem(r, today, resolve));
+      // Unter-Einträge eines Blocks direkt unter ihm (wenn er in der Auswahl ist), sonst für sich mit «Teil von …»
+      for (const { row, nested } of Q.nest(g.items)) section.appendChild(renderQuestionItem(row, today, resolve, nested));
       frag.appendChild(section);
     }
     el.qList.replaceChildren(frag);
@@ -2529,14 +2530,14 @@
           : t('Noch keine Fragen. Eine Zeile, die mit „?“ beginnt, wird zur Frage.'));
     emitPlugins('questions:rendered', {
       kind,
-      items: rows.map(r => ({ id: r.id, noteId: r.note_id, kind: r.kind, text: r.text, answer: r.answer, decided: r.decided || null, due: r.due || null, people: r.people || [], element: el.qList.querySelector(`.q-item[data-id="${r.id}"]`) })),
+      items: rows.map(r => ({ id: r.id, noteId: r.note_id, kind: r.kind, text: r.text, answer: r.answer, decided: r.decided || null, due: r.due || null, people: r.people || [], details: r.details || null, parentId: r.parent_id == null ? null : r.parent_id, element: el.qList.querySelector(`.q-item[data-id="${r.id}"]`) })),
     });
   }
 
-  function renderQuestionItem(r, today, resolve) {
+  function renderQuestionItem(r, today, resolve, nested) {
     const decision = r.kind === 'decision';
     const item = document.createElement('article');
-    item.className = 'q-item ' + (decision ? 'decision ' : '') + (r.answer ? 'answered' : 'open');
+    item.className = 'q-item ' + (decision ? 'decision ' : '') + (nested ? 'sub ' : '') + (r.answer ? 'answered' : 'open');
     item.dataset.id = String(r.id);
     item.dataset.kind = r.kind || 'question';
 
@@ -2556,7 +2557,39 @@
       due.textContent = r.answer ? Dates.formatDue(r.due) : Dates.dueLabel(r.due, today || Dates.nowIso());
       head.appendChild(due);
     }
+    if (r.sub) text.insertAdjacentHTML('beforeend', M.subEntriesHtml(r.sub, !!r.answer));
     item.appendChild(head);
+
+    // Unter-Eintrag ohne seinen Block in der Liste: woher er stammt
+    if (r.parent_id != null && !nested && r.parent_text) {
+      const within = document.createElement('div');
+      within.className = 'q-within';
+      within.textContent = t('Teil von «{titel}»', { titel: r.parent_text });
+      item.appendChild(within);
+    }
+
+    // Beschreibung eines mehrzeiligen Eintrags als Zusammenhang: die ersten Zeilen, «Mehr anzeigen» klappt alles auf
+    if (r.details) {
+      const details = document.createElement('div');
+      details.className = 'q-details md';
+      details.innerHTML = M.render(r.details, { highlight: state.qQuery.trim() || null, resolveTitle: resolve });
+      item.appendChild(details);
+      const long = r.details.split('\n').length > 3 || r.details.length > 240;
+      if (long) {
+        details.classList.add('clamped');
+        const more = document.createElement('button');
+        more.type = 'button';
+        more.className = 'ghost q-more';
+        more.textContent = t('Mehr anzeigen');
+        more.setAttribute('aria-expanded', 'false');
+        more.addEventListener('click', () => {
+          const open = details.classList.toggle('clamped') === false;
+          more.textContent = open ? t('Weniger anzeigen') : t('Mehr anzeigen');
+          more.setAttribute('aria-expanded', String(open));
+        });
+        item.appendChild(more);
+      }
+    }
 
     if (r.answer) {
       const a = document.createElement('div');

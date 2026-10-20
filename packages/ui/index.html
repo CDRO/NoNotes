@@ -218,9 +218,9 @@
               <button type="button" data-cmd="wiki" title="Verweis auf eine Notiz [[Titel]]" aria-label="Verweis auf Notiz"><span class="tb-glyph tb-mono">[[ ]]</span></button>
               <button type="button" id="attachBtn" title="Bild einfügen (auch per Einfügen aus der Zwischenablage oder Ablegen auf dem Text)" aria-label="Bild einfügen"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="5.5" cy="6.5" r="1.3"/><path d="M3 12l3.5-3.5 2.5 2.5 2-2 3 3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button>
               <span class="tb-sep" aria-hidden="true"></span>
-              <button type="button" id="questionBtn" data-cmd="question" title="Zeile als Frage markieren (Ctrl+Shift+F)" aria-label="Frage"><span class="tb-glyph tb-q">?</span></button>
+              <button type="button" id="questionBtn" data-cmd="question" title="Zeile als Frage markieren, mehrere Zeilen als Block (Ctrl+Shift+F)" aria-label="Frage"><span class="tb-glyph tb-q">?</span></button>
               <button type="button" id="answerBtn" data-cmd="answer" title="Zeile als Antwort markieren (Ctrl+Shift+A)" aria-label="Antwort"><span class="tb-glyph tb-a">!</span></button>
-              <button type="button" id="decisionBtn" data-cmd="decision" title="Zeile als Entscheid markieren (Ctrl+Shift+D)" aria-label="Entscheid"><span class="tb-glyph tb-d">?!</span></button>
+              <button type="button" id="decisionBtn" data-cmd="decision" title="Zeile als Entscheid markieren, mehrere Zeilen als Block (Ctrl+Shift+D)" aria-label="Entscheid"><span class="tb-glyph tb-d">?!</span></button>
             </div>
             <div class="segmented small" id="modeSwitch" role="tablist" aria-label="Darstellung">
               <button type="button" role="tab" data-mode="edit" aria-selected="true" title="Bearbeiten (Ctrl+E)">Bearbeiten</button>
@@ -454,6 +454,9 @@
             <tr><td>Antwort</td><td>Zeilen direkt darunter mit <code>!</code>: <code>! 20'000 CHF</code></td><td>Die Frage gilt als beantwortet. Leer lassen macht sie wieder offen.</td></tr>
             <tr><td>Entscheid</td><td>Zeile beginnt mit <code>?!</code>: <code>?! Variante B oder C? @lea1234</code>, Termin am Ende wie bei Fragen</td><td>Erscheint in der Ansicht «Entscheide» (der Reiter zeigt sich, sobald es welche gibt) und zählt in der Marke am Knoten mit.</td></tr>
             <tr><td>Getroffener Entscheid</td><td>Zeilen direkt darunter mit <code>!!</code>, die erste mit dem Datum: <code>!! 14.10.2026: Variante B, weil …</code></td><td>Der Entscheid gilt als getroffen, das Datum steht im Text. «Entscheiden» in der Ansicht schreibt beides. Unter <code>?!</code> zählt auch <code>!</code>, unter <code>?</code> auch <code>!!</code>: die erste Zeile bestimmt die Art.</td></tr>
+            <tr><td>In einer Liste</td><td><code>- ?! Neues Tool kaufen? @anna</code>, die Antwort eingerückt darunter: <code>&nbsp;&nbsp;!! 20.10.2026: Ja, Variante B</code></td><td>Wie eine Zeile für sich, nur als Listenpunkt; gilt für <code>?</code> und <code>?!</code>.</td></tr>
+            <tr><td>Mehrzeiliger Entscheid</td><td><code>?!```&nbsp;Titel @anna @15.11.2026</code>, darunter die Beschreibung, am Schluss eine Zeile <code>```</code>; der Entscheid folgt direkt danach mit <code>!!</code>. Ohne Titel gilt die erste Zeile. Mit <code>?```</code> eine mehrzeilige Frage.</td><td>Ein Kasten mit Titel und Beschreibung; die Ansicht «Entscheide» zeigt die ersten Zeilen der Beschreibung, «Mehr anzeigen» den Rest. Mehrere Zeilen markieren und <strong>?!</strong> drücken macht daraus einen Block; <kbd>Enter</kbd> nach <code>?!```&nbsp;Titel</code> setzt das <code>```</code> darunter.</td></tr>
+            <tr><td>Unterentscheid</td><td>Im Block eine Zeile <code>?! Wer migriert die Altdaten? @ben</code> mit <code>!!</code> darunter (auch <code>?</code> und <code>!</code>, auch in einer Liste)</td><td>Ein eigener Entscheid, in der Ansicht unter dem Block eingerückt. Der Block zeigt «1 von 2 Unterentscheiden offen» und darf vorher entschieden werden. Code im Block steht zwischen <code>~~~</code> oder beginnt mit <code>```sprache</code>.</td></tr>
             <tr><td>Person</td><td><code>@kürzel</code> im Text einer Frage oder eines Entscheids, <code>(@kürzel)</code> für jemanden, der wahlweise dabei ist</td><td>Wer antworten oder entscheiden soll. Beim Tippen von <code>@</code> schlägt der Editor bekannte Kürzel vor; die Ansichten «Fragen» und «Entscheide» filtern nach Person.</td></tr>
             <tr><td>Verweis</td><td><code>[[Titel einer Notiz]]</code></td><td>Klick in der Vorschau öffnet die Notiz; fehlt sie, wird sie auf Wunsch als Unternotiz angelegt.</td></tr>
             <tr><td>Querverweis</td><td><code>[[Titel einer Notiz*]]</code> (Stern am Ende)</td><td>Wie ein Verweis, dazu zieht die Mindmap eine gestrichelte Linie zu dieser Notiz, quer zur Hierarchie. Der Schalter «Verweise» in der Mindmap-Leiste blendet alle Linien ein oder aus.</td></tr>
@@ -478,7 +481,7 @@
               <dt><kbd>Ctrl</kbd>+<kbd>K</kbd></dt><dd>Link einfügen</dd>
               <dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></dt><dd>Zeile als Frage</dd>
               <dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd></dt><dd>Zeile als Antwort</dd>
-              <dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd></dt><dd>Zeile als Entscheid</dd>
+              <dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd></dt><dd>Zeile als Entscheid, mehrere markierte Zeilen als ein Block</dd>
               <dt><kbd>@</kbd> beim Schreiben</dt><dd>Vorschläge für Kürzel; <kbd>↑</kbd> <kbd>↓</kbd> wählen, <kbd>Enter</kbd> oder <kbd>Tab</kbd> übernimmt, <kbd>Esc</kbd> schliesst</dd>
               <dt><kbd>Ctrl</kbd>+<kbd>E</kbd></dt><dd>Darstellung wechseln</dd>
               <dt><kbd>Ctrl</kbd>+<kbd>V</kbd></dt><dd>Bild aus der Zwischenablage einfügen</dd>

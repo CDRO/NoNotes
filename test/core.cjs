@@ -1,5 +1,5 @@
 /* Kern-Test ohne Browser: Zusammenführen, Datenbankschicht (Standardschema, Angleichen alter Dateien, Konflikte, Autor,
-   Querverweise, Entscheide), Build fremder Ausprägungen, Videoadressen, Werkzeugkatalog für Agenten und MCP-Protokoll. Ausführen: node test/core.cjs */
+   Querverweise, Entscheide), mehrzeilige Entscheide und Fragen, Build fremder Ausprägungen, Videoadressen, Werkzeugkatalog für Agenten und MCP-Protokoll. Ausführen: node test/core.cjs */
 'use strict';
 
 const path = require('node:path');
@@ -15,7 +15,7 @@ const DIST = path.join(ROOT, 'dist', 'NoNotes');
 const APP_URL = 'file://' + path.join(DIST, 'index.html');
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '14'; // muss zu packages/data/db.js passen
+const SCHEMA_VERSION = '15'; // muss zu packages/data/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 // ============================================================
@@ -218,7 +218,7 @@ async function runDb(browser, part, step) {
   // ---------- Schema 13 ----------
   let db = DB.open(SQL, null);
   const cols = (d, t) => d.exec(`PRAGMA table_info(${t})`)[0].values.map(r => r[1]);
-  assert.equal(DB.getMeta(db, 'schema_version'), '14');
+  assert.equal(DB.getMeta(db, 'schema_version'), SCHEMA_VERSION);
   assert.ok(cols(db, 'notes').includes('updated_by'));
   assert.ok(cols(db, 'note_history').includes('author'));
   assert.deepEqual(cols(db, 'note_links'), ['id', 'note_id', 'title', 'key', 'line_no']);
@@ -250,7 +250,7 @@ async function runDb(browser, part, step) {
     const bytes = old.export();
     old.close();
     const migrated = DB.open(SQL, bytes);
-    assert.equal(DB.getMeta(migrated, 'schema_version'), '14');
+    assert.equal(DB.getMeta(migrated, 'schema_version'), SCHEMA_VERSION);
     assert.ok(cols(migrated, 'notes').includes('updated_by') && cols(migrated, 'note_history').includes('author'));
     assert.equal(DB.getNote(migrated, 1).title, 'Alt');
     assert.equal(DB.getNote(migrated, 1).updated_by, null);
@@ -367,7 +367,7 @@ async function runDb(browser, part, step) {
     const bytes = old.export();
     old.close();
     const mig = DB.open(SQL, bytes);
-    assert.equal(DB.getMeta(mig, 'schema_version'), '14');
+    assert.equal(DB.getMeta(mig, 'schema_version'), SCHEMA_VERSION);
     assert.equal(json(DB.getLinks(mig)).length, 1, 'die Linie Alpha → beta kommt aus dem bestehenden Text');
     part('Migration aus Schema 12: Tabelle angelegt und aus den Texten gefüllt');
   }
@@ -430,7 +430,7 @@ async function runDb(browser, part, step) {
     const bytes = old.export();
     old.close();
     const mig = DB.open(SQL, bytes);
-    assert.equal(DB.getMeta(mig, 'schema_version'), '14');
+    assert.equal(DB.getMeta(mig, 'schema_version'), SCHEMA_VERSION);
     assert.deepEqual(mig.exec("SELECT kind, people FROM questions ORDER BY note_id, line_no")[0].values,
       [['decision', '[{"handle":"max1234","optional":false}]'], ['question', null]]);
     part('Migration aus Schema 13: der Index wird aus den Texten neu gefüllt');
@@ -1145,9 +1145,227 @@ async function runAgentProgram(browser, part, step) {
   part('Programm mit mehreren Dateien (--file mehrmals, --dir): list_workspaces, Kennungen wie in der App, Parameter workspace, jede Änderung in ihrer Datei, Ressourcen je Bereich, Änderung von aussen');
 }
 
+// ============================================================
+/* Mehrzeilige Entscheide und Fragen (v2.4.0) ohne Browser: Parser ("?!```" … "```", Einträge in Listen, Unter-Einträge, Code zählt
+   nicht), Index mit Beschreibung und Block (Schema 15), Antworten schreiben, Angleichen aus Schema 14, Vorschau, Export, Editor,
+   Querverweise im Block und Werkzeuge für Agenten. */
+async function runEntries(browser, part, step) {
+  let now = Date.parse('2026-10-20T08:00:00Z');
+  const RealDate = Date;
+  const sandbox = { console };
+  sandbox.window = sandbox;
+  sandbox.Date = class extends RealDate { constructor(...a) { if (a.length === 0) super(now); else super(...a); } static now() { return now; } };
+  const context = vm.createContext(sandbox);
+  for (const f of ['packages/core/i18n.js', 'packages/core/history.js', 'packages/core/dates.js', 'packages/core/questions.js', 'packages/core/tasks.js', 'packages/core/links.js',
+    'packages/core/backend.js', 'packages/core/merge.js', 'packages/core/markdown.js', 'packages/core/editing.js', 'packages/core/export.js', 'packages/data/db.js',
+    'packages/store-local/backend-local.js', 'packages/agent/catalog.js']) {
+    vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
+  }
+  const SQL = await initSqlJs();
+  const { NoNotesDB: DB, NoNotesQuestions: Q, NoNotesMarkdown: M, NoNotesEditing: E, NoNotesExport: X } = sandbox;
+  const json = v => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
+  const cols = (d, t) => d.exec(`PRAGMA table_info(${t})`)[0].values.map(r => r[1]);
+
+  const BODY = [
+    'Intro',                                                         // 0
+    '?!``` Ablage auf SharePoint umstellen @anna @15.11.2026',       // 1
+    'Ab 1.11. liegen alle Projektordner auf SharePoint.',            // 2
+    '- Altdaten bleiben bis Ende Jahr lesbar',                       // 3
+    '?! Wer migriert die Altdaten? @ben',                            // 4
+    '!! 21.10.2026: Externe Firma',                                  // 5
+    '- ?! Brauchen wir Schulungen?',                                 // 6
+    '? Wer schult? @cem',                                            // 7
+    '~~~',                                                           // 8
+    '?! im Code zählt nicht',                                        // 9
+    '```',                                                           // 10 (im Code: schliesst den Block nicht)
+    '~~~',                                                           // 11
+    'Siehe [[Ziel*]]',                                               // 12
+    '```',                                                           // 13
+    '!! 22.10.2026: Ja, so umsetzen',                                // 14
+    '',                                                              // 15
+    '- Budget 2027',                                                 // 16
+    '- ?! Neues Tool kaufen? @anna',                                 // 17
+    '  !! 20.10.2026: Ja, Variante B',                               // 18
+    '- [ ] Offerte einholen',                                        // 19
+    'Danach [[Nach*]]',                                              // 20
+    '```',                                                           // 21
+    '? im Code zählt nicht',                                         // 22
+    '```',                                                           // 23
+    '?```',                                                          // 24
+    '',                                                              // 25
+    '# Wie gehen wir vor?',                                          // 26
+    'Mit Details',                                                   // 27
+    '```',                                                           // 28
+  ].join('\n');
+
+  // ---------- Parser ----------
+  const parsed = json(Q.parse(BODY));
+  assert.deepEqual(parsed.map(p => [p.kind, p.text, p.lineIndex, p.parent, p.answer, p.decided]), [
+    ['decision', 'Ablage auf SharePoint umstellen @anna', 1, null, 'Ja, so umsetzen', '2026-10-22'],
+    ['decision', 'Wer migriert die Altdaten? @ben', 4, 0, 'Externe Firma', '2026-10-21'],
+    ['decision', 'Brauchen wir Schulungen?', 6, 0, null, null],
+    ['question', 'Wer schult? @cem', 7, 0, null, null],
+    ['decision', 'Neues Tool kaufen? @anna', 17, null, 'Ja, Variante B', '2026-10-20'],
+    ['question', 'Wie gehen wir vor?', 24, null, null, null],
+  ]);
+  assert.equal(parsed[0].due, '2026-11-15', 'Termin in der Titelzeile');
+  assert.deepEqual(parsed[0].people, [{ handle: 'anna', optional: false }], 'Personen nur aus dem Titel');
+  assert.equal(parsed[0].details, 'Ab 1.11. liegen alle Projektordner auf SharePoint.\n- Altdaten bleiben bis Ende Jahr lesbar\n\n~~~\n?! im Code zählt nicht\n```\n~~~\nSiehe [[Ziel*]]',
+    'Beschreibung ohne Unter-Einträge, Code im Block bleibt Text');
+  assert.equal(parsed[0].block, true);
+  assert.equal(parsed[2].list, true);
+  assert.equal(parsed[4].indent, '  ', 'Antwort eines Listenpunkts eingerückt');
+  assert.equal(parsed[5].details, 'Mit Details', 'ohne Titel gilt die erste Zeile (ohne «#»)');
+  assert.equal(json(Q.parse('?!```\n```')).length, 0, 'leerer Block: kein Eintrag');
+  assert.deepEqual(json(Q.parse('?!```\n```\n? Danach')).map(p => p.text), ['Danach'], 'und er verschluckt nichts');
+  assert.deepEqual(json(Q.parse('?!``` Offen\n? Unter\n!! nicht die Antwort des Blocks')).map(p => [p.text, p.parent, p.answer]),
+    [['Offen', null, null], ['Unter', 0, 'nicht die Antwort des Blocks']], 'ohne "```" reicht der Block bis zum Ende');
+  assert.deepEqual(json(Q.parse('? Wie?\n! So\n?! Und? @x')).map(p => [p.kind, p.text, p.answer, p.block, p.list]),
+    [['question', 'Wie?', 'So', false, false], ['decision', 'Und? @x', null, false, false]], 'einzeilig wie bisher');
+  part('Parser: Block mit Titel, Termin und Personen, Beschreibung ohne Unter-Einträge, Einträge in Listen, ohne Titel die erste Zeile, Code zählt nicht');
+
+  // ---------- Index (Schema 15) ----------
+  const d = DB.open(SQL, null);
+  assert.equal(DB.getMeta(d, 'schema_version'), SCHEMA_VERSION);
+  assert.ok(['details', 'parent_id'].every(c => cols(d, 'questions').includes(c)), 'Spalten details und parent_id');
+  const n = DB.createNote(d, null);
+  DB.updateNote(d, n, 'Projekt', BODY);
+  const all = json(DB.listQuestions(d, { kind: 'all', status: 'all' }));
+  const byText = t => all.find(r => r.text.startsWith(t));
+  const block = byText('Ablage');
+  assert.equal(block.details, parsed[0].details);
+  assert.equal(block.parent_id, null);
+  assert.deepEqual(block.sub, { decisions: 2, decisionsOpen: 1, questions: 1, questionsOpen: 1 });
+  for (const t of ['Wer migriert', 'Brauchen wir', 'Wer schult']) {
+    assert.equal(byText(t).parent_id, block.id, t);
+    assert.equal(byText(t).parent_text, 'Ablage auf SharePoint umstellen @anna', t);
+    assert.equal(byText(t).parent_answered, true, t);
+  }
+  assert.equal(byText('Neues Tool').parent_id, null);
+  assert.equal(byText('Neues Tool').sub, null);
+  assert.deepEqual(json(DB.listQuestions(d, { kind: 'decision', status: 'all', query: 'projektordner' })).map(r => r.text), ['Ablage auf SharePoint umstellen @anna'], 'Suche auch in der Beschreibung');
+  const c = json(DB.countQuestions(d, '2026-10-20T10:00'));
+  assert.deepEqual({ q: [c.open, c.total], d: [c.decisions.open, c.decisions.total] }, { q: [2, 2], d: [1, 4] });
+  assert.deepEqual(json(DB.listPeople(d)), ['anna', 'ben', 'cem']);
+  assert.deepEqual(d.exec('SELECT title FROM note_links ORDER BY line_no')[0].values.map(v => v[0]), ['Ziel', 'Nach'], 'Querverweise im Block und nach ihm');
+  assert.equal(d.exec("SELECT count(*) FROM tasks")[0].values[0][0], 1);
+  assert.deepEqual(json(Q.nest(json(DB.listQuestions(d, { kind: 'decision', status: 'all' })))).map(e => [e.row.text.slice(0, 12), e.nested]),
+    [['Ablage auf S', false], ['Wer migriert', true], ['Brauchen wir', true], ['Neues Tool k', false]], 'nest: Unterentscheide direkt unter dem Block');
+  assert.deepEqual(json(Q.nest(json(DB.listQuestions(d, { kind: 'decision', status: 'open' })))).map(e => [e.row.text.slice(0, 12), e.nested]),
+    [['Brauchen wir', false]], 'ohne den Block steht der Unterentscheid für sich');
+  part('Index (Schema 15): Beschreibung, Block der Unter-Einträge, Zähler der Unter-Einträge, Suche in der Beschreibung, Querverweise im Block, nest()');
+
+  // Die Beschreibung ändern: derselbe Eintrag (gleicher Titel), neue Beschreibung; Unter-Eintrag hinausschieben: kein Block mehr
+  DB.updateNote(d, n, 'Projekt', BODY.replace('Ab 1.11. liegen', 'Ab 1.12. liegen'));
+  assert.equal(DB.getQuestion(d, block.id).details.slice(0, 20), 'Ab 1.12. liegen alle', 'gleiche Nummer, neue Beschreibung');
+  const moved = BODY.split('\n');
+  moved.splice(7, 1);
+  moved.push('? Wer schult? @cem');
+  DB.updateNote(d, n, 'Projekt', moved.join('\n'));
+  const cem = json(DB.listQuestions(d, { kind: 'question', status: 'all' })).find(r => r.text.startsWith('Wer schult'));
+  assert.equal(cem.id, byText('Wer schult').id, 'gleiche Nummer');
+  assert.equal(cem.parent_id, null, 'ausserhalb des Blocks gehört er nicht mehr dazu');
+  DB.updateNote(d, n, 'Projekt', BODY);
+  part('Änderungen: neue Beschreibung behält den Eintrag; ein Unter-Eintrag ausserhalb des Blocks gehört nicht mehr dazu');
+
+  // ---------- Antworten schreiben ----------
+  const lines = () => DB.getNote(d, n).body.split('\n');
+  DB.answerQuestion(d, byText('Brauchen wir').id, 'Nein, nicht nötig', { decided: '20.10.2026' });
+  assert.deepEqual(lines().slice(6, 9), ['- ?! Brauchen wir Schulungen?', '  !! 20.10.2026: Nein, nicht nötig', '? Wer schult? @cem'], 'im Block, unter dem Listenpunkt eingerückt');
+  DB.answerQuestion(d, byText('Wer schult').id, 'Anna');
+  assert.deepEqual(lines().slice(8, 10), ['? Wer schult? @cem', '! Anna']);
+  assert.deepEqual(json(DB.listQuestions(d, { kind: 'decision', status: 'all' })).find(r => r.id === block.id).sub, { decisions: 2, decisionsOpen: 0, questions: 1, questionsOpen: 0 });
+  DB.answerQuestion(d, block.id, 'Ja, ab Dezember', {});
+  assert.deepEqual(lines().slice(15, 18), ['```', '!! 22.10.2026: Ja, ab Dezember', ''], 'nach dem "```", das Datum aus dem Text bleibt');
+  DB.answerQuestion(d, byText('Neues Tool').id, 'Variante C\nweil günstiger', {});
+  assert.deepEqual(lines().slice(19, 22), ['- ?! Neues Tool kaufen? @anna', '  !! 20.10.2026: Variante C', '  !! weil günstiger']);
+  DB.answerQuestion(d, byText('Wie gehen').id, 'Schrittweise');
+  assert.deepEqual(lines().slice(-3), ['Mit Details', '```', '! Schrittweise']);
+  const o = DB.createNote(d, null);
+  DB.updateNote(d, o, 'Offen', '?!``` Offen @anna\nText');
+  DB.answerQuestion(d, json(DB.listQuestions(d, { kind: 'decision', status: 'open' })).find(r => r.text === 'Offen @anna').id, 'Erledigt', { decided: '20.10.2026' });
+  assert.equal(DB.getNote(d, o).body, '?!``` Offen @anna\nText\n```\n!! 20.10.2026: Erledigt', 'ein Block ohne Ende bekommt sein "```" vor der Antwort');
+  part('Antworten: Unterentscheid im Block (auch als Listenpunkt), Block nach "```", Listenpunkt eingerückt, Block ohne Ende wird geschlossen');
+
+  // ---------- Angleichen aus Schema 14 ----------
+  {
+    const old = new SQL.Database(DB.exportBytes(d));
+    old.run("DROP INDEX idx_questions_parent; ALTER TABLE questions DROP COLUMN details; ALTER TABLE questions DROP COLUMN parent_id; UPDATE meta SET value = '14' WHERE key = 'schema_version'");
+    const mig = DB.open(SQL, old.export());
+    old.close();
+    assert.equal(DB.getMeta(mig, 'schema_version'), SCHEMA_VERSION);
+    const rows = json(DB.listQuestions(mig, { kind: 'decision', status: 'all' }));
+    assert.equal(rows.find(r => r.text.startsWith('Ablage')).details.slice(0, 8), 'Ab 1.11.');
+    assert.equal(rows.find(r => r.text.startsWith('Wer migriert')).parent_text, 'Ablage auf SharePoint umstellen @anna');
+    part('Angleichen aus Schema 14: Spalten dazu, Index aus den Texten neu gefüllt');
+  }
+
+  // ---------- Vorschau ----------
+  const html = M.render(BODY, { lineMap: true, interactiveTasks: true });
+  assert.equal((html.match(/class="md-q md-decision md-q-block answered" data-line="1"/g) || []).length, 1, 'Block als ein Kasten');
+  assert.ok(html.includes('1 von 2 Unterentscheiden offen') && html.includes('1 von 1 Unterfrage offen'), 'Hinweis auf offene Unter-Einträge');
+  assert.ok(/md-q-subs warn/.test(html), 'entschieden, aber Unter-Einträge offen: Warnung');
+  assert.ok(html.includes('<div class="md-q-details"><p data-line="2">Ab 1.11.'), 'Beschreibung als Markdown, Zeilen stimmen');
+  assert.ok(html.includes('<pre data-line="8"><code>?! im Code zählt nicht\n```</code></pre>'), 'Code im Block');
+  assert.ok(/<li class="q-li" data-line="6"><div class="md-q md-decision open">/.test(html), 'Unterentscheid als Listenpunkt im Block');
+  assert.ok(/<li class="q-li" data-line="17"><div class="md-q md-decision answered">/.test(html), 'Entscheid als Listenpunkt');
+  assert.ok(html.includes('<li class="task" data-line="19">'), 'Aufgabe nach dem Block: richtige Zeile');
+  assert.ok(html.includes('<pre data-line="21"><code>? im Code zählt nicht</code></pre>'));
+  assert.ok(/<div class="md-q md-q-block open" data-line="24">.*<div class="md-q-text">Wie gehen wir vor\?<\/div><div class="md-q-details"><p data-line="27">Mit Details/.test(html), 'Titel aus der ersten Zeile, nicht doppelt');
+  const inBlockTask = M.render('?!``` T\n- [ ] Im Block\n```', { interactiveTasks: true });
+  assert.ok(inBlockTask.includes('<li class="task" data-line="1">'), 'Aufgabe im Block mit der Zeile im ganzen Text');
+  assert.ok(M.render('- Punkt\n  ? Eingerückt?\n  ! Ja').includes('<li>Punkt<div class="md-q answered">'), 'Frage eingerückt unter einem Listenpunkt');
+  part('Vorschau: ein Kasten je Block mit Beschreibung, Unter-Einträgen und Hinweis, Einträge als Listenpunkte, Code, Zeilen für Aufgaben und Scrollen');
+
+  // ---------- Export ----------
+  const md = X.bodyToMarkdown(BODY, null, null);
+  for (const s of [
+    '> **Entscheid (getroffen):** Ablage auf SharePoint umstellen @anna (bis 15.11.2026)\n>\n> Ab 1.11. liegen alle Projektordner auf SharePoint.\n> - Altdaten bleiben bis Ende Jahr lesbar\n>\n> > **Entscheid (getroffen):** Wer migriert die Altdaten? @ben\n> > **Entschieden 21.10.2026:** Externe Firma',
+    '> - **Offener Entscheid:** Brauchen wir Schulungen?',
+    '> **Entschieden 22.10.2026:** Ja, so umsetzen',
+    '- **Entscheid (getroffen):** Neues Tool kaufen? @anna — **Entschieden 20.10.2026:** Ja, Variante B',
+    '```\n? im Code zählt nicht\n```',
+    '> **Offene Frage:** Wie gehen wir vor?\n>\n> Mit Details',
+  ]) assert.ok(md.includes(s), `Export enthält ${JSON.stringify(s)}\n${md}`);
+  part('Export: Block als Zitat mit Beschreibung, Unter-Einträge als Zitat im Zitat, Listenpunkte bleiben Listen, Code bleibt Code');
+
+  // ---------- Editor ----------
+  const tp = (text, s, e, kind) => json(E.togglePrefix(text, s, e, kind)).text;
+  assert.equal(tp('- Neues Tool kaufen?', 3, 3, 'decision'), '- ?! Neues Tool kaufen?', 'in der Liste hinter dem Listenzeichen');
+  assert.equal(tp('- ?! Neues Tool kaufen?', 3, 3, 'decision'), '- Neues Tool kaufen?');
+  assert.equal(tp('- ?! Neues Tool kaufen?', 3, 3, 'question'), '- ? Neues Tool kaufen?');
+  assert.equal(tp('Titel\nZeile 1\nZeile 2', 0, 21, 'decision'), '?!``` Titel\nZeile 1\nZeile 2\n```', 'mehrere Zeilen: Block');
+  assert.equal(tp('?!``` Titel\nZeile 1\n```', 0, 23, 'question'), '?``` Titel\nZeile 1\n```', 'Art wechseln');
+  assert.equal(tp('?!``` Titel\nZeile 1\n```', 0, 23, 'decision'), 'Titel\nZeile 1', 'Block wieder zu Text');
+  assert.equal(tp('? a\n? b', 0, 7, 'question'), 'a\nb', 'schon markierte Zeilen: Zeile für Zeile entfernen');
+  assert.deepEqual(json(E.continueLine('?!``` Titel', 11, 11)), { text: '?!``` Titel\n\n```', selStart: 12, selEnd: 12 }, 'Enter nach dem Öffner setzt das Ende');
+  assert.equal(E.continueLine('?!``` Titel\nText\n```', 11, 11), null, 'schon geschlossen: normale neue Zeile');
+  assert.deepEqual(json(E.continueLine('- ?! Tool?\n  !! Ja', 19, 19)).text, '- ?! Tool?\n  !! Ja\n  !! ', 'Antwortzeilen laufen eingerückt weiter');
+  part('Editor: «?»/«?!» in Listen hinter dem Listenzeichen, mehrere Zeilen als Block (und zurück), Enter nach "?!```" setzt "```"');
+
+  // ---------- Agenten ----------
+  const backend = sandbox.NoNotesBackendLocal.create({ getDb: () => d, onChange: () => {} });
+  const cat = sandbox.NoNotesAgent.create(backend, { author: 'Agent-Test', now: () => new RealDate(now).toISOString() });
+  const r = await cat.call('list_decisions', { status: 'all', note_id: n });
+  assert.ok(!r.isError, r.content[0].text);
+  const items = json(r.structuredContent).items;
+  const top = items.find(i => i.text.startsWith('Ablage'));
+  assert.equal(top.details.slice(0, 8), 'Ab 1.11.');
+  assert.deepEqual(top.sub_entries, { decisions: 2, open_decisions: 0, questions: 1, open_questions: 0 });
+  assert.equal(items.find(i => i.text.startsWith('Wer migriert')).parent_id, top.id);
+  assert.match(r.content[0].text, new RegExp(`inside \\[d ${top.id}\\] "Ablage auf SharePoint umstellen @anna"`));
+  assert.match(r.content[0].text, /\n {4}Ab 1\.11\. liegen alle Projektordner auf SharePoint\./, 'Beschreibung eingerückt unter dem Eintrag');
+  assert.match(sandbox.NoNotesAgent.INSTRUCTIONS, /"\?!``` Title"/);
+  const rec = await cat.call('record_decision', { id: items.find(i => i.text.startsWith('Brauchen wir')).id, decision: 'Doch, eine halbe Stunde', decided: '2026-10-21' });
+  assert.ok(!rec.isError, rec.content[0].text);
+  assert.equal(DB.getNote(d, n).body.split('\n')[7], '  !! 2026-10-21: Doch, eine halbe Stunde', 'record_decision schreibt im Block');
+  part('Agenten: Beschreibung, Block und Unter-Einträge in list_decisions, Anleitung nennt die Syntax, record_decision im Block');
+}
+
 suite('Kern-Test', [
   { name: 'Zusammenführen: Myers-Vergleich, Dreiwege-Zusammenführung mit Zufallsdaten, Konflikte, Cursor', run: runMerge },
   { name: 'Datenbank: Standardschema, Angleichen alter Dateien (Schema 1, 11, 12, 13), Konflikterkennung, Autor im Verlauf, Querverweise, Entscheide und Personen', run: runDb },
+  { name: 'Mehrzeilige Entscheide und Fragen: Parser, Index (Schema 15), Antworten, Angleichen, Vorschau, Export, Editor, Agenten', run: runEntries },
   { name: 'Build: fremde Ausprägung, Verzeichnis der Erweiterungen, --plugins, klare Fehler', run: runBuild },
   { name: 'Videoadressen: YouTube, Vimeo, Dailymotion, Fälschungen, Karte im Markdown, maskierte Titel', run: runEmbeds },
   { name: 'Agenten: Werkzeugkatalog (Notizen, Fragen, Entscheide, Aufgaben, Verlauf, Archiv, Papierkorb, Lesemodus, Ressourcen) und MCP-Protokoll aller Fassungen', run: runAgent },

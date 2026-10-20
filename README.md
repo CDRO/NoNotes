@@ -326,6 +326,51 @@ wie bei Fragen. Die Zeile mit dem Öffner bestimmt die Art: unter `?!` zählt au
   Inhaltsverzeichnis, sobald es welche gibt.
 - Die Statusleiste zählt bei offener Notiz Fragen und Entscheide getrennt.
 
+### Mehrzeilige Entscheide, Einträge in Listen, Unterentscheide (seit 2.4.0)
+
+````
+?!``` Ablage auf SharePoint umstellen @anna @15.11.2026
+Ab 1.11. liegen alle Projektordner auf SharePoint.
+- Altdaten bleiben bis Ende Jahr lesbar
+?! Wer migriert die Altdaten? @ben
+!! 21.10.2026: Externe Firma
+?! Brauchen wir Schulungen?
+```
+!! 22.10.2026: Ja, so umsetzen
+
+- Budget 2027
+- ?! Neues Tool kaufen? @anna
+  !! 20.10.2026: Ja, Variante B
+````
+
+- **Block:** `?!```` öffnet einen mehrzeiligen Entscheid, eine Zeile ```` ``` ```` schliesst ihn. Der Rest der
+  Öffnerzeile ist der Titel, mit Personen und Termin wie sonst; ohne Titel gilt die erste Zeile im Block (ein
+  `#` davor fällt weg). Die übrigen Zeilen sind die **Beschreibung** (Markdown). Der Entscheid folgt mit `!!`
+  direkt nach ```` ``` ````. `?```` macht dasselbe für eine Frage. Wer entscheiden soll, steht im Titel;
+  `@kürzel` in der Beschreibung ist nur Text.
+- **Unterentscheide:** Im Block stehen einzeilige `?!`- und `?`-Zeilen (auch als Listenpunkt) mit ihren eigenen
+  `!!`/`!`-Antworten. Sie sind eigene Einträge mit eigenem Termin und eigenen Personen; Blöcke im Block gibt es
+  nicht. Der Block darf entschieden werden, während Unterentscheide offen sind; er zeigt dann zum Beispiel
+  «1 von 2 Unterentscheiden offen» als Warnung. Code im Block steht zwischen `~~~` oder beginnt mit
+  ```` ```sprache ````, damit ein schlichtes ```` ``` ```` den Block schliessen kann.
+- **In Listen:** `- ?! …` oder `1. ? …` ist ein Eintrag als Listenpunkt, die Antwort steht eingerückt darunter.
+  Auch eine eingerückte `?`-Zeile unter einem Listenpunkt wird zum Kasten.
+- **Vorschau:** ein Kasten je Block mit Titel, Beschreibung, den Unter-Einträgen an ihrem Platz und dem
+  Entscheid unten. Aufgaben im Block lassen sich abhaken.
+- **Ansichten «Entscheide» und «Fragen»:** Unter dem Titel stehen die ersten Zeilen der Beschreibung als
+  Zusammenhang, **Mehr anzeigen** klappt sie ganz auf. Nach Notiz sortiert stehen Unter-Einträge eingerückt unter
+  ihrem Block; steht der Block nicht in der Liste (anderer Filter, andere Gruppe bei der Sortierung nach Termin,
+  oder eine Unterfrage im Reiter «Fragen»), nennt «Teil von «Titel»» ihn. Die Suche findet auch Text in der
+  Beschreibung. **Entscheiden** schreibt bei einem Block nach ```` ``` ````, bei einem Listenpunkt eingerückt,
+  bei einem Unterentscheid im Block; einem Block ohne Ende setzt es das ```` ``` ```` davor.
+- **Editor:** Mehrere Zeilen markieren und **?!** (oder `Ctrl+Shift+D`, für Fragen **?**) macht daraus einen
+  Block, die erste Zeile wird der Titel; nochmals drücken macht ihn wieder zu Text, das andere Zeichen wechselt
+  die Art. In einer Liste setzen **?** und **?!** das Zeichen hinter das Listenzeichen. `Enter` am Ende von
+  `?!``` Titel` setzt das ```` ``` ```` darunter, wenn es noch fehlt.
+- **Druck und Export:** Der Druck zeigt die ganze Beschreibung und rückt Unterentscheide ein. Der Markdown-Export
+  macht aus einem Block ein Zitat mit Beschreibung, Unter-Einträge darin werden ein Zitat im Zitat; Einträge in
+  Listen bleiben Listenpunkte. Code (```` ``` ```` und `~~~`) zählt weder als Frage noch als Querverweis.
+
 ### Aufgaben
 
 Eine Markdown-Checkbox ist eine Aufgabe: `- [ ] Offerte einholen` offen, `- [x] …` erledigt.
@@ -420,7 +465,7 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | --- | --- |
 | Oberfläche | `index.html`, `css/app.css`, `js/app.js` (`packages/ui/`) – reines HTML/CSS/JS, keine Frameworks; der Build kopiert nur |
 | Mindmap | `packages/ui/mindmap.js`: eigenes Layout (links/rechts ausbalanciert), SVG, Zoom, Ziehen, Tastatur; archivierte Knoten blass und gestrichelt |
-| Fragen und Entscheide | `packages/core/questions.js`: ein Parser für `?`-, `?!`-, `!`- und `!!`-Zeilen samt Datum und `@kürzel` (`parseBlock` nutzen auch Vorschau und Export); Index in der Tabelle `questions` mit `kind`, `decided`, `people` (Schema 14), bei jeder Änderung abgeglichen; Vorschläge für Kürzel über `packages/core/mentions.js`; Test `test/extend.cjs` |
+| Fragen und Entscheide | `packages/core/questions.js`: ein Parser für `?`-, `?!`-, `!`- und `!!`-Zeilen samt Datum und `@kürzel`, Einträge in Listen und Blöcke `?!```` … ```` ``` ```` mit Unter-Einträgen (`parseBlock` nutzen auch Vorschau und Export, `nest` die Ansichten und der Druck); Index in der Tabelle `questions` mit `kind`, `decided`, `people`, `details`, `parent_id` (Schema 15), bei jeder Änderung abgeglichen; Vorschläge für Kürzel über `packages/core/mentions.js`; Tests `test/core.cjs` (mehrzeilige Entscheide) und `test/extend.cjs` |
 | Aufgaben | `packages/core/tasks.js`: Parser für `- [ ]`-Zeilen mit `@Datum`, Unteraufgaben über die Einrückung, Abschluss-Regeln als reine Textfunktionen; Index in der Tabelle `tasks`, gleiches Prinzip |
 | Termine | `packages/core/dates.js`: gemeinsame Logik für `@TT.MM.JJJJ` bzw. `@JJJJ-MM-TT`, Dringlichkeit, Anzeige |
 | Markdown | `packages/core/markdown.js`: eigener Renderer, escaped allen Text, erlaubt nur sichere Link-Schemata |
@@ -484,7 +529,9 @@ CREATE TABLE questions (          -- Index über die ?-, ?!-, !- und !!-Zeilen, 
   due         TEXT,               -- Fälligkeit aus "@Datum [Zeit]": YYYY-MM-DD oder YYYY-MM-DDTHH:MM
   kind        TEXT NOT NULL DEFAULT 'question',  -- 'question' oder 'decision'
   decided     TEXT,               -- Tag des Entscheids aus dem Text, YYYY-MM-DD
-  people      TEXT                -- JSON [{ handle, optional }] aus "@kürzel" und "(@kürzel)"
+  people      TEXT,               -- JSON [{ handle, optional }] aus "@kürzel" und "(@kürzel)"
+  details     TEXT,               -- Beschreibung eines Blocks ("?!``` … ```") ohne Unter-Einträge
+  parent_id   INTEGER             -- Unter-Eintrag: der Block, in dem er steht
 );
 CREATE TABLE tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE);
 CREATE TABLE note_tags (note_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMARY KEY (note_id, tag_id));

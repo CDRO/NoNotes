@@ -8,6 +8,7 @@
   const M = () => global.NoNotesMarkdown;
   const Mindmap = () => global.NoNotesMindmap;
   const Exporter = () => global.NoNotesExport;
+  const Q = () => global.NoNotesQuestions;
 
   const fmtDate = iso => { const d = new Date(iso); return isNaN(d) ? '' : new Intl.DateTimeFormat(global.NoNotesI18n.locale(), { dateStyle: 'medium', timeStyle: 'short' }).format(d); };
   const esc = s => M().escapeHtml(s);
@@ -163,7 +164,8 @@
     const open = rows.filter(r => !r.answer).length;
     const resolveTitle = await titleResolver(backend);
 
-    const item = r => {
+    // Ein Unter-Eintrag steht eingerückt unter seinem Block, wenn der mitgedruckt wird, sonst mit «Teil von …»; die Beschreibung ganz
+    const item = (r, nested) => {
       const answered = !!r.answer;
       const ruled = !answered && options.lines ? '<div class="print-lines"><span></span><span></span><span></span></div>' : '';
       const u = answered ? 'none' : D.urgency(r.due, today);
@@ -172,9 +174,12 @@
       const when = decision
         ? (answered ? t('Entschieden {datum}', { datum: r.decided ? D.formatDue(r.decided) : fmtDate(r.answered_at) }) : t('Gestellt {datum}', { datum: fmtDate(r.created_at) }))
         : (answered && r.answered_at ? t('Beantwortet {datum}', { datum: fmtDate(r.answered_at) }) : t('Gestellt {datum}', { datum: fmtDate(r.created_at) }));
-      return `<div class="print-q${decision ? ' decision' : ''} ${answered ? 'answered' : 'open'}">` +
+      const subs = r.sub ? M().subEntriesHtml(r.sub, answered) : '';
+      const within = r.parent_id != null && !nested && r.parent_text ? `<div class="print-within">${esc(t('Teil von «{titel}»', { titel: r.parent_text }))}</div>` : '';
+      const details = r.details ? `<div class="print-details md">${M().render(r.details, { resolveTitle })}</div>` : '';
+      return `<div class="print-q${decision ? ' decision' : ''}${nested ? ' sub' : ''} ${answered ? 'answered' : 'open'}">` +
         `<span class="print-mark">${answered ? '✓' : decision ? '?!' : '?'}</span>` +
-        `<div class="print-q-body"><div class="print-q-text">${M().inline(r.text, { resolveTitle, people: true })}${due}</div>` +
+        `<div class="print-q-body"><div class="print-q-text">${M().inline(r.text, { resolveTitle, people: true })}${due}${subs}</div>${within}${details}` +
         (answered ? `<div class="print-a md">${M().render(r.answer, { resolveTitle })}</div>` : ruled) +
         `<div class="print-q-meta">${esc(when)}${from}</div></div></div>`;
     };
@@ -190,7 +195,7 @@
       return parts.join('\n');
     }
     if (groupBy === 'none') {
-      parts.push('<section class="print-qgroup">' + rows.map(r => item(r)).join('') + '</section>');
+      parts.push('<section class="print-qgroup">' + Q().nest(rows).map(e => item(e.row, e.nested)).join('') + '</section>');
     } else if (groupBy === 'due') {
       const groups = new Map();
       for (const r of rows) {
@@ -199,7 +204,7 @@
         groups.get(key).items.push(r);
       }
       for (const [, g] of [...groups.entries()].sort(byUrgency)) {
-        parts.push(`<section class="print-qgroup"><h2>${esc(g.title)}</h2>${g.items.map(r => item(r)).join('')}</section>`);
+        parts.push(`<section class="print-qgroup"><h2>${esc(g.title)}</h2>${Q().nest(g.items).map(e => item(e.row, e.nested)).join('')}</section>`);
       }
     } else {
       const groups = new Map();
@@ -211,7 +216,7 @@
         const path = pathOf(noteId);
         parts.push(`<section class="print-qgroup"><h2>${esc(g.title.trim() || t('Ohne Titel'))}</h2>` +
           (path.length ? `<p class="print-meta">${esc(path.join(' › '))}</p>` : '') +
-          g.items.map(r => item(r)).join('') + '</section>');
+          Q().nest(g.items).map(e => item(e.row, e.nested)).join('') + '</section>');
       }
     }
     return parts.join('\n');

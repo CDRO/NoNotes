@@ -56,35 +56,56 @@
     return parts;
   }
 
-  /** Wandelt den Notiztext in portables Markdown: ?/?!/! werden zu Zitatblöcken, [[Titel]] zu Links. */
-  function bodyToMarkdown(body, resolveLink, resolveAttachment) {
+  /** Wandelt den Notiztext in portables Markdown: ?/?!/! werden zu Zitatblöcken, [[Titel]] zu Links. Ein Block ("?!```" … "```")
+   *  wird ein Zitat mit Beschreibung, seine Unter-Einträge darin ein Zitat im Zitat; ein Eintrag in einer Liste bleibt ein Listenpunkt.
+   *  Code bleibt, wie er ist. inner: im Block (dort gibt es keine Blöcke). */
+  function bodyToMarkdown(body, resolveLink, resolveAttachment, inner) {
     const lines = String(body || '').replace(/\r\n?/g, '\n').split('\n');
     const out = [];
     const Q = global.NoNotesQuestions;
     const D = global.NoNotesDates;
+    const md = text => inline(text, resolveLink, resolveAttachment);
+    const labelOf = qb => qb.kind === 'decision' ? (qb.answer ? t('Entscheid (getroffen)') : t('Offener Entscheid')) : (qb.answer ? t('Frage (beantwortet)') : t('Offene Frage'));
+    const headOf = qb => qb.kind === 'decision' ? (qb.decided && D ? t('Entschieden {datum}', { datum: D.formatDue(qb.decided) }) : t('Entschieden')) : t('Antwort');
+    const dueOf = qb => qb.due && D ? ' (' + t('bis {datum}', { datum: D.formatDue(qb.due) }) + ')' : '';
+    let fence = null;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      const qb = Q ? Q.parseBlock(lines, i) : null;
+      if (fence) { out.push(line); if (line.trim().startsWith(fence)) fence = null; continue; }
+      const qb = Q ? Q.parseBlock(lines, i, { list: true, inner: !!inner }) : null;
+      if (qb && qb.list) {
+        const lm = /^(\s*)((?:[-*+]|\d+[.)])\s+)/.exec(line);
+        const pad = ' '.repeat(lm[0].length);
+        const answer = qb.answer ? qb.answer.split('\n').map(md) : [];
+        out.push(`${lm[1]}${lm[2]}**${labelOf(qb)}:** ${md(qb.text)}${dueOf(qb)}${answer.length === 1 ? ` — **${headOf(qb)}:** ${answer[0]}` : ''}`);
+        if (answer.length > 1) { out.push(`${pad}**${headOf(qb)}:**  `); for (const a of answer) out.push(pad + a + '  '); }
+        i = qb.end - 1;
+        continue;
+      }
       if (qb) {
-        const answered = !!qb.answer;
-        const decision = qb.kind === 'decision';
         if (out.length && out[out.length - 1].trim() !== '' && !out[out.length - 1].startsWith('>')) out.push('');
-        const label = decision ? (answered ? t('Entscheid (getroffen)') : t('Offener Entscheid')) : (answered ? t('Frage (beantwortet)') : t('Offene Frage'));
-        const due = qb.due && D ? ' (' + t('bis {datum}', { datum: D.formatDue(qb.due) }) + ')' : '';
-        out.push(`> **${label}:** ${inline(qb.text, resolveLink, resolveAttachment)}${due}`);
-        if (answered) {
-          const rendered = qb.answer.split('\n').map(a => inline(a, resolveLink, resolveAttachment));
-          const head = decision ? (qb.decided && D ? t('Entschieden {datum}', { datum: D.formatDue(qb.decided) }) : t('Entschieden')) : t('Antwort');
-          if (rendered.length === 1) out.push(`> **${head}:** ${rendered[0]}`);
-          else { out.push(`> **${head}:**`); for (const a of rendered) out.push(`> ${a}`); } // Listen in Antworten bleiben Listen
+        out.push(`> **${labelOf(qb)}:** ${md(qb.text)}${dueOf(qb)}`);
+        if (qb.block) {
+          const content = lines.slice(qb.contentStart, qb.contentEnd);
+          if (qb.titleLine != null) content[qb.titleLine - qb.contentStart] = '';
+          const described = bodyToMarkdown(content.join('\n'), resolveLink, resolveAttachment, true);
+          if (described) { out.push('>'); for (const l of described.split('\n')) out.push(l ? '> ' + l : '>'); }
+          if (qb.answer) out.push('>');
+        }
+        if (qb.answer) {
+          const rendered = qb.answer.split('\n').map(md);
+          if (rendered.length === 1) out.push(`> **${headOf(qb)}:** ${rendered[0]}`);
+          else { out.push(`> **${headOf(qb)}:**`); for (const a of rendered) out.push(`> ${a}`); } // Listen in Antworten bleiben Listen
         }
         if (qb.end < lines.length && lines[qb.end].trim() !== '') out.push('');
         i = qb.end - 1;
         continue;
       }
+      const f = /^\s*(```|~~~)/.exec(line);
+      if (f) { fence = f[1]; out.push(line); continue; }
       const a = /^\s*(?:!!|!(?!\[))\s?(.*)$/.exec(line);
-      if (a) { out.push(`> **${t('Antwort')}:** ${inline(a[1].trim(), resolveLink, resolveAttachment)}`); continue; }
-      out.push(inline(line, resolveLink, resolveAttachment));
+      if (a) { out.push(`> **${t('Antwort')}:** ${md(a[1].trim())}`); continue; }
+      out.push(md(line));
     }
     return out.join('\n').trim();
   }
@@ -127,7 +148,8 @@
     return rows.map(r => {
       const n = byId.get(r.note_id);
       const due = r.due && D ? ' (' + t('bis {datum}', { datum: D.formatDue(r.due) }) + ')' : '';
-      return n ? `- ${r.text}${due} — ${t('aus')} [${n.title.trim() || t('Ohne Titel')}](${hrefOf(n)})` : `- ${r.text}${due}`;
+      const within = r.parent_text ? ' (' + t('Teil von «{titel}»', { titel: r.parent_text }) + ')' : '';
+      return n ? `- ${r.text}${due}${within} — ${t('aus')} [${n.title.trim() || t('Ohne Titel')}](${hrefOf(n)})` : `- ${r.text}${due}${within}`;
     });
   }
 

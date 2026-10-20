@@ -31,14 +31,14 @@ Namen und Beschreibungen sind Englisch, weil Agenten sie lesen. Inhalte bleiben,
 | `append_to_note` | Text anhängen (der sicherste Schreibweg) |
 | `move_note`, `delete_note`, `restore_note`, `archive_note`, `unarchive_note`, `set_tags` | Baum, Papierkorb, Archiv, Tags |
 | `list_questions`, `answer_question` | Fragen (`?`-Zeilen) auflisten, filtern nach Text, Tag, Person, Notiz; Antwort als `!`-Zeilen schreiben |
-| `list_decisions`, `record_decision` | Entscheide (`?!`-Zeilen) auflisten; Entscheid als `!!`-Zeile mit Datum festhalten |
+| `list_decisions`, `record_decision` | Entscheide (`?!`-Zeilen, auch in Listen und als Block) auflisten, mit Beschreibung (`details`), Block (`parent_id`) und Zählern der Unter-Einträge (`sub_entries`); Entscheid als `!!`-Zeile mit Datum festhalten, auch im Block |
 | `list_tasks`, `complete_task`, `reopen_task` | Aufgaben mit Fälligkeit und Unteraufgaben; abschliessen erst, wenn die Unteraufgaben erledigt sind |
 | `list_people` | alle `@kürzel` aus Fragen und Entscheiden |
 | `get_history` | frühere Fassungen einer Notiz lesen |
 
 Dazu zwei **Ressourcen** für Agenten, die lieber lesen als Werkzeuge rufen: `nonotes://overview` und `nonotes://note/<id>`
 (die Notiz als Markdown). Der Katalog gibt dem Agenten ausserdem eine kurze Anleitung mit (`NoNotesAgent.INSTRUCTIONS`): was
-`?`, `?!`, `!`, `!!`, `- [ ]`, `@Datum` und `@kürzel` bedeuten und dass er die passenden Werkzeuge einem Umschreiben der
+`?`, `?!`, `!`, `!!`, `- [ ]`, `@Datum` und `@kürzel` bedeuten, wie Einträge in Listen und mehrzeilige Blöcke `?!```` … ```` ``` ```` mit Unterentscheiden aussehen, und dass er die passenden Werkzeuge einem Umschreiben der
 ganzen Notiz vorziehen soll.
 
 **Regeln, die für Agenten wie für Menschen gelten:**

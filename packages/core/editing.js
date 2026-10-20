@@ -75,20 +75,61 @@
     });
   }
 
-  /** Zitat, Frage, Entscheid oder Antwort umschalten (kind = 'quote' | 'question' | 'decision' | 'answer'). */
-  function togglePrefix(text, s, e, kind) {
-    const re = PREFIX_RE[kind];
-    const marker = kind === 'quote' ? '> ' : kind === 'question' ? '? ' : kind === 'decision' ? '?! ' : '! ';
+  const LIST_ITEM_RE = /^(\s*(?:[-*+]|\d+[.)])\s+)(?!\[[ xX]\]\s)/; // Listenpunkt ohne Kästchen
+  const BLOCK_OPEN_RE = /^(\s*)\?(!?)\s?```(.*)$/;
+  const BLOCK_CLOSE_RE = /^\s*```\s*$/;
+
+  /** Mehrere Zeilen als Block "?!``` Titel" … "```" (die erste Zeile wird der Titel); ein markierter Block wird wieder Text, mit dem
+   *  anderen Zeichen wechselt er die Art. null, wenn das nicht passt (dann gilt das Umschalten Zeile für Zeile). */
+  function toggleBlock(text, s, e, kind) {
+    const marker = kind === 'decision' ? '?!' : '?';
     const { from, to } = lineBounds(text, s, e);
     const lines = text.slice(from, to).split('\n');
-    const all = lines.filter(l => l.trim()).every(l => re.test(l));
+    const filled = lines.map((l, i) => [l, i]).filter(([l]) => l.trim());
+    if (filled.length < 2) return null;
+    const [first, fi] = filled[0];
+    const [last, li] = filled[filled.length - 1];
+    const open = BLOCK_OPEN_RE.exec(first);
+    let out;
+    if (open && BLOCK_CLOSE_RE.test(last)) {
+      if ((open[2] ? '?!' : '?') !== marker) {
+        out = lines.slice();
+        out[fi] = open[1] + marker + '```' + (open[3].trim() ? ' ' + open[3].trim() : '');
+      } else {
+        out = lines.slice(0, fi).concat(open[3].trim() ? [open[1] + open[3].trim()] : [], lines.slice(fi + 1, li), lines.slice(li + 1));
+      }
+    } else {
+      const re = PREFIX_RE[kind];
+      if (filled.every(([l]) => re.test(l.replace(LIST_ITEM_RE, '')))) return null; // alles schon markiert: Zeile für Zeile entfernen
+      const indent = (first.match(/^\s*/) || [''])[0];
+      out = lines.slice(0, fi).concat([indent + marker + '``` ' + stripLinePrefixes(first).trim()], lines.slice(fi + 1, li + 1), [indent + '```'], lines.slice(li + 1));
+    }
+    const joined = out.join('\n');
+    return { text: text.slice(0, from) + joined + text.slice(to), selStart: from, selEnd: from + joined.length };
+  }
+
+  /** Zitat, Frage, Entscheid oder Antwort umschalten (kind = 'quote' | 'question' | 'decision' | 'answer'). Frage und Entscheid stehen
+   *  in einer Liste hinter dem Listenzeichen ("- ?! …"); über mehrere Zeilen werden sie ein Block (toggleBlock). */
+  function togglePrefix(text, s, e, kind) {
+    if (kind === 'question' || kind === 'decision') {
+      const block = toggleBlock(text, s, e, kind);
+      if (block) return block;
+    }
+    const re = PREFIX_RE[kind];
+    const marker = kind === 'quote' ? '> ' : kind === 'question' ? '? ' : kind === 'decision' ? '?! ' : '! ';
+    const inList = kind === 'question' || kind === 'decision';
+    const split = l => { const m = inList ? LIST_ITEM_RE.exec(l) : null; return m ? [m[1], l.slice(m[1].length)] : ['', l]; };
+    const { from, to } = lineBounds(text, s, e);
+    const lines = text.slice(from, to).split('\n');
+    const all = lines.filter(l => l.trim()).every(l => re.test(split(l)[1]));
     return mapLines(text, s, e, l => {
       if (!l.trim() && lines.length > 1) return l;
-      if (all) return l.replace(re, '$1');
-      if (re.test(l)) return l;
+      const [list, rest] = split(l);
+      if (all) return list + rest.replace(re, '$1');
+      if (re.test(rest)) return l;
       const others = kind === 'quote' ? [] : [PREFIX_RE.decision, PREFIX_RE.question, PREFIX_RE.answer].filter(o => o !== re);
-      const base = others.reduce((acc, o) => acc.replace(o, '$1'), l);
-      return base.replace(/^(\s*)/, '$1' + marker);
+      const base = others.reduce((acc, o) => acc.replace(o, '$1'), rest);
+      return list + base.replace(/^(\s*)/, '$1' + marker);
     });
   }
 
@@ -211,6 +252,20 @@
     return off;
   }
 
+  /** Enter am Ende von "?!``` Titel" ohne "```" weiter unten: eine leere Zeile für die Beschreibung und das "```" darunter. */
+  function closeBlock(base, s, lineStart, lineEnd) {
+    const line = base.slice(lineStart, lineEnd);
+    const m = BLOCK_OPEN_RE.exec(line);
+    if (!m || s !== lineEnd) return null;
+    for (const l of base.slice(lineEnd + 1).split('\n')) {
+      if (BLOCK_CLOSE_RE.test(l)) return null;
+      if (BLOCK_OPEN_RE.test(l)) break;
+    }
+    const out = base.slice(0, s) + '\n' + m[1] + '\n' + m[1] + '```' + base.slice(s);
+    const caret = s + 1 + m[1].length;
+    return { text: out, selStart: caret, selEnd: caret };
+  }
+
   /** Enter in einer Listen-, Aufgaben-, Zitat- oder Antwortzeile. Liefert null, wenn der Browser
    *  die normale neue Zeile einfügen soll. */
   function continueLine(text, s, e) {
@@ -218,6 +273,8 @@
     const lineStart = base.lastIndexOf('\n', s - 1) + 1;
     let lineEnd = base.indexOf('\n', s);
     if (lineEnd < 0) lineEnd = base.length;
+    const block = closeBlock(base, s, lineStart, lineEnd);
+    if (block) return block;
     const line = base.slice(lineStart, lineEnd);
     const item = parseItem(line);
     if (!item) return null;

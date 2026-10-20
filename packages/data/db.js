@@ -3,7 +3,7 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 14;
+  const SCHEMA_VERSION = 15;
 
   // Verlauf pro Notiz: eine «Arbeitsphase» endet nach so langer Pause oder so langer Dauer; danach beginnt eine neue Fassung.
   // Aufbewahrt werden höchstens so viele Fassungen und Tage; meta history_max_versions / history_max_days / history_enabled ('0') ändern das.
@@ -107,7 +107,9 @@
       ['kind', "TEXT NOT NULL DEFAULT 'question'"], // 'question' oder 'decision'
       ['decided', 'TEXT'],                      // Tag des Entscheids aus dem Text, YYYY-MM-DD
       ['people', 'TEXT'],                       // JSON [{ handle, optional }] aus "@kürzel" und "(@kürzel)"
-    ], indexes: ['CREATE INDEX IF NOT EXISTS idx_questions_note ON questions (note_id)'] },
+      ['details', 'TEXT'],                      // Beschreibung eines mehrzeiligen Eintrags ("?!``` … ```") ohne Unter-Einträge
+      ['parent_id', 'INTEGER'],                 // Unter-Eintrag: der Block, in dem er steht
+    ], indexes: ['CREATE INDEX IF NOT EXISTS idx_questions_note ON questions (note_id)', 'CREATE INDEX IF NOT EXISTS idx_questions_parent ON questions (parent_id)'] },
     { name: 'tags', columns: [['id', 'INTEGER PRIMARY KEY AUTOINCREMENT'], ['name', 'TEXT NOT NULL UNIQUE COLLATE NOCASE']] },
     { name: 'note_tags', columns: [['note_id', 'INTEGER NOT NULL'], ['tag_id', 'INTEGER NOT NULL']], constraint: 'PRIMARY KEY (note_id, tag_id)' },
     { name: 'attachments', columns: [
@@ -952,7 +954,8 @@
   // ---------- Fragen ----------
 
   /** Gleicht den Fragen-Index einer Notiz mit ihrem Text ab. Bestehende Einträge werden über den
-   *  normalisierten Text wiedererkannt, damit Anlagedatum und Nummer erhalten bleiben. */
+   *  normalisierten Text wiedererkannt, damit Anlagedatum und Nummer erhalten bleiben. Unter-Einträge eines Blocks
+   *  zeigen mit parent_id auf ihn (der Block steht im Text vor ihnen und hat seine Nummer darum schon). */
   function syncQuestions(db, noteId, body) {
     const Q = global.NoNotesQuestions;
     if (!Q) return;
@@ -960,10 +963,13 @@
     const existing = selectAll(db, 'SELECT * FROM questions WHERE note_id = ? ORDER BY line_no, id', [noteId]);
     const unused = existing.slice();
     const ts = nowIso();
+    const ids = [];
     for (const q of parsed) {
       const idx = unused.findIndex(e => e.norm === q.norm && (e.kind || 'question') === q.kind);
       const people = q.people.length ? JSON.stringify(q.people) : null;
       const decided = q.decided || null;
+      const details = q.details || null;
+      const parentId = q.parent != null && ids[q.parent] != null ? ids[q.parent] : null;
       if (idx >= 0) {
         const e = unused.splice(idx, 1)[0];
         let answeredAt = e.answered_at;
@@ -971,13 +977,16 @@
         if (!q.answer) answeredAt = null;
         const due = q.due || null;
         if (e.text !== q.text || e.answer !== q.answer || e.line_no !== q.lineIndex || e.answered_at !== answeredAt || e.due !== due
-          || (e.kind || 'question') !== q.kind || (e.decided || null) !== decided || (e.people || null) !== people) {
-          db.run('UPDATE questions SET text = ?, answer = ?, line_no = ?, answered_at = ?, due = ?, kind = ?, decided = ?, people = ? WHERE id = ?',
-            [q.text, q.answer, q.lineIndex, answeredAt, due, q.kind, decided, people, e.id]);
+          || (e.kind || 'question') !== q.kind || (e.decided || null) !== decided || (e.people || null) !== people
+          || (e.details || null) !== details || (e.parent_id == null ? null : e.parent_id) !== parentId) {
+          db.run('UPDATE questions SET text = ?, answer = ?, line_no = ?, answered_at = ?, due = ?, kind = ?, decided = ?, people = ?, details = ?, parent_id = ? WHERE id = ?',
+            [q.text, q.answer, q.lineIndex, answeredAt, due, q.kind, decided, people, details, parentId, e.id]);
         }
+        ids.push(e.id);
       } else {
-        db.run('INSERT INTO questions (note_id, text, norm, answer, line_no, created_at, answered_at, due, kind, decided, people) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [noteId, q.text, q.norm, q.answer, q.lineIndex, ts, q.answer ? ts : null, q.due || null, q.kind, decided, people]);
+        db.run('INSERT INTO questions (note_id, text, norm, answer, line_no, created_at, answered_at, due, kind, decided, people, details, parent_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [noteId, q.text, q.norm, q.answer, q.lineIndex, ts, q.answer ? ts : null, q.due || null, q.kind, decided, people, details, parentId]);
+        ids.push(scalar(db, 'SELECT last_insert_rowid()'));
       }
     }
     for (const e of unused) db.run('DELETE FROM questions WHERE id = ?', [e.id]);
@@ -1014,18 +1023,36 @@
     }
     if (q) {
       const like = '%' + escapeLike(q) + '%';
-      where.push("(nn_lower(q.text) LIKE ? ESCAPE '\\' OR nn_lower(q.answer) LIKE ? ESCAPE '\\' OR nn_lower(n.title) LIKE ? ESCAPE '\\')");
-      params.push(like, like, like);
+      where.push("(nn_lower(q.text) LIKE ? ESCAPE '\\' OR nn_lower(q.answer) LIKE ? ESCAPE '\\' OR nn_lower(q.details) LIKE ? ESCAPE '\\' OR nn_lower(n.title) LIKE ? ESCAPE '\\')");
+      params.push(like, like, like, like);
     }
     const order = sort === 'due'
       ? '(q.answer IS NOT NULL), (q.due IS NULL), q.due, n.updated_at DESC, n.id, q.line_no'
       : '(q.answer IS NOT NULL), n.updated_at DESC, n.id, q.line_no';
     return selectAll(db,
       `SELECT q.id, q.note_id, q.text, q.norm, q.answer, q.line_no, q.created_at, q.answered_at, q.due, q.kind, q.decided, q.people,
+              q.details, q.parent_id, p.text AS parent_text, p.kind AS parent_kind, (p.answer IS NOT NULL) AS parent_answered,
+              ${SUB_COUNTS},
               n.title AS note_title, n.updated_at AS note_updated_at
-         FROM questions q JOIN notes n ON n.id = q.note_id
+         FROM questions q JOIN notes n ON n.id = q.note_id LEFT JOIN questions p ON p.id = q.parent_id
         WHERE ${where.join(' AND ')}
-        ORDER BY ${order}`, params).map(r => Object.assign(r, { people: peopleOf(r) }));
+        ORDER BY ${order}`, params).map(withSubs);
+  }
+
+  // Unter-Einträge eines Blocks je Art: gesamt und offen
+  const SUB_COUNTS = ['decision', 'question'].map(k => {
+    const base = `FROM questions c WHERE c.parent_id = q.id AND c.kind = '${k}'`;
+    return `(SELECT count(*) ${base}) AS sub_${k}s, (SELECT count(*) ${base} AND c.answer IS NULL) AS sub_${k}s_open`;
+  }).join(', ');
+
+  /** Indexzeile für Aufrufer: people als Liste, parent_answered als Wahrheitswert, Unter-Einträge als
+   *  sub: { decisions, decisionsOpen, questions, questionsOpen } (oder null, wenn es keine gibt). */
+  function withSubs(r) {
+    const sub = { decisions: Number(r.sub_decisions || 0), decisionsOpen: Number(r.sub_decisions_open || 0), questions: Number(r.sub_questions || 0), questionsOpen: Number(r.sub_questions_open || 0) };
+    delete r.sub_decisions; delete r.sub_decisions_open; delete r.sub_questions; delete r.sub_questions_open;
+    if (r.parent_id == null) { r.parent_text = null; r.parent_kind = null; r.parent_answered = null; }
+    else r.parent_answered = !!r.parent_answered;
+    return Object.assign(r, { people: peopleOf(r), details: r.details || null, sub: sub.decisions + sub.questions ? sub : null });
   }
 
   /** Alle Kürzel, die Fragen und Entscheide lebender Notizen nennen (ohne @, jede Schreibweise einmal), alphabetisch. */
@@ -1058,7 +1085,7 @@
 
   function getQuestion(db, id) {
     const row = selectOne(db, 'SELECT * FROM questions WHERE id = ?', [id]);
-    return row ? Object.assign(row, { people: peopleOf(row) }) : row;
+    return row ? Object.assign(row, { people: peopleOf(row), details: row.details || null }) : row;
   }
 
   /** Schreibt die Antwort als "!"-Zeilen unter die Frage in der Notiz, bei einem Entscheid als "!!"-Zeilen, die erste mit

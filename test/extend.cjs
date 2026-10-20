@@ -15,7 +15,7 @@ const DIST = path.join(ROOT, 'dist', 'NoNotes');
 const APP_URL = 'file://' + path.join(DIST, 'index.html');
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '14'; // muss zu packages/data/db.js passen
+const SCHEMA_VERSION = '15'; // muss zu packages/data/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 // ============================================================
@@ -1152,6 +1152,89 @@ async function runDecisions(browser, part, step) {
   await page.waitForFunction(() => document.querySelector('#viewDecisionsBtn').hidden);
   assert.deepEqual(errors, [], 'keine Fehler im Browser');
   part('Ohne Entscheide verschwindet der Reiter; "!!" ohne Öffner ist ein Hinweis');
+
+  // Mehrzeilige Entscheide (v2.4.0): Übersicht mit Beschreibung als Zusammenhang, Unterentscheide eingerückt, «Teil von …»
+  const described = Array.from({ length: 6 }, (_, i) => `Zeile ${i + 1} der Beschreibung.`);
+  const blockNote = await page.evaluate(async lines => {
+    const B = __ctx.backend;
+    const id = await B.createNote(null);
+    await B.updateNote(id, 'Ablage', ['?!``` Ablage auf SharePoint umstellen @anna', ...lines, '?! Wer migriert die Altdaten? @ben', '!! 21.10.2026: Externe Firma',
+      '- ?! Brauchen wir Schulungen?', '? Wer schult?', '```', '', '- ?! Neues Tool kaufen?', '  !! 20.10.2026: Ja'].join('\n'), {});
+    await __ctx.refresh();
+    return id;
+  }, described);
+  await page.waitForFunction(() => !document.querySelector('#viewDecisionsBtn').hidden);
+  await page.click('#viewDecisionsBtn');
+  await page.waitForSelector('body.view-decisions');
+  await page.click('#qFilter button[data-status="all"]');
+  await page.waitForFunction(() => document.querySelectorAll('.q-item.decision').length === 4);
+  const order = async () => (await page.locator('.q-item .q-text').allInnerTexts()).map(s => s.split(/\s+/).slice(0, 2).join(' '));
+  const subs = () => page.locator('.q-item').evaluateAll(els => els.map(e => e.classList.contains('sub')));
+  // Nach Termin (Vorgabe): ein entschiedener Unterentscheid steht bei «Entschieden», mit seinem Block als Zusammenhang
+  assert.deepEqual(await order(), ['Ablage auf', 'Brauchen wir', 'Wer migriert', 'Neues Tool']);
+  assert.deepEqual(await subs(), [false, true, false, false]);
+  assert.equal(await page.locator('.q-item', { hasText: 'Wer migriert' }).locator('.q-within').innerText(), 'Teil von «Ablage auf SharePoint umstellen @anna»');
+  await page.selectOption('#qSort', 'note');
+  await page.waitForFunction(() => document.querySelectorAll('.q-item.sub').length === 2);
+  assert.deepEqual(await order(), ['Ablage auf', 'Wer migriert', 'Brauchen wir', 'Neues Tool']);
+  assert.deepEqual(await subs(), [false, true, true, false], 'nach Notiz: Unterentscheide direkt unter dem Block, eingerückt');
+  assert.equal(await page.locator('.q-item .q-within').count(), 0);
+  const head = page.locator('.q-item').first();
+  assert.equal(await head.locator('.md-q-subs').first().innerText(), '1 von 2 Unterentscheiden offen');
+  assert.equal(await head.locator('.md-q-subs').nth(1).innerText(), '1 von 1 Unterfrage offen');
+  assert.match(await head.locator('.q-details').innerText(), /^Zeile 1 der Beschreibung\./);
+  assert.equal(await head.locator('.q-details.clamped').count(), 1, 'lange Beschreibung zuerst gekürzt');
+  const clampedHeight = await head.locator('.q-details').evaluate(e => e.getBoundingClientRect().height);
+  await head.locator('.q-more').click();
+  assert.equal(await head.locator('.q-more').innerText(), 'Weniger anzeigen');
+  assert.equal(await head.locator('.q-more').getAttribute('aria-expanded'), 'true');
+  assert.ok(await head.locator('.q-details').evaluate(e => e.getBoundingClientRect().height) > clampedHeight * 1.5, 'aufgeklappt ganz zu sehen');
+  await head.locator('.q-more').click();
+  assert.equal(await head.locator('.q-details.clamped').count(), 1);
+  await page.click('#qFilter button[data-status="open"]');
+  await page.waitForFunction(() => document.querySelectorAll('.q-item.decision').length === 2);
+  assert.deepEqual(await page.locator('.q-item').evaluateAll(els => els.map(e => e.classList.contains('sub'))), [false, true], 'offener Block mit offenem Unterentscheid');
+  // Unterentscheid entscheiden: die Antwort steht im Block, unter dem Listenpunkt eingerückt
+  const sub = page.locator('.q-item.sub', { hasText: 'Brauchen wir' });
+  await sub.locator('button:has-text("Entscheiden")').click();
+  await sub.locator('.q-form textarea').fill('Nein');
+  await sub.locator('.q-form button[type="submit"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('.q-item.decision').length === 1);
+  await page.waitForFunction(SAVED);
+  const blockBody = await page.evaluate(id => __ctx.backend.getNote(id).then(n => n.body.split('\n')), blockNote);
+  assert.deepEqual(blockBody.slice(9, 12), ['- ?! Brauchen wir Schulungen?', `  !! ${todayText()}: Nein`, '? Wer schult?']);
+  assert.equal(await page.locator('.q-item .md-q-subs').first().innerText(), 'Alle 2 Unterentscheide getroffen');
+  // Im Reiter «Fragen» steht die Unterfrage für sich, mit ihrem Block als Zusammenhang
+  await page.click('#viewQuestionsBtn');
+  await page.waitForSelector('body.view-questions');
+  await page.waitForFunction(() => document.querySelectorAll('.q-item').length === 1);
+  assert.equal(await page.locator('.q-item .q-within').innerText(), 'Teil von «Ablage auf SharePoint umstellen @anna»');
+  part('Übersicht: Beschreibung als gekürzter Zusammenhang mit «Mehr anzeigen», Unterentscheide eingerückt mit Hinweis am Block, im Block entscheiden, «Teil von» bei Fragen');
+
+  // Vorschau, Toolleiste und Druck
+  await page.locator('.q-item button:has-text("Zur Notiz")').click();
+  await page.waitForSelector('body.editor-open');
+  await page.click('#modeSwitch [data-mode="split"]');
+  await page.waitForFunction(() => document.querySelectorAll('#preview .md-q-block').length === 1);
+  assert.equal(await page.locator('#preview .md-q-block .md-q-details .md-q').count(), 3, 'Unter-Einträge im Kasten');
+  assert.equal(await page.locator('#preview .md-q-block > .md-q-body > .md-q-text').innerText(), 'Ablage auf SharePoint umstellen @anna\nAlle 2 Unterentscheide getroffen\n1 von 1 Unterfrage offen'.replace(/\n/g, ''));
+  assert.equal(await page.locator('#preview li.q-li .md-q.answered').count(), 2, 'Entscheide als Listenpunkte');
+  await page.evaluate(() => {
+    const b = document.querySelector('#body');
+    b.value += '\n\nNeuer Titel\nErste Zeile';
+    b.dispatchEvent(new Event('input', { bubbles: true }));
+    b.focus();
+    b.setSelectionRange(b.value.length - 'Neuer Titel\nErste Zeile'.length, b.value.length);
+  });
+  await page.click('#decisionBtn');
+  await page.waitForFunction(() => document.querySelector('#body').value.endsWith('\n?!``` Neuer Titel\nErste Zeile\n```'));
+  await page.waitForFunction(() => document.querySelectorAll('#preview .md-q-block').length === 2);
+  await page.waitForFunction(SAVED);
+  const printed = await page.evaluate(() => NoNotesPrint.buildQuestionsDocument(__ctx.backend, { kind: 'decision', status: 'all' }));
+  assert.ok(printed.includes('class="print-details md"') && printed.includes('Zeile 6 der Beschreibung.'), 'Druck mit ganzer Beschreibung');
+  assert.equal((printed.match(/class="print-q decision sub /g) || []).length, 2, 'Unterentscheide eingerückt gedruckt');
+  assert.deepEqual(errors, [], 'keine Fehler im Browser');
+  part('Vorschau: Block als ein Kasten mit Unter-Einträgen, Listenpunkte; mehrere markierte Zeilen und «?!» ergeben einen Block; Druck mit Beschreibung');
 
   await ctx.close();
   fs.rmSync(tmp, { recursive: true, force: true });

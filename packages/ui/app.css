@@ -407,6 +407,17 @@ body:not(.view-list).editor-open #editorPane { max-width: 1000px; }
 .q-form { display: flex; flex-direction: column; gap: 8px; margin-left: 34px; }
 .q-form textarea { min-height: 72px; resize: vertical; font: inherit; }
 .q-form .row { display: flex; gap: 8px; }
+/* Mehrzeilige Einträge (v2.4.0): Beschreibung als Zusammenhang, Unter-Einträge eingerückt, Herkunft eines Unter-Eintrags */
+.q-item.sub { margin-left: 34px; border-left: 3px solid var(--border); }
+.q-within { margin-left: 34px; color: var(--muted); font-size: 12px; }
+.q-details { margin-left: 34px; color: var(--muted); font-size: 13.5px; line-height: 1.45; }
+.q-details.clamped { max-height: 4.4em; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent); mask-image: linear-gradient(to bottom, #000 55%, transparent); }
+.q-details p, .q-details h1, .q-details h2, .q-details h3, .q-details h4 { margin: 0; font-size: inherit; }
+.q-details p + p { margin-top: .3em; }
+.q-details ul, .q-details ol { margin: .2em 0; padding-left: 1.4em; }
+.q-details pre { margin: .3em 0; }
+.q-item .q-more { align-self: flex-start; margin: -4px 0 0 28px; padding: 2px 6px; font-size: 12px; color: var(--accent-ink); }
+.q-text .md-progress { white-space: nowrap; }
 
 @media (max-width: 760px) {
   .q-toolbar { flex-wrap: wrap; }
@@ -587,9 +598,9 @@ body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-
 .md a.md-wiki.missing::after { content: " +"; opacity: .7; }
 .q-item a.md-wiki.missing::after { content: " ?"; opacity: .7; }
 .md-q { display: flex; gap: 10px; align-items: flex-start; margin: .6em 0; padding: 8px 12px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border); }
-.md-q .md-mark { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px; background: var(--warn); color: #fff; }
-.md-q.md-decision .md-mark { background: var(--accent); color: var(--accent-contrast); font-size: 10px; letter-spacing: -1px; }
-.md-q.answered .md-mark { background: var(--ok); color: #fff; letter-spacing: 0; font-size: 13px; }
+.md-q > .md-mark { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px; background: var(--warn); color: #fff; }
+.md-q.md-decision > .md-mark { background: var(--accent); color: var(--accent-contrast); font-size: 10px; letter-spacing: -1px; }
+.md-q.answered > .md-mark { background: var(--ok); color: #fff; letter-spacing: 0; font-size: 13px; }
 .md-decided { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
 /* Personen (@kürzel) in Fragen und Entscheiden */
 .md-person { display: inline-block; padding: 0 7px; border-radius: 999px; background: var(--hover); border: 1px solid var(--border); color: var(--accent-ink); font-size: .85em; font-weight: 600; line-height: 1.6; white-space: nowrap; }
@@ -605,6 +616,13 @@ body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-
 .md-q-text { font-weight: 600; }
 .md-a { margin-top: 6px; padding: 6px 10px; border-left: 3px solid var(--ok); background: var(--panel); border-radius: 0 6px 6px 0; }
 .md-a-lone { margin: .4em 0; }
+.md-q-details { margin-top: 4px; }
+.md-q-details > :first-child { margin-top: 0; }
+.md-q-details > :last-child { margin-bottom: 0; }
+.md-q-details .md-q { background: var(--panel); margin: .5em 0; }
+.md li.q-li { list-style: none; }
+.md li.q-li > .md-q { margin: .3em 0 .3em -1.2em; }
+.md li > .md-q { margin: .3em 0; }
 
 /* Treffer in der Mindmap */
 .mindmap.has-matches .mm-node.mm-dim rect { opacity: .35; }
@@ -698,9 +716,9 @@ body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-
   #printArea .md pre, #printArea .md code { background: #f3f3f3; border-color: #ccc; color: #000; }
   #printArea .md blockquote { border-left-color: #999; color: #333; }
   #printArea .md-q { border: 1px solid #bbb; background: #fafafa; break-inside: avoid; }
-  #printArea .md-q .md-mark { background: #b45309; color: #fff; }
-  #printArea .md-q.answered .md-mark { background: #15803d; }
-  #printArea .md-q.md-decision:not(.answered) .md-mark { background: #1d4ed8; }
+  #printArea .md-q > .md-mark { background: #b45309; color: #fff; }
+  #printArea .md-q.answered > .md-mark { background: #15803d; }
+  #printArea .md-q.md-decision:not(.answered) > .md-mark { background: #1d4ed8; }
   #printArea .md-person { border: 1px solid #999; background: #f3f3f3; color: inherit; }
   #printArea .md-a { background: #fff; border-left-color: #15803d; }
   #printArea a.md-wiki { border-bottom: 1px dashed #666; }
@@ -723,6 +741,12 @@ body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-
   #printArea .print-q-meta { color: #666; font-size: 8.5pt; margin-top: 2pt; }
   #printArea .print-lines { margin-top: 6pt; }
   #printArea .print-lines span { display: block; height: 9mm; border-bottom: 1px solid #999; }
+  #printArea .print-q.sub { margin-left: 18pt; }
+  #printArea .print-details { margin-top: 2pt; font-size: 9.5pt; }
+  #printArea .print-details p { margin: 0 0 2pt; }
+  #printArea .print-details ul, #printArea .print-details ol { margin: 2pt 0; padding-left: 14pt; }
+  #printArea .print-within { color: #666; font-size: 8.5pt; }
+  #printArea .md-q-details .md-q { background: #fff; }
 }
 
 /* ---------- v0.7: Toolleiste und Hilfe ---------- */

@@ -20,16 +20,23 @@
     return String(title || '').trim().toLowerCase();
   }
 
-  /** Querverweise eines Notiztexts: [{ title, key, lineIndex }], je Ziel einmal (erstes Vorkommen); Code-Blöcke zählen nicht. */
+  /** Querverweise eines Notiztexts: [{ title, key, lineIndex }], je Ziel einmal (erstes Vorkommen); Code-Blöcke zählen nicht.
+   *  Ein mehrzeiliger Entscheid oder eine mehrzeilige Frage ("?!```" bis "```", siehe questions.js) ist kein Code. */
   function parse(body) {
     const out = [];
     const seen = new Set();
     const lines = String(body == null ? '' : body).replace(/\r\n?/g, '\n').split('\n');
-    let fence = false;
+    let fence = null;
+    let block = false;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      if (/^\s*(```|~~~)/.test(line)) { fence = !fence; continue; }
-      if (fence) continue;
+      if (fence) { if (line.trim().startsWith(fence)) fence = null; continue; }
+      if (!block && /^\s*\?!?\s?```/.test(line)) block = true;
+      else if (block && /^\s*```\s*$/.test(line)) { block = false; continue; }
+      else {
+        const f = /^\s*(```|~~~)/.exec(line);
+        if (f) { fence = f[1]; continue; }
+      }
       for (const m of line.matchAll(REF_RE)) {
         const ref = parseRef(m[1]);
         if (!ref.cross || !ref.title) continue;

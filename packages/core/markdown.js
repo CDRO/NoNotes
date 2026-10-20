@@ -2,7 +2,8 @@
    Unterstützt Überschriften, Absätze mit Zeilenumbrüchen, Listen (auch verschachtelt, auch
    Aufgaben), Zitate, Codeblöcke, Trennlinien, fett/kursiv/durchgestrichen, Code, Links,
    Bilder, automatische Links, [[Titel]]-Verweise auf Notizen (auch [[Titel*]], Querverweis) sowie die NoNotes-Zeilen
-   "? Frage" und "! Antwort". Aller Text wird escaped; URLs sind auf sichere Schemata beschränkt.
+   "? Frage" und "! Antwort" (auch in Listen und mehrzeilig als "?!```" … "```", siehe questions.js). Aller Text wird escaped; URLs
+   sind auf sichere Schemata beschränkt.
 
    Videos (YouTube, Vimeo, Dailymotion; siehe embeds.js): Steht eine Zeile allein aus einer solchen Adresse oder aus ![Titel](Adresse) und
    ist options.embeds gesetzt, entsteht eine Karte «Video von … laden». Sie enthält keinen Rahmen und löst keine Anfrage aus; die Seite baut
@@ -169,7 +170,8 @@
 
   function makeCtx(options) {
     options = options || {};
-    return { text: makeText(options.highlight), resolveTitle: options.resolveTitle, resolveAttachment: options.resolveAttachment, interactiveTasks: !!options.interactiveTasks, lineMap: !!options.lineMap, embeds: !!options.embeds, embedLoad: options.embedLoad, people: !!options.people };
+    return { text: makeText(options.highlight), resolveTitle: options.resolveTitle, resolveAttachment: options.resolveAttachment, interactiveTasks: !!options.interactiveTasks, lineMap: !!options.lineMap, embeds: !!options.embeds, embedLoad: options.embedLoad, people: !!options.people,
+      inBlock: !!options.inBlock, lineOffset: options.lineOffset || 0, options };
   }
 
   /** Nur Zeilenformatierung (fett, Code, Links, [[Verweise]]), z. B. für Listeneinträge und den Druck. */
@@ -200,6 +202,59 @@
       '</div></div>';
   }
 
+  /** Hinweis auf die Unter-Einträge eines Blocks: «2 von 3 Unterentscheiden offen» oder «Alle 3 Unterentscheide getroffen».
+   *  counts: { decisions, decisionsOpen, questions, questionsOpen }; answered: der Block selbst ist entschieden (offene Unter-Einträge
+   *  sind dann eine Warnung). Auch für die Übersicht und den Druck. */
+  function subEntriesHtml(counts, answered) {
+    const parts = [];
+    const c = counts || {};
+    for (const [n, open, kind] of [[c.decisions || 0, c.decisionsOpen || 0, 'decision'], [c.questions || 0, c.questionsOpen || 0, 'question']]) {
+      if (!n) continue;
+      const label = kind === 'decision'
+        ? (open ? tn('{offen} von {n} Unterentscheid offen', '{offen} von {n} Unterentscheiden offen', n, { offen: open }) : tn('{n} Unterentscheid getroffen', 'Alle {n} Unterentscheide getroffen', n))
+        : (open ? tn('{offen} von {n} Unterfrage offen', '{offen} von {n} Unterfragen offen', n, { offen: open }) : tn('{n} Unterfrage beantwortet', 'Alle {n} Unterfragen beantwortet', n));
+      parts.push(`<span class="md-progress md-q-subs${open ? (answered ? ' warn' : '') : ' complete'}">${escapeHtml(label)}</span>`);
+    }
+    return parts.join('');
+  }
+
+  /** Zähler der Unter-Einträge aus den children eines Blocks (questions.js). */
+  function countChildren(children) {
+    const of = kind => children.filter(c => c.kind === kind);
+    return { decisions: of('decision').length, decisionsOpen: of('decision').filter(c => !c.answer).length, questions: of('question').length, questionsOpen: of('question').filter(c => !c.answer).length };
+  }
+
+  /** Kasten für eine Frage oder einen Entscheid (einzeilig, in einer Liste oder als Block); lines ist der Text, in dem qb steht. */
+  function entryHtml(qb, lines, ctx, lineAttr) {
+    const answered = !!qb.answer;
+    const decision = qb.kind === 'decision';
+    const D = global.NoNotesDates;
+    const options = ctx.options || {};
+    const dueHtml = qb.due && D
+      ? `<span class="md-due due ${answered ? 'none' : D.urgency(qb.due)}">${escapeHtml(answered ? D.formatDue(qb.due) : D.dueLabel(qb.due))}</span>`
+      : '';
+    const decidedHtml = decision && answered && qb.decided && D
+      ? `<div class="md-decided">${escapeHtml(t('Entschieden {datum}', { datum: D.formatDue(qb.decided) }))}</div>`
+      : '';
+    const mark = answered ? '✓' : decision ? '?!' : '?';
+    let details = '';
+    if (qb.block) {
+      // Die Zeilen im Block bleiben an ihrem Platz (die Titelzeile wird leer), damit data-line und Aufgaben stimmen
+      const inner = lines.slice(qb.contentStart, qb.contentEnd);
+      if (qb.titleLine != null) inner[qb.titleLine - qb.contentStart] = '';
+      const used = inner.filter(l => l.trim());
+      const cut = used.length ? Math.min(...used.map(l => (/^\s*/.exec(l) || [''])[0].length)) : 0;
+      const html = render(inner.map(l => l.slice(Math.min(cut, (/^\s*/.exec(l) || [''])[0].length))).join('\n'),
+        Object.assign({}, options, { inBlock: true, lineOffset: ctx.lineOffset + qb.contentStart }));
+      if (html.trim()) details = `<div class="md-q-details">${html}</div>`;
+    }
+    const subs = qb.block && qb.children.length ? subEntriesHtml(countChildren(qb.children), answered) : '';
+    const title = qb.text ? renderInline(qb.text, Object.assign({}, ctx, { people: true })) : '';
+    const answerOptions = Object.assign({}, options, { lineMap: false, inBlock: false, lineOffset: 0, interactiveTasks: false });
+    return `<div class="md-q${decision ? ' md-decision' : ''}${qb.block ? ' md-q-block' : ''} ${answered ? 'answered' : 'open'}"${lineAttr}><span class="md-mark" aria-hidden="true">${mark}</span><div class="md-q-body"><div class="md-q-text">${title}${dueHtml}${subs}</div>` +
+      details + (answered ? `<div class="md-a">${decidedHtml}${render(qb.answer, answerOptions)}</div>` : '') + '</div></div>';
+  }
+
   function render(markdown, options) {
     options = options || {};
     const ctx = makeCtx(options);
@@ -208,7 +263,7 @@
     let i = 0;
 
     // Mit lineMap tragen die Blöcke data-line (Quellzeile), für das synchrone Scrollen der geteilten Ansicht.
-    const la = n => ctx.lineMap ? ` data-line="${n}"` : '';
+    const la = n => ctx.lineMap ? ` data-line="${n + ctx.lineOffset}"` : '';
     const nested = Object.assign({}, options, { lineMap: false });
     const paragraph = [];
     let paragraphStart = 0;
@@ -250,22 +305,11 @@
       // Trennlinie
       if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) { flushParagraph(); out.push(`<hr${la(i)}>`); i++; continue; }
 
-      // Frage oder Entscheid mit Antwortzeilen (Syntax: packages/core/questions.js)
-      const qb = global.NoNotesQuestions ? global.NoNotesQuestions.parseBlock(lines, i) : null;
+      // Frage oder Entscheid mit Antwortzeilen, auch als Block (Syntax: packages/core/questions.js); im Block keine Blöcke
+      const qb = global.NoNotesQuestions ? global.NoNotesQuestions.parseBlock(lines, i, { inner: ctx.inBlock }) : null;
       if (qb) {
         flushParagraph();
-        const answered = !!qb.answer;
-        const decision = qb.kind === 'decision';
-        const D = global.NoNotesDates;
-        const dueHtml = qb.due && D
-          ? `<span class="md-due due ${answered ? 'none' : D.urgency(qb.due)}">${escapeHtml(answered ? D.formatDue(qb.due) : D.dueLabel(qb.due))}</span>`
-          : '';
-        const decidedHtml = decision && answered && qb.decided && D
-          ? `<div class="md-decided">${escapeHtml(t('Entschieden {datum}', { datum: D.formatDue(qb.decided) }))}</div>`
-          : '';
-        const mark = answered ? '✓' : decision ? '?!' : '?';
-        out.push(`<div class="md-q${decision ? ' md-decision' : ''} ${answered ? 'answered' : 'open'}"${la(i)}><span class="md-mark" aria-hidden="true">${mark}</span><div class="md-q-body"><div class="md-q-text">${renderInline(qb.text, Object.assign({}, ctx, { people: true }))}${dueHtml}</div>` +
-          (answered ? `<div class="md-a">${decidedHtml}${render(qb.answer, Object.assign({}, nested, { interactiveTasks: false }))}</div>` : '') + '</div></div>');
+        out.push(entryHtml(qb, lines, ctx, la(i)));
         i = qb.end;
         continue;
       }
@@ -306,17 +350,27 @@
 
   function renderList(lines, start, out, ctx) {
     const items = [];
+    const Q = global.NoNotesQuestions;
     let i = start;
     while (i < lines.length) {
       const m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[i]);
       if (!m) {
-        // Fortsetzungszeile eines Listenpunkts (eingerückt) oder Ende
+        // Fortsetzungszeile eines Listenpunkts (eingerückt) oder Ende; eine Frage oder ein Entscheid darin wird zum Kasten
         if (items.length && /^\s{2,}\S/.test(lines[i]) && !/^\s*$/.test(lines[i])) {
+          const qc = Q ? Q.parseBlock(lines, i, { inner: true }) : null;
+          if (qc) { items[items.length - 1].text += entryHtml(qc, lines, ctx, ''); i = qc.end; continue; }
           items[items.length - 1].text += '<br>' + renderInline(lines[i].trim(), ctx);
           i++;
           continue;
         }
         break;
+      }
+      // Frage oder Entscheid als Listenpunkt ("- ?! …"), die Antwort eingerückt darunter
+      const qe = Q && /^\?/.test(m[3]) ? Q.parseBlock(lines, i, { list: true, inner: true }) : null;
+      if (qe && qe.list) {
+        items.push({ indent: m[1].length, ordered: /\d/.test(m[2]), text: entryHtml(qe, lines, ctx, ''), task: null, line: i, entry: true });
+        i = qe.end;
+        continue;
       }
       let text = m[3];
       let task = null;
@@ -376,7 +430,8 @@
         progress = `<span class="md-progress${warn ? ' warn' : open === 0 ? ' complete' : ''}" title="${escapeHtml(progressTitle)}">${item.sub.done}/${item.sub.total}${warn ? ' · ' + escapeHtml(t('Unteraufgaben offen')) : ''}</span>`;
       }
       const content = item.task == null ? `${item.text}${progress}` : `<span class="task-text">${box}${item.text}</span>${progress}`; // Durchstreichen nur am eigenen Text, nicht an Unteraufgaben
-      html += `<li${item.task == null ? (ctx.lineMap ? ` data-line="${item.line}"` : '') : ` class="task${item.task ? ' done' : ''}" data-line="${item.line}"`}>${content}`;
+      const line = item.line + ctx.lineOffset;
+      html += `<li${item.task == null ? `${item.entry ? ' class="q-li"' : ''}${ctx.lineMap ? ` data-line="${line}"` : ''}` : ` class="task${item.task ? ' done' : ''}" data-line="${line}"`}>${content}`;
     }
     while (stack.length) { html += '</li>'; close(); }
     out.push(html);
@@ -388,5 +443,5 @@
     return makeText(highlight)(s);
   }
 
-  global.NoNotesMarkdown = { render, inline, escapeHtml, highlightText };
+  global.NoNotesMarkdown = { render, inline, escapeHtml, highlightText, subEntriesHtml };
 })(window);
