@@ -2412,7 +2412,8 @@
       parts.push(`{{${p.name}}}` + (p.example ? ` (${p.example})` : ''));
       if (p.offset) parts.push(`{{${p.name}+7}} (${t('in sieben Tagen')})`);
     }
-    return t('Platzhalter, die beim Anlegen ersetzt werden: {liste}', { liste: parts.join(', ') });
+    const formats = Tpl.dateFormats(templateContext()).map(f => `${f.text} (${f.example})`).join(', ');
+    return t('Platzhalter, die beim Anlegen ersetzt werden: {liste}', { liste: parts.join(', ') }) + ' ' + t('Das Datum mit Format: {beispiele}', { beispiele: formats });
   }
 
   /** Eine Notiz und (wahlweise) ihre Unternotizen in Baumreihenfolge, mit Text und Tags; archivierte bleiben draussen. */

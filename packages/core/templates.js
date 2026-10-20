@@ -18,7 +18,14 @@
 
    Platzhalter in Titel, Text und Tags: {{datum}}, {{datum+7}} (in sieben Tagen, auch -), {{zeit}}, {{wochentag}}, {{woche}},
    {{jahr}}, {{vorlage}}, {{bereich}}, {{ich}}. Die Namen sind übersetzbar (Sprachpakete, Schlüssel «platzhalter:…»); erkannt werden
-   sie in jeder Sprache, damit eine Vorlage auch bei einer anderen Sprache der Oberfläche funktioniert. Unbekannte bleiben stehen. */
+   sie in jeder Sprache, damit eine Vorlage auch bei einer anderen Sprache der Oberfläche funktioniert. Unbekannte bleiben stehen.
+
+   Das Datum nimmt hinter einem Doppelpunkt ein Format (v2.5.1): {{datum:TT.MM.JJJJ}}, {{datum+2:yyyy-mm-dd}}, {{datum:lang}}.
+   Kürzel, gross oder klein, deutsch (J, M, T) oder englisch (y, m, d): JJJJ Jahr, JJ zweistellig; MM Monat, M ohne führende Null,
+   MMM kurz (Okt), MMMM ausgeschrieben; TT Tag, T ohne führende Null, TTT Wochentag kurz (Di), TTTT ausgeschrieben. Text in '…'
+   bleibt, wie er ist ('' für ein Hochkomma), alle anderen Zeichen ebenfalls. Statt Kürzeln ein Stil der Sprache der Oberfläche
+   (Intl.DateTimeFormat, dateStyle): kurz, mittel, lang, voll; dazu iso (JJJJ-MM-TT). Ein Format an einem anderen Platzhalter
+   lässt ihn stehen. */
 (function (global) {
   'use strict';
 
@@ -47,6 +54,17 @@
     { id: 'me', key: N_('platzhalter:ich') },
   ];
 
+  // Stile für {{datum:…}} (Namen übersetzbar wie die Platzhalter) und Beispiele für Hilfe und Dialog (in der Sprache der Oberfläche)
+  const DATE_STYLES = [
+    { id: 'short', key: N_('datumsstil:kurz') },
+    { id: 'medium', key: N_('datumsstil:mittel') },
+    { id: 'long', key: N_('datumsstil:lang') },
+    { id: 'full', key: N_('datumsstil:voll') },
+    { id: 'iso', key: N_('datumsstil:iso') },
+  ];
+  const FORMAT_DAY = N_('datumsformat:TT.MM.JJJJ');
+  const FORMAT_ISO = N_('datumsformat:JJJJ-MM-TT');
+
   const sourceName = p => p.key.slice(p.key.indexOf(':') + 1);
 
   /** Name eines Platzhalters in der Sprache der Oberfläche (ohne Klammern). */
@@ -55,6 +73,12 @@
     if (!p) return id;
     const name = I18n && I18n.variant ? I18n.variant(p.key) : null;
     return name || sourceName(p);
+  }
+
+  /** Ein Format oder Stil für {{datum:…}} in der Sprache der Oberfläche (key aus FORMAT_* oder DATE_STYLES). */
+  function localized(key) {
+    const v = I18n && I18n.variant ? I18n.variant(key) : null;
+    return v || key.slice(key.indexOf(':') + 1);
   }
 
   /** Alle Namen eines Platzhalters, klein geschrieben: deutsch, die Kennung und jede Übersetzung. */
@@ -74,17 +98,66 @@
     return Math.ceil(((t - yearStart) / 86400000 + 1) / 7);
   }
 
-  /** Wert eines Platzhalters. ctx: { now: Date, template, area, me, locale }. */
-  function valueOf(id, offset, ctx) {
+  // ---------- Datumsformate ----------
+
+  const TOKEN = { y: 'y', j: 'y', m: 'm', d: 'd', t: 'd' }; // Jahr, Monat, Tag; deutsch und englisch
+  const intl = (locale, options, d) => { try { return new Intl.DateTimeFormat(locale, options).format(d); } catch (e) { return ''; } };
+
+  function styleOf(format) {
+    const f = format.toLowerCase();
+    for (const s of DATE_STYLES) if (namesOf(s).includes(f)) return s.id;
+    return null;
+  }
+
+  /** Teilt ein Format in Kürzel ({ cls, n }) und Text (string). */
+  function tokens(format) {
+    const out = [];
+    for (let i = 0; i < format.length;) {
+      const ch = format[i];
+      if (ch === "'") {
+        const end = format.indexOf("'", i + 1);
+        out.push(end === i + 1 ? "'" : format.slice(i + 1, end < 0 ? format.length : end));
+        i = end < 0 ? format.length : end + 1;
+        continue;
+      }
+      const cls = TOKEN[ch.toLowerCase()];
+      if (!cls) { out.push(ch); i++; continue; }
+      let n = 1;
+      while (i + n < format.length && TOKEN[format[i + n].toLowerCase()] === cls) n++;
+      out.push({ cls, n, text: format.slice(i, i + n) });
+      i += n;
+    }
+    return out;
+  }
+
+  /** Datum nach einem Format (Kürzel oder Stil, siehe oben); leer gibt die übliche Schreibweise 20.10.2026. */
+  function formatDate(d, format, locale) {
+    const f = String(format || '').trim();
+    if (!f) return `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
+    const style = styleOf(f);
+    if (style === 'iso') return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    if (style) return intl(locale, { dateStyle: style }, d);
+    return tokens(f).map(tk => {
+      if (typeof tk === 'string') return tk;
+      if (tk.cls === 'y') return tk.n <= 2 ? pad(d.getFullYear() % 100) : String(d.getFullYear());
+      if (tk.cls === 'm') return tk.n === 1 ? String(d.getMonth() + 1) : tk.n === 2 ? pad(d.getMonth() + 1) : intl(locale, { month: tk.n === 3 ? 'short' : 'long' }, d);
+      return tk.n === 1 ? String(d.getDate()) : tk.n === 2 ? pad(d.getDate()) : intl(locale, { weekday: tk.n === 3 ? 'short' : 'long' }, d);
+    }).join('');
+  }
+
+  const localeOf = ctx => ctx.locale || (I18n ? I18n.locale() : 'de-CH');
+
+  /** Wert eines Platzhalters. ctx: { now: Date, template, area, me, locale }; format nur für das Datum. */
+  function valueOf(id, offset, ctx, format) {
     const now = ctx.now && typeof ctx.now.getTime === 'function' ? ctx.now : new Date();
     switch (id) {
       case 'date': {
         const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + (offset || 0));
-        return `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
+        return formatDate(d, format, localeOf(ctx));
       }
       case 'time': return `${pad(now.getHours())}:${pad(now.getMinutes())}`;
       case 'weekday': {
-        try { return new Intl.DateTimeFormat(ctx.locale || (I18n ? I18n.locale() : 'de-CH'), { weekday: 'long' }).format(now); } catch (e) { return ''; }
+        return intl(localeOf(ctx), { weekday: 'long' }, now);
       }
       case 'week': return String(isoWeek(now));
       case 'year': return String(now.getFullYear());
@@ -95,15 +168,15 @@
     }
   }
 
-  /** Ersetzt die Platzhalter in einem Text. Unbekannte {{…}} bleiben, wie sie sind. */
+  /** Ersetzt die Platzhalter in einem Text. Unbekannte {{…}} bleiben, wie sie sind, ebenso ein Format an einem anderen als dem Datum. */
   function fill(text, ctx) {
     const c = ctx || {};
     const table = new Map();
     for (const p of PLACEHOLDERS) for (const n of namesOf(p)) table.set(n, p);
-    return String(text == null ? '' : text).replace(/\{\{\s*([\p{L}_][\p{L}\p{N}_]*)\s*(?:([+-])\s*(\d{1,4}))?\s*\}\}/gu, (m, name, sign, num) => {
+    return String(text == null ? '' : text).replace(/\{\{\s*([\p{L}_][\p{L}\p{N}_]*)\s*(?:([+-])\s*(\d{1,4}))?\s*(?::([^{}\n]*))?\}\}/gu, (m, name, sign, num, format) => {
       const p = table.get(name.toLowerCase());
-      if (!p || (sign && !p.offset)) return m;
-      const v = valueOf(p.id, sign ? (sign === '-' ? -1 : 1) * Number(num) : 0, c);
+      if (!p || (sign && !p.offset) || (format != null && p.id !== 'date')) return m;
+      const v = valueOf(p.id, sign ? (sign === '-' ? -1 : 1) * Number(num) : 0, c, format);
       return v == null ? m : v;
     });
   }
@@ -112,6 +185,15 @@
   function placeholders(ctx) {
     const c = Object.assign({ template: t('Vorlage'), area: '', me: '' }, ctx || {});
     return PLACEHOLDERS.map(p => ({ id: p.id, name: placeholderName(p.id), offset: !!p.offset, example: valueOf(p.id, 0, c) }));
+  }
+
+  /** Beispiele für {{datum:…}} in der Sprache der Oberfläche: [{ text: '{{datum:TT.MM.JJJJ}}', example: '20.10.2026' }, …]. */
+  function dateFormats(ctx) {
+    const c = ctx || {};
+    const name = placeholderName('date');
+    return [[0, localized(FORMAT_DAY)], [7, localized(FORMAT_ISO)], [0, localized(DATE_STYLES[2].key)]].map(([offset, f]) => ({
+      text: `{{${name}${offset ? '+' + offset : ''}:${f}}}`, example: valueOf('date', offset, c, f),
+    }));
   }
 
   // ---------- Aus Notizen eine Vorlage ----------
@@ -137,20 +219,36 @@
     return { body: out.join('\n').replace(/\n{3,}/g, '\n\n').trim(), images };
   }
 
-  /** Ersetzt das Datum eines Tages (Schreibweisen 20.10.2026, 20.10.26 nicht, 2026-10-20) durch den Platzhalter {{datum}} in der Sprache
-   *  der Oberfläche. Ausserhalb von Code. */
+  /** Format für ein Datum der Form T.M.JJJJ mit oder ohne führende Nullen: das Format FORMAT_DAY der Sprache, Tag und Monat je nach
+   *  Schreibweise mit einem oder zwei Kürzeln; ohne Nullen kein Format (die übliche Schreibweise). */
+  function dayFormat(dayPadded, monthPadded) {
+    if (!dayPadded && !monthPadded) return '';
+    return tokens(localized(FORMAT_DAY)).map(tk => {
+      if (typeof tk === 'string') return tk.includes("'") ? "''" : /[a-z]/i.test(tk) ? `'${tk}'` : tk;
+      const short = (tk.cls === 'd' && !dayPadded) || (tk.cls === 'm' && !monthPadded);
+      return short && tk.n === 2 ? tk.text.slice(0, 1) : tk.text;
+    }).join('');
+  }
+
+  /** Ersetzt das Datum eines Tages (Schreibweisen 20.10.2026, 05.03.2026, 2026-10-20; 20.10.26 nicht) durch den Platzhalter {{datum}} in
+   *  der Sprache der Oberfläche, mit dem Format, das dieselbe Schreibweise ergibt ({{datum:JJJJ-MM-TT}}, {{datum:TT.MM.JJJJ}}).
+   *  Ausserhalb von Code. */
   function datesToPlaceholder(text, day) {
     const d = day && typeof day.getTime === 'function' ? day : new Date();
-    const name = `{{${placeholderName('date')}}}`;
+    const date = placeholderName('date');
     const y = d.getFullYear(), m = d.getMonth() + 1, dd = d.getDate();
-    const re = new RegExp(`(^|[^\\d.])(?:0?${dd}\\.0?${m}\\.${y}|${y}-${pad(m)}-${pad(dd)})(?![\\d])`, 'g');
+    const re = new RegExp(`(^|[^\\d.])(?:(0?${dd})\\.(0?${m})\\.${y}|(${y}-${pad(m)}-${pad(dd)}))(?![\\d])`, 'g');
+    const name = (dPart, mPart, iso) => {
+      const f = iso ? localized(FORMAT_ISO) : dayFormat(dPart.length > String(dd).length, mPart.length > String(m).length);
+      return `{{${date}${f ? ':' + f : ''}}}`;
+    };
     const out = [];
     let fence = null;
     for (const line of String(text || '').split('\n')) {
       if (fence) { out.push(line); if (line.trim().startsWith(fence)) fence = null; continue; }
       const f = FENCE_RE.exec(line);
       if (f) { fence = f[1]; out.push(line); continue; }
-      out.push(line.replace(re, (m0, lead) => lead + name));
+      out.push(line.replace(re, (m0, lead, dPart, mPart, iso) => lead + name(dPart, mPart, iso)));
     }
     return out.join('\n');
   }
@@ -299,5 +397,5 @@
   /** Kurzbeschreibung für Listen: Zahl der Notizen. */
   function noteCount(template) { return ((template && template.notes) || []).length; }
 
-  global.NoNotesTemplates = { FORMAT, PLACEHOLDERS, fill, placeholders, placeholderName, clean, datesToPlaceholder, fromNotes, toMarkdown, parse, fileName, instantiate, createNotes, apply, insert, noteCount };
+  global.NoNotesTemplates = { FORMAT, PLACEHOLDERS, DATE_STYLES, fill, placeholders, dateFormats, formatDate, placeholderName, clean, datesToPlaceholder, fromNotes, toMarkdown, parse, fileName, instantiate, createNotes, apply, insert, noteCount };
 })(window);

@@ -377,7 +377,7 @@ Eine **Vorlage** ist eine Notiz samt Unternotizen als Markdown-Datei, mit Platzh
 
 - **Speichern:** *Notiz → Als Vorlage speichern…* (oder Rechtsklick auf einen Knoten der Mindmap). Im Dialog: Name, Beschreibung,
   *Unternotizen mitnehmen*, *Antworten und Entscheide entfernen*, *Erledigte Aufgaben wieder öffnen*, *Termine am Zeilenende entfernen*
-  und *Heutiges Datum durch {{datum}} ersetzen*. Bilder aus der Datei kommen nicht mit (die Meldung nennt, wie viele weggelassen wurden).
+  und *Heutiges Datum durch {{datum}} ersetzen* (in derselben Schreibweise). Bilder aus der Datei kommen nicht mit (die Meldung nennt, wie viele weggelassen wurden).
 - **Anwenden:** *Aus Vorlage…* in der Mindmap-Leiste (unter der Auswahl), das Symbol neben *Neue Notiz* in der Liste, *Unternotiz aus
   Vorlage…* im Menü *Notiz* und im Kontextmenü der Mindmap. *Notiz → Vorlage einfügen…* setzt den Text der Vorlage an die Stelle des
   Cursors und legt ihre Unternotizen unter der offenen Notiz an. Die Auswahl zeigt eine Vorschau mit ersetzten Platzhaltern.
@@ -385,6 +385,13 @@ Eine **Vorlage** ist eine Notiz samt Unternotizen als Markdown-Datei, mit Platzh
   `- [ ] Offerte @{{datum+7}}`), `{{zeit}}`, `{{wochentag}}`, `{{woche}}` (Kalenderwoche), `{{jahr}}`, `{{vorlage}}`, `{{bereich}}`,
   `{{ich}}` (im Dienst dein `@kürzel`). Die Namen sind übersetzbar (Sprachpaket, Schlüssel `platzhalter:…`) und werden in jeder Sprache
   erkannt (`{{date}}` geht auch); unbekannte bleiben stehen.
+- **Datumsformat (seit 2.5.1):** hinter einem Doppelpunkt, zum Beispiel `{{datum+2:JJJJ-MM-TT}}` (2026-10-22), `{{datum:TT.MM.JJJJ}}`
+  (05.03.2026), `{{datum:TTTT, T. MMMM JJJJ}}` (Dienstag, 20. Oktober 2026). Kürzel gross oder klein, deutsch oder englisch: `JJJJ`/`yyyy`
+  und `JJ`/`yy` für das Jahr, `MM`/`mm` (zweistellig), `M` (ohne führende Null), `MMM` (Okt), `MMMM` (Oktober) für den Monat, `TT`/`dd`,
+  `T`/`d` für den Tag, `TTT` (Di) und `TTTT` (Dienstag) für den Wochentag; Text in Hochkommas bleibt stehen (`'KW'`, `''` für ein
+  Hochkomma). Statt Kürzeln ein Stil der Sprache der Oberfläche (`Intl.DateTimeFormat`): `kurz`, `mittel`, `lang`, `voll` (englisch
+  `short`, `medium`, `long`, `full`) und `iso`. Ohne Format gilt `20.10.2026`. Als Termin taugen `T.M.JJJJ`, `TT.MM.JJJJ` und `JJJJ-MM-TT`
+  (`@{{datum+7:JJJJ-MM-TT}}`). *Heutiges Datum ersetzen* behält beim Speichern die Schreibweise (`2026-10-20` wird `{{datum:JJJJ-MM-TT}}`).
 - **Lokal:** Vorlagen liegen im Ordner `templates/` neben `index.html`, für alle Bereiche gleich. *Datenbank → Vorlagen…* verbindet den
   Ordner einmal (Edge, Chrome); danach liest NoNotes die `.md`-Dateien darin, und neue Vorlagen landen direkt dort (gleicher Name: `Name (2).md`).
   Ohne Ordner (oder in Firefox) wird die Vorlage heruntergeladen und in diesem Browser gemerkt. Im selben Dialog: Datei hinzufügen,

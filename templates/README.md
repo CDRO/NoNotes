@@ -27,3 +27,8 @@ Eine Markdown-Datei ohne Kopf geht auch: Name und Titel kommen dann aus dem Date
 `{{zeit}}`, `{{wochentag}}`, `{{woche}}` (Kalenderwoche), `{{jahr}}`, `{{vorlage}}` (Name der Vorlage), `{{bereich}}` (Name des
 Bereichs) und `{{ich}}` (im Dienst dein `@kürzel`). Die Namen gibt es auch in den anderen Sprachen der App (zum Beispiel
 `{{date}}`); unbekannte Platzhalter bleiben stehen. Ein Termin in sieben Tagen: `- [ ] Offerte einholen @{{datum+7}}`.
+
+Das **Datum mit Format** steht hinter einem Doppelpunkt: `{{datum+2:JJJJ-MM-TT}}` (2026-10-22), `{{datum:TT.MM.JJJJ}}` (05.03.2026),
+`{{datum:TTTT, T. MMMM JJJJ}}` (Dienstag, 20. Oktober 2026), `{{datum:lang}}` (20. Oktober 2026). Kürzel gross oder klein, deutsch
+oder englisch: `JJJJ` (`yyyy`), `JJ`; `MM`, `M`, `MMM` (Okt), `MMMM` (Oktober); `TT` (`dd`), `T`; `TTT` (Di), `TTTT` (Dienstag).
+Text in Hochkommas bleibt stehen (`{{datum:'KW' JJJJ}}`). Stile: `kurz`, `mittel`, `lang`, `voll`, `iso`.

@@ -5,7 +5,7 @@ description: "Sitzung mit Traktanden, Entscheiden, offenen Fragen und Pendenzen"
 title: "Sitzung {{datum}}"
 tags: ["sitzung"]
 ---
-**Datum:** {{wochentag}}, {{datum}}, {{zeit}}
+**Datum:** {{datum:TTTT, T. MMMM JJJJ}}, {{zeit}}
 **Anwesend:** 
 **Protokoll:** {{ich}}
 

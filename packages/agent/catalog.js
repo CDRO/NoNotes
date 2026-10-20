@@ -539,7 +539,7 @@
     // Vorlagen (v2.5.0): nur, wenn die Ausprägung welche kennt (options.templates, dieselbe Schnittstelle wie shell.templates)
     {
       name: 'list_templates', title: 'List templates', readOnly: true, needs: 'templates',
-      description: 'Templates for new notes: a note with optional sub-notes; placeholders such as {{date}} or {{date+7}} are filled in when a note is created from it. Each item has an id for create_note_from_template.',
+      description: 'Templates for new notes: a note with optional sub-notes; placeholders such as {{date}}, {{date+7}} or {{date+7:yyyy-mm-dd}} (date with a format) are filled in when a note is created from it. Each item has an id for create_note_from_template.',
       inputSchema: schema({}),
       async run(B, input, ctx) {
         const items = (await ctx.templates.list()).map(i => ({ id: String(i.id), name: i.name, description: i.description || '', notes: i.notes || 1 }));

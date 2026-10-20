@@ -1306,6 +1306,7 @@ async function runTemplatesUi(browser, part, step) {
   await page.waitForFunction(() => /Kein Ordner verbunden/.test(document.querySelector('#templatesFolder').textContent));
   assert.equal(await page.locator('.template-row').count(), 0);
   assert.match(await page.locator('#templatesPlaceholders').innerText(), /\{\{datum\}\} \(\d+\.\d+\.\d{4}\), \{\{datum\+7\}\} \(in sieben Tagen\), \{\{zeit\}\}/);
+  assert.match(await page.locator('#templatesPlaceholders').innerText(), /Das Datum mit Format: \{\{datum:TT\.MM\.JJJJ\}\} \(\d{2}\.\d{2}\.\d{4}\), \{\{datum\+7:JJJJ-MM-TT\}\} \(\d{4}-\d{2}-\d{2}\), \{\{datum:lang\}\} \(\d+\. \S+ \d{4}\)$/, 'Beispiele für das Format mit den Werten von heute');
   await page.locator('#templatesFolder button', { hasText: 'Ordner verbinden' }).click();
   await page.waitForFunction(() => document.querySelectorAll('.template-row').length === 2);
   assert.match(await page.locator('#templatesFolder').innerText(), /Verbunden mit dem Ordner «templates»\./);

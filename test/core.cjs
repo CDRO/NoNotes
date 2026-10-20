@@ -1419,14 +1419,29 @@ async function runTemplates(browser, part, step) {
   sandbox.NoNotesI18n.setLanguage('en');
   assert.deepEqual(json(T.placeholders({ now })).map(p => p.name), ['date', 'time', 'weekday', 'week', 'year', 'template', 'area', 'me'], 'Namen in der Sprache der Oberfläche');
   assert.equal(fill('{{datum}}/{{date}}'), '20.10.2026/20.10.2026', 'deutsche Namen gelten auch bei englischer Oberfläche');
+  assert.equal(fill('{{date+2:yyyy-mm-dd}} {{datum:long}}'), '2026-10-22 20 October 2026', 'Stil in der Sprache der Oberfläche');
+  assert.deepEqual(json(T.dateFormats({ now })).map(f => [f.text, f.example]), [['{{date:dd.mm.yyyy}}', '20.10.2026'], ['{{date+7:yyyy-mm-dd}}', '2026-10-27'], ['{{date:long}}', '20 October 2026']]);
   sandbox.NoNotesI18n.setLanguage('de');
   part('Platzhalter: Datum mit Versatz, Zeit, Woche, Vorlage, Bereich, ich; Namen übersetzbar und in jeder Sprache erkannt');
+
+  // ---------- Formate für das Datum (v2.5.1) ----------
+  assert.equal(fill('{{datum+2:yyyy-mm-dd}} {{datum:dd.mm.yyyy}} {{datum:TT.MM.JJJJ}} {{ datum - 1 : JJJJ-MM-TT }}'), '2026-10-22 20.10.2026 20.10.2026 2026-10-19', 'Kürzel englisch und deutsch, Abstände egal');
+  const march = new Date(2026, 2, 5);
+  assert.equal(fill('{{datum:T.M.JJ}} {{datum:TT.MM.JJJJ}} {{datum:d/m/yyyy}} {{datum:YYYY-MM-DD}} {{datum}}', { now: march }), '5.3.26 05.03.2026 5/3/2026 2026-03-05 5.3.2026', 'mit und ohne führende Null, gross oder klein');
+  assert.match(fill('{{datum:TTTT, T. MMMM JJJJ}} | {{datum:TTT T. MMM}}'), /^Dienstag, 20\. Oktober 2026 \| Di\.? 20\. Okt\.?$/, 'Wochentag und Monat ausgeschrieben und kurz (der Punkt je nach ICU)');
+  assert.equal(fill("{{datum:JJJJ'W'MM}} {{datum:'Tag' T}} {{datum:TT''MM}}"), "2026W10 Tag 20 20'10", "Text in '…' bleibt, '' ist ein Hochkomma");
+  assert.equal(fill('{{datum:kurz}} | {{datum:mittel}} | {{datum:lang}} | {{datum:voll}} | {{datum:iso}} | {{datum+7:ISO}}'), '20.10.26 | 20.10.2026 | 20. Oktober 2026 | Dienstag, 20. Oktober 2026 | 2026-10-20 | 2026-10-27', 'Stile über Intl.DateTimeFormat');
+  assert.equal(fill('{{datum:lang}}', { locale: 'fr-CH' }), '20 octobre 2026', 'Sprache aus dem Kontext');
+  assert.equal(fill('{{datum:}} {{zeit:hh.mm}} {{ich:x}} {{unbekannt:x}} {{datum:x}}'), '20.10.2026 {{zeit:hh.mm}} {{ich:x}} {{unbekannt:x}} x', 'leeres Format: übliche Schreibweise; Format an anderen Platzhaltern lässt sie stehen; ohne Kürzel bleibt der Text');
+  assert.equal(fill('- [ ] Offerte @{{datum+7:JJJJ-MM-TT}}'), '- [ ] Offerte @2026-10-27', 'als Termin');
+  assert.equal(T.formatDate(new Date(2026, 0, 2), 'TTT, TT.MM.', 'en-GB'), 'Fri, 02.01.', 'formatDate einzeln, Namen in der angegebenen Sprache');
+  part('Datumsformate: Kürzel deutsch und englisch, führende Nullen, Wochentag und Monat, Text in Hochkommas, Stile, Sprache, Fehlfälle');
 
   // ---------- Aus Notizen ----------
   const nodes = [
     { depth: 2, title: 'Sitzung 20.10.2026', tags: ['sitzung'], body: '- [x] Protokoll genehmigt\n? Budget? @15.11.2026\n! 20k\n![Bild](att:3)\nText ![b](att:4) mehr\n```\n! bleibt im Code\n- [x] auch\n```' },
     { depth: 3, title: 'Beschlüsse', tags: [], body: '?! Variante? @anna\n!! 20.10.2026: B' },
-    { depth: 4, title: 'Details', tags: ['x'], body: 'am 2026-10-20' },
+    { depth: 4, title: 'Details', tags: ['x'], body: 'am 2026-10-20, nicht am 2026-10-21' },
     { depth: 3, title: 'Pendenzen', tags: [], body: '- [ ] {{ich}} bis {{datum+7}}' },
   ];
   let r = json(T.fromNotes(nodes, { description: 'Für Sitzungen', stripDates: true, todayToPlaceholder: true, today: now }));
@@ -1434,7 +1449,13 @@ async function runTemplates(browser, part, step) {
   assert.deepEqual(r.template.notes.map(n => [n.depth, n.title]), [[0, 'Sitzung {{datum}}'], [1, 'Beschlüsse'], [2, 'Details'], [1, 'Pendenzen']]);
   assert.equal(r.template.notes[0].body, '- [ ] Protokoll genehmigt\n? Budget?\nText mehr\n```\n! bleibt im Code\n- [x] auch\n```', 'Antworten weg, Aufgaben offen, Termin weg, Code unverändert');
   assert.equal(r.template.notes[1].body, '?! Variante? @anna');
-  assert.equal(r.template.notes[2].body, 'am {{datum}}');
+  assert.equal(r.template.notes[2].body, 'am {{datum:JJJJ-MM-TT}}, nicht am 2026-10-21', 'ISO bleibt ISO');
+  const fromDay = (body, day) => json(T.fromNotes([{ depth: 0, title: 'X', tags: [], body }], { todayToPlaceholder: true, today: day })).template.notes[0].body;
+  assert.equal(fromDay('5.3.2026 05.03.2026 05.3.2026 5.03.2026 2026-03-05 15.03.2026', march), "{{datum}} {{datum:TT.MM.JJJJ}} {{datum:TT.M.JJJJ}} {{datum:T.MM.JJJJ}} {{datum:JJJJ-MM-TT}} 15.03.2026", 'heutiges Datum in derselben Schreibweise');
+  assert.equal(fill(fromDay('05.3.2026 2026-03-05', march), { now: march }), '05.3.2026 2026-03-05', 'und zurück');
+  sandbox.NoNotesI18n.setLanguage('en');
+  assert.equal(fromDay('05.03.2026, 2026-03-05', march), '{{date:dd.mm.yyyy}}, {{date:yyyy-mm-dd}}', 'Namen und Kürzel in der Sprache der Oberfläche');
+  sandbox.NoNotesI18n.setLanguage('de');
   assert.equal(r.template.name, 'Sitzung {{datum}}');
   r = json(T.fromNotes(nodes, { name: 'Nur oben', children: false, stripAnswers: false, reopenTasks: false }));
   assert.equal(r.template.notes.length, 1);
@@ -1472,7 +1493,7 @@ async function runTemplates(browser, part, step) {
   assert.deepEqual(tree.filter(n => n.parent_id === id).map(n => n.title), ['Entscheide', 'Offene Fragen'], 'Unternotizen in ihrer Reihenfolge');
   assert.deepEqual(json(await B.getTags(id)), ['sitzung']);
   const created = json(await B.getNote(id));
-  assert.ok(created.body.includes('**Protokoll:** @anna1234') && created.body.includes('- [ ] … @27.10.2026'), created.body);
+  assert.ok(created.body.includes('**Protokoll:** @anna1234') && created.body.includes('- [ ] … @27.10.2026') && created.body.includes('**Datum:** Dienstag, 20. Oktober 2026, 09:05'), created.body);
   assert.equal(json(await B.listTasks({ status: 'open' })).find(tk => tk.note_id === id).due, '2026-10-27', 'Termin aus {{datum+7}} zählt');
   const deep = { name: 'Tief', notes: [{ depth: 0, title: 'A', tags: [], body: 'Oben' }, { depth: 1, title: 'B', tags: [], body: '' }, { depth: 2, title: 'C', tags: [], body: '' }, { depth: 1, title: 'D', tags: [], body: '' }] };
   const ins = await T.insert(B, deep, parent, 'Hier: X', 6, { now }, {});
