@@ -135,6 +135,7 @@
     navChain: Promise.resolve(), // Schritte nacheinander
     navSeq: 0,                   // zählt Zurück/Vor/Adresse: ein überholter Schritt schreibt nichts mehr
     navPending: 0,               // Zurück/Vor/Adresse, die noch nicht angewendet sind: so lange schreibt niemand sonst in die Adresse
+    leaving: false,              // die Seite wird verlassen (Neuladen, andere Adresse): abgebrochene Anfragen sind kein Fehler
     navTitleTimer: null,
     currentId: null,
     query: '',
@@ -2064,7 +2065,11 @@
 
   /** Schritte nacheinander anwenden (schnelles Zurück, Zurück während ein Bereich lädt). */
   function queueNav(fn) {
-    state.navChain = state.navChain.then(fn).catch(e => { console.error(e); setStatus(errorText(e), 'error'); });
+    state.navChain = state.navChain.then(fn).catch(e => {
+      if (state.leaving) return;
+      console.error(e);
+      setStatus(errorText(e), 'error');
+    });
     return state.navChain;
   }
 
@@ -2124,6 +2129,8 @@
   /** Beim Start: Notiz aus der Adresse öffnen (Link, Lesezeichen, Neuladen, Vor nach dem Verlassen der App). */
   async function startNav() {
     state.navReady = true;
+    window.addEventListener('pagehide', () => { state.leaving = true; });
+    window.addEventListener('pageshow', () => { state.leaving = false; }); // zurück aus dem Zwischenspeicher des Browsers
     window.addEventListener('popstate', onHistoryEvent);
     window.addEventListener('hashchange', onHistoryEvent); // falls ein Browser bei «#…» kein popstate meldet (sonst überholt)
     const at = routes().current();
