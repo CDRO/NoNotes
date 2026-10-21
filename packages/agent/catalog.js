@@ -22,7 +22,7 @@
   const INSTRUCTIONS = [
     'NoNotes is a personal and team note-taking app: notes form a tree (a mind map), each note has a title and a Markdown body.',
     'Conventions inside the body: a line starting with "?" is a question, "?!" is a decision to take; answer lines start with "!" (questions) or "!!" (decisions), directly below.',
-    'The same works in a list ("- ?! Buy the tool?" with the answer indented below) and over several lines: "?!``` Title" opens a block that a line "```" closes; the lines inside describe it, single-line "?!"/"?" lines inside are sub-decisions/sub-questions with their own answers, and the block\'s own answer follows right after "```".',
+    'The same works in a list ("- ?! Buy the tool?" with the answer indented below) and over several lines: "?!``` Title" opens a block that a line "```" closes; the lines inside describe it, single-line "?!"/"?" lines inside are sub-decisions/sub-questions with their own answers, and the block\'s own answer follows right after "```". A block can also be a list item ("- ?!``` Title", its lines and closing "```" indented under the item\'s text).',
     'Tasks are Markdown checkboxes "- [ ] text"; indented checkboxes are subtasks. A due date is written at the end of a line as "@YYYY-MM-DD" or "@DD.MM.YYYY".',
     '"@handle" names a person who should answer or decide; "(@handle)" marks an optional participant.',
     'Prefer the dedicated tools (answer_question, record_decision, complete_task, append_to_note) over rewriting a whole note; when you must rewrite, pass base_updated_at from get_note so concurrent edits are detected.',

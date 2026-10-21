@@ -21,7 +21,8 @@
   }
 
   /** Querverweise eines Notiztexts: [{ title, key, lineIndex }], je Ziel einmal (erstes Vorkommen); Code-Blöcke zählen nicht.
-   *  Ein mehrzeiliger Entscheid oder eine mehrzeilige Frage ("?!```" bis "```", siehe questions.js) ist kein Code. */
+   *  Ein mehrzeiliger Entscheid oder eine mehrzeilige Frage ("?!```" bis "```", auch als Listenpunkt "- ?!```", siehe questions.js)
+   *  ist kein Code. */
   function parse(body) {
     const out = [];
     const seen = new Set();
@@ -31,7 +32,7 @@
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (fence) { if (line.trim().startsWith(fence)) fence = null; continue; }
-      if (!block && /^\s*\?!?\s?```/.test(line)) block = true;
+      if (!block && /^\s*(?:(?:[-*+]|\d+[.)])\s+)?\?!?\s?```/.test(line)) block = true;
       else if (block && /^\s*```\s*$/.test(line)) { block = false; continue; }
       else {
         const f = /^\s*(```|~~~)/.exec(line);

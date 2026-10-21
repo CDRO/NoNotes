@@ -1390,6 +1390,108 @@ async function runEntries(browser, part, step) {
   assert.ok(!rec.isError, rec.content[0].text);
   assert.equal(DB.getNote(d, n).body.split('\n')[7], '  !! 2026-10-21: Doch, eine halbe Stunde', 'record_decision schreibt im Block');
   part('Agenten: Beschreibung, Block und Unter-Einträge in list_decisions, Anleitung nennt die Syntax, record_decision im Block');
+
+  // ---------- Blöcke in Listen (v2.6.0) ----------
+  const LIST = [
+    '- Projekt A',                                                   // 0
+    '  - ?!``` Welches Ticketsystem? @anna @15.11.2026',             // 1
+    '    Wir brauchen bis Ende Jahr eines.',                         // 2
+    '    - Variante A: günstig',                                     // 3
+    '    ?! Budget freigeben? @ben',                                 // 4
+    '    !! 21.10.2026: Ja',                                         // 5
+    '    - ? Wer betreut es?',                                       // 6
+    'ohne Einrückung, gehört dazu [[Ziel*]]',                        // 7
+    '    ```',                                                       // 8
+    '    !! 22.10.2026: Variante B',                                 // 9
+    '- Projekt B [[Nach*]]',                                         // 10
+    '  - [ ] Offerte einholen',                                      // 11
+    '1. ?``` Wie gehen wir vor?',                                    // 12
+    '   Schritt für Schritt',                                        // 13
+    '   ```',                                                        // 14
+    '2. Danach',                                                     // 15
+  ].join('\n');
+  const lp = json(Q.parse(LIST));
+  assert.deepEqual(lp.map(p => [p.kind, p.text, p.lineIndex, p.parent, p.answer, p.block, p.list, p.indent.length]), [
+    ['decision', 'Welches Ticketsystem? @anna', 1, null, 'Variante B', true, true, 4],
+    ['decision', 'Budget freigeben? @ben', 4, 0, 'Ja', false, false, 4],
+    ['question', 'Wer betreut es?', 6, 0, null, false, true, 6],
+    ['question', 'Wie gehen wir vor?', 12, null, null, true, true, 3],
+  ]);
+  assert.equal(lp[0].due, '2026-11-15');
+  assert.equal(lp[0].decided, '2026-10-22');
+  assert.equal(lp[0].details, 'Wir brauchen bis Ende Jahr eines.\n- Variante A: günstig\n\nohne Einrückung, gehört dazu [[Ziel*]]', 'nachsichtig: auch eine Zeile ohne Einrückung gehört zum Block');
+  assert.equal(lp[3].details, 'Schritt für Schritt');
+  assert.deepEqual(json(Q.parse('- ?!``` Offen\n  Text\n- Nicht mehr in der Liste?')).map(p => [p.text, p.closed, p.details]), [['Offen', false, 'Text\n- Nicht mehr in der Liste?']], 'ohne "```" reicht er bis zum Ende');
+  assert.deepEqual(json(Q.parse('?!``` Aussen\n- ?!``` Innen\n```\n!! A')).map(p => [p.text, p.block, p.parent, p.answer]), [['Aussen', true, null, 'A']], 'im Block kein Block, auch nicht als Listenpunkt');
+  assert.deepEqual(json(Q.parse('- [ ] ?!``` Aufgabe\n  ```')).length, 0, 'eine Aufgabe ist kein Eintrag');
+  part('Blöcke in Listen: Parser mit Titel, Personen, Termin, Beschreibung, Unter-Einträgen, Antwort; nummeriert und in Unterlisten; Einrückung nachsichtig; im Block keiner; Aufgaben nie');
+
+  // Index, Aufgaben und Querverweise nach dem Block; Antworten schreiben
+  const ln = DB.createNote(d, null);
+  DB.updateNote(d, ln, 'Liste', LIST);
+  const lrows = json(DB.listQuestions(d, { kind: 'all', status: 'all' })).filter(r => r.note_id === ln);
+  const lblock = lrows.find(r => r.text.startsWith('Welches'));
+  assert.equal(lblock.details.slice(0, 13), 'Wir brauchen ');
+  assert.deepEqual(lrows.filter(r => r.parent_id === lblock.id).map(r => r.text).sort(), ['Budget freigeben? @ben', 'Wer betreut es?']);
+  assert.deepEqual(d.exec(`SELECT title FROM note_links WHERE note_id = ${ln} ORDER BY line_no`)[0].values.map(v => v[0]), ['Ziel', 'Nach'], 'Querverweise im Block und nach dem "```"');
+  assert.equal(d.exec(`SELECT count(*) FROM tasks WHERE note_id = ${ln}`)[0].values[0][0], 1, 'Aufgabe nach dem Block');
+  const llines = () => DB.getNote(d, ln).body.split('\n');
+  DB.answerQuestion(d, lblock.id, 'Variante C', {});
+  assert.deepEqual(llines().slice(8, 11), ['    ```', '    !! 22.10.2026: Variante C', '- Projekt B [[Nach*]]'], 'Antwort nach dem "```", eingerückt wie der Text des Punkts');
+  DB.answerQuestion(d, lrows.find(r => r.text === 'Wer betreut es?').id, 'Ben');
+  assert.deepEqual(llines().slice(6, 8), ['    - ? Wer betreut es?', '      ! Ben']);
+  DB.answerQuestion(d, lrows.find(r => r.text === 'Wie gehen wir vor?').id, 'Gemeinsam');
+  assert.deepEqual(llines().slice(14, 18), ['   Schritt für Schritt', '   ```', '   ! Gemeinsam', '2. Danach']);
+  const lo = DB.createNote(d, null);
+  DB.updateNote(d, lo, 'Offen', '- ?!``` Offen\n  Text');
+  DB.answerQuestion(d, json(DB.listQuestions(d, { kind: 'decision', status: 'open' })).find(r => r.text === 'Offen').id, 'Erledigt', { decided: '20.10.2026' });
+  assert.equal(DB.getNote(d, lo).body, '- ?!``` Offen\n  Text\n  ```\n  !! 20.10.2026: Erledigt', 'ohne Ende: "```" eingerückt vor der Antwort');
+  part('Blöcke in Listen: Index mit Beschreibung und Unter-Einträgen, Querverweise und Aufgaben danach, Antworten eingerückt nach "```", offener Block wird geschlossen');
+
+  // Ältere Dateien: Merker index_rules füllt die Indexe einmal neu (ohne neues Schema)
+  {
+    assert.equal(DB.getMeta(d, 'index_rules'), '2', 'neue Datei: heutige Regeln');
+    const old = new SQL.Database(DB.exportBytes(d));
+    old.run(`DELETE FROM questions WHERE note_id = ${ln}; DELETE FROM meta WHERE key = 'index_rules'`);
+    const re = DB.open(SQL, old.export());
+    old.close();
+    assert.equal(DB.getMeta(re, 'schema_version'), SCHEMA_VERSION, 'Schema bleibt');
+    assert.equal(DB.getMeta(re, 'index_rules'), '2');
+    assert.ok(json(DB.listQuestions(re, { kind: 'decision', status: 'all' })).some(r => r.text.startsWith('Welches')), 'Block in der Liste wieder im Index');
+    const again = new SQL.Database(DB.exportBytes(re));
+    again.run(`DELETE FROM questions WHERE note_id = ${ln}`);
+    const kept = DB.open(SQL, again.export());
+    again.close();
+    assert.ok(!json(DB.listQuestions(kept, { kind: 'decision', status: 'all' })).some(r => r.text.startsWith('Welches')), 'mit heutigen Regeln wird nicht jedes Mal neu gefüllt');
+    part('Ältere Dateien: Merker index_rules in meta füllt die Indexe einmal neu, ohne neues Schema');
+  }
+
+  // Vorschau und Export
+  const lhtml = M.render(LIST, { lineMap: true });
+  assert.ok(/<li class="q-li" data-line="1"><div class="md-q md-decision md-q-block answered">/.test(lhtml), 'Kasten im Listenpunkt der Unterliste: ' + lhtml);
+  assert.ok(lhtml.includes('<div class="md-q-details"><p data-line="2">Wir brauchen bis Ende Jahr eines.</p>'), 'Beschreibung mit Zeilen');
+  assert.ok(lhtml.includes('1 von 2 Unterfrage') || lhtml.includes('1 von 1 Unterfrage offen'), 'Hinweis auf offene Unter-Einträge');
+  assert.ok(/<li data-line="10">Projekt B/.test(lhtml), 'die Liste geht danach weiter');
+  assert.equal((lhtml.match(/<ol>/g) || []).length, 1, 'nummeriert: eine Liste über den Block hinweg');
+  assert.ok(/<li class="q-li" data-line="12"><div class="md-q md-q-block open">.*<\/li><li data-line="15">Danach/.test(lhtml), 'zweiter Punkt nach dem Block');
+  assert.ok(M.render('- Punkt\n  ?!``` Eingerückt\n  Text\n  ```').includes('<li>Punkt<div class="md-q md-decision md-q-block open">'), 'Block eingerückt unter einem Listenpunkt');
+  const lmd = X.bodyToMarkdown(LIST, null, null);
+  for (const s2 of [
+    '  - **Entscheid (getroffen):** Welches Ticketsystem? @anna (bis 15.11.2026)\n\n    Wir brauchen bis Ende Jahr eines.\n    - Variante A: günstig',
+    '    > **Entscheid (getroffen):** Budget freigeben? @ben',
+    '    **Entschieden 22.10.2026:** Variante B',
+    '1. **Offene Frage:** Wie gehen wir vor?\n\n   Schritt für Schritt',
+  ]) assert.ok(lmd.includes(s2), `Export enthält ${JSON.stringify(s2)}\n${lmd}`);
+  part('Blöcke in Listen: Vorschau als Kasten im Listenpunkt, Liste und Nummerierung gehen weiter; Export als Listenpunkt mit Beschreibung');
+
+  // Editor
+  assert.equal(tp('- Welches Tool?\n- Variante A\n- Variante B', 0, 41, 'decision'), '- ?!``` Welches Tool?\n  - Variante A\n  - Variante B\n  ```', 'markierte Listenpunkte: Block im ersten Punkt');
+  assert.equal(tp('  1. Titel\n  2. Punkt', 0, 20, 'question'), '  1. ?``` Titel\n     2. Punkt\n     ```', 'nummeriert und eingerückt');
+  assert.equal(tp('- ?!``` Welches Tool?\n  - Variante A\n  ```', 0, 42, 'question'), '- ?``` Welches Tool?\n  - Variante A\n  ```', 'Art wechseln');
+  assert.equal(tp('- ?!``` Welches Tool?\n  - Variante A\n  ```', 0, 42, 'decision'), '- Welches Tool?\n- Variante A', 'und zurück');
+  assert.deepEqual(json(E.continueLine('- ?!``` Titel', 13, 13)), { text: '- ?!``` Titel\n  \n  ```', selStart: 16, selEnd: 16 }, 'Enter: eingerückt, mit "```"');
+  assert.deepEqual(json(E.continueLine('- ?!``` Titel\n  Text\n  ```', 13, 13)), { text: '- ?!``` Titel\n  \n  Text\n  ```', selStart: 16, selEnd: 16 }, 'schon geschlossen: nur eingerückt, kein neuer Punkt');
+  part('Blöcke in Listen: Editor macht markierte Listenpunkte zum Block (und zurück, Art wechseln), Enter rückt ein und setzt "```"');
 }
 
 // ============================================================
@@ -1461,6 +1563,9 @@ async function runTemplates(browser, part, step) {
   assert.equal(r.template.notes.length, 1);
   assert.match(r.template.notes[0].body, /^- \[x\] Protokoll genehmigt\n\? Budget\? @15\.11\.2026\n! 20k/, 'ohne Bereinigen bleibt alles');
   assert.throws(() => T.fromNotes([], {}), e => e.code === 'TEMPLATE_EMPTY');
+  const one = body => json(T.fromNotes([{ depth: 0, title: 'X', tags: [], body }], {})).template.notes[0].body;
+  assert.equal(one('?!``` Block\n- [x] Im Block\n?! Unter\n!! Ja\n```\n!! Antwort des Blocks\n- [x] Danach'), '?!``` Block\n- [ ] Im Block\n?! Unter\n```\n- [ ] Danach', 'das "```" eines Blocks öffnet keinen Code: seine Antwort fällt weg (v2.6.0)');
+  assert.equal(one('- ?!``` In der Liste\n  Text\n  ```\n  !! Antwort\n- [x] Danach'), '- ?!``` In der Liste\n  Text\n  ```\n- [ ] Danach', 'auch als Listenpunkt');
   part('Aus Notizen: Unternotizen mit relativer Tiefe, Antworten weg, Aufgaben offen, Termine weg, heutiges Datum als Platzhalter, Bilder weg, Code bleibt');
 
   // ---------- Datei ----------
@@ -1535,7 +1640,7 @@ async function runTemplates(browser, part, step) {
 suite('Kern-Test', [
   { name: 'Zusammenführen: Myers-Vergleich, Dreiwege-Zusammenführung mit Zufallsdaten, Konflikte, Cursor', run: runMerge },
   { name: 'Datenbank: Standardschema, Angleichen alter Dateien (Schema 1, 11, 12, 13), Konflikterkennung, Autor im Verlauf, Querverweise, Entscheide und Personen', run: runDb },
-  { name: 'Mehrzeilige Entscheide und Fragen: Parser, Index (Schema 15), Antworten, Angleichen, Vorschau, Export, Editor, Agenten', run: runEntries },
+  { name: 'Mehrzeilige Entscheide und Fragen: Parser, Index (Schema 15), Antworten, Angleichen, Vorschau, Export, Editor, Agenten, Blöcke in Listen', run: runEntries },
   { name: 'Vorlagen: Platzhalter in mehreren Sprachen, aus Notizen, Dateiformat, Anlegen und Einfügen, Agenten', run: runTemplates },
   { name: 'Build: fremde Ausprägung, Verzeichnis der Erweiterungen, --plugins, klare Fehler', run: runBuild },
   { name: 'Videoadressen: YouTube, Vimeo, Dailymotion, Fälschungen, Karte im Markdown, maskierte Titel', run: runEmbeds },

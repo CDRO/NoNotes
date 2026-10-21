@@ -240,7 +240,7 @@
     let details = '';
     if (qb.block) {
       // Die Zeilen im Block bleiben an ihrem Platz (die Titelzeile wird leer), damit data-line und Aufgaben stimmen
-      const inner = lines.slice(qb.contentStart, qb.contentEnd);
+      const inner = global.NoNotesQuestions.contentLines(lines, qb); // im Listenpunkt ohne dessen Einrückung
       if (qb.titleLine != null) inner[qb.titleLine - qb.contentStart] = '';
       const used = inner.filter(l => l.trim());
       const cut = used.length ? Math.min(...used.map(l => (/^\s*/.exec(l) || [''])[0].length)) : 0;
@@ -355,9 +355,10 @@
     while (i < lines.length) {
       const m = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[i]);
       if (!m) {
-        // Fortsetzungszeile eines Listenpunkts (eingerückt) oder Ende; eine Frage oder ein Entscheid darin wird zum Kasten
+        // Fortsetzungszeile eines Listenpunkts (eingerückt) oder Ende; eine Frage oder ein Entscheid darin (auch ein Block, ausser
+        // schon in einem Block) wird zum Kasten
         if (items.length && /^\s{2,}\S/.test(lines[i]) && !/^\s*$/.test(lines[i])) {
-          const qc = Q ? Q.parseBlock(lines, i, { inner: true }) : null;
+          const qc = Q ? Q.parseBlock(lines, i, { inner: ctx.inBlock }) : null;
           if (qc) { items[items.length - 1].text += entryHtml(qc, lines, ctx, ''); i = qc.end; continue; }
           items[items.length - 1].text += '<br>' + renderInline(lines[i].trim(), ctx);
           i++;
@@ -365,8 +366,8 @@
         }
         break;
       }
-      // Frage oder Entscheid als Listenpunkt ("- ?! …"), die Antwort eingerückt darunter
-      const qe = Q && /^\?/.test(m[3]) ? Q.parseBlock(lines, i, { list: true, inner: true }) : null;
+      // Frage oder Entscheid als Listenpunkt ("- ?! …", als Block "- ?!``` …" ausser im Block), die Antwort eingerückt darunter
+      const qe = Q && /^\?/.test(m[3]) ? Q.parseBlock(lines, i, { list: true, inner: ctx.inBlock }) : null;
       if (qe && qe.list) {
         items.push({ indent: m[1].length, ordered: /\d/.test(m[2]), text: entryHtml(qe, lines, ctx, ''), task: null, line: i, entry: true });
         i = qe.end;

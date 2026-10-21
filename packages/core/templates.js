@@ -36,6 +36,8 @@
   const FORMAT = 1;
   const NOTE_RE = /^<!--\s*nonotes:note\s+(\{.*\})\s*-->\s*$/;
   const FENCE_RE = /^\s*(```|~~~)/;
+  const QBLOCK_RE = /^\s*(?:(?:[-*+]|\d+[.)])\s+)?\?!?\s?```/;   // Frage- oder Entscheidblock (questions.js), auch als Listenpunkt
+  const QBLOCK_CLOSE_RE = /^\s*```\s*$/;
   const ANSWER_RE = /^\s*(?:!!|!(?!\[))/;
   const DONE_TASK_RE = /^(\s*(?:[-*+]|\d+[.)])\s+)\[[xX]\]/;
   const DUE_TAIL_RE = /\s*@(?:\d{1,2}\.\d{1,2}\.\d{4}|\d{4}-\d{2}-\d{2})(?:[ T]\d{1,2}[:.]\d{2})?\s*$/;
@@ -198,17 +200,32 @@
 
   // ---------- Aus Notizen eine Vorlage ----------
 
+  /** Je Zeile, ob sie Code ist. Ein Frage- oder Entscheidblock ist kein Code: seine Zeile «```» schliesst ihn, statt Code zu öffnen. */
+  function codeLines(lines) {
+    const out = [];
+    let fence = null;
+    let block = false;
+    for (const line of lines) {
+      if (fence) { out.push(true); if (line.trim().startsWith(fence)) fence = null; continue; }
+      if (!block && QBLOCK_RE.test(line)) { block = true; out.push(false); continue; }
+      if (block && QBLOCK_CLOSE_RE.test(line)) { block = false; out.push(false); continue; }
+      const f = FENCE_RE.exec(line);
+      if (f) fence = f[1];
+      out.push(!!f);
+    }
+    return out;
+  }
+
   /** Bereinigt den Text einer Notiz: Antworten und Entscheide weg, Aufgaben offen, Termine weg (je nach options), Bilder aus der
    *  Datei immer weg (eine Markdown-Datei trägt sie nicht). Code bleibt, wie er ist. Gibt { body, images } zurück. */
   function clean(body, options) {
     const o = Object.assign({ stripAnswers: true, reopenTasks: true, stripDates: false }, options || {});
     let images = 0;
     const out = [];
-    let fence = null;
-    for (const line of String(body || '').replace(/\r\n?/g, '\n').split('\n')) {
-      if (fence) { out.push(line); if (line.trim().startsWith(fence)) fence = null; continue; }
-      const f = FENCE_RE.exec(line);
-      if (f) { fence = f[1]; out.push(line); continue; }
+    const lines = String(body || '').replace(/\r\n?/g, '\n').split('\n');
+    const code = codeLines(lines);
+    for (const [k, line] of lines.entries()) {
+      if (code[k]) { out.push(line); continue; }
       if (o.stripAnswers && ANSWER_RE.test(line)) continue;
       let l = line.replace(IMAGE_RE, () => { images++; return ''; });
       if (o.reopenTasks) l = l.replace(DONE_TASK_RE, '$1[ ]');
@@ -242,15 +259,9 @@
       const f = iso ? localized(FORMAT_ISO) : dayFormat(dPart.length > String(dd).length, mPart.length > String(m).length);
       return `{{${date}${f ? ':' + f : ''}}}`;
     };
-    const out = [];
-    let fence = null;
-    for (const line of String(text || '').split('\n')) {
-      if (fence) { out.push(line); if (line.trim().startsWith(fence)) fence = null; continue; }
-      const f = FENCE_RE.exec(line);
-      if (f) { fence = f[1]; out.push(line); continue; }
-      out.push(line.replace(re, (m0, lead, dPart, mPart, iso) => lead + name(dPart, mPart, iso)));
-    }
-    return out.join('\n');
+    const lines = String(text || '').split('\n');
+    const code = codeLines(lines);
+    return lines.map((line, k) => (code[k] ? line : line.replace(re, (m0, lead, dPart, mPart, iso) => lead + name(dPart, mPart, iso)))).join('\n');
   }
 
   /** Vorlage aus einer Notiz und (wahlweise) ihren Unternotizen. nodes: [{ depth, title, body, tags }] in Baumreihenfolge, die erste

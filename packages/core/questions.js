@@ -8,6 +8,9 @@
    (mit Personen und Termin wie sonst), ohne ihn die erste Zeile im Block; die übrigen Zeilen sind die Beschreibung (Markdown). Im Block
    stehen einzeilige Unter-Einträge ("?! …", "? …", auch in Listen) mit ihren eigenen Antworten; Blöcke im Block gibt es nicht. Die
    Antwort des Blocks folgt direkt nach "```". Code im Block steht zwischen "~~~" oder beginnt mit "```sprache".
+   In Listen (v2.6.0): "- ?!``` Titel" (auch "1.", "*", "+", in Unterlisten) öffnet denselben Block als Listenpunkt. Zum Block gehört
+   alles bis zur Zeile "```", gleich wie eingerückt (nachsichtig; der Editor rückt auf den Text des Listenpunkts ein); die Antwort folgt
+   nach "```", die Liste geht danach weiter.
    "@kürzel" im Titel nennt, wer antworten oder entscheiden soll, "(@kürzel)" eine Person, die wahlweise dabei ist.
    Der Text bleibt die einzige Wahrheit; die Tabelle "questions" ist nur ein Index darüber. */
 (function (global) {
@@ -16,6 +19,7 @@
   const QUESTION_RE = /^\s*\?(!?)\s?(.*)$/;                          // Gruppe 1: "!" → Entscheid
   const LIST_RE = /^(\s*)((?:[-*+]|\d+[.)])\s+)\?(!?)\s?(.*)$/;     // "- ?! Text", "1. ? Text"
   const BLOCK_RE = /^(\s*)\?(!?)\s?```(.*)$/;                       // "?!``` Titel" öffnet einen Block
+  const LIST_BLOCK_RE = /^(\s*)((?:[-*+]|\d+[.)])\s+)\?(!?)\s?```(.*)$/; // "- ?!``` Titel": derselbe Block als Listenpunkt
   const CLOSE_RE = /^\s*```\s*$/;                                   // "```" allein schliesst ihn
   const FENCE_RE = /^\s*(```|~~~)/;
   const ANSWER_RE = /^\s*(?:!!|!(?!\[))\s?(.*)$/;                   // "![" ist ein Bild, keine Antwort
@@ -120,6 +124,13 @@
     return Object.assign(head, answerOf(head.kind, ans.lines), { end: ans.end, answerStart: i + 1, indent: ' '.repeat(m[1].length + m[2].length), list: true });
   }
 
+  /** Zeilen im Block (contentStart bis contentEnd), bei einem Block in einer Liste ohne die Einrückung des Listenpunkts (höchstens so
+   *  viel, wie eine Zeile hat: eine Zeile ohne Einrückung gehört trotzdem dazu). Für Beschreibung, Vorschau und Export. */
+  function contentLines(lines, qb) {
+    const base = qb.list ? qb.indent.length : 0;
+    return lines.slice(qb.contentStart, qb.contentEnd).map(l => l.slice(Math.min(base, leading(l).length)));
+  }
+
   /** Beschreibung eines Blocks: gemeinsame Einrückung weg, Leerzeilen am Rand weg, mehrere Leerzeilen zu einer. */
   function tidy(rows) {
     const used = rows.filter(l => l.trim());
@@ -135,9 +146,16 @@
     return out.join('\n') || null;
   }
 
-  /** Mehrzeiliger Eintrag "?!``` Titel" … "```" an Zeile i, samt Unter-Einträgen und der Antwort nach dem Block. */
-  function blockEntry(lines, i) {
-    const m = BLOCK_RE.exec(lines[i]);
+  /** Mehrzeiliger Eintrag "?!``` Titel" … "```" an Zeile i, samt Unter-Einträgen und der Antwort nach dem Block; mit list auch als
+   *  Listenpunkt ("- ?!``` Titel", dann list: true und die Einrückung des Texts im Listenpunkt für die Antwort). */
+  function blockEntry(lines, i, list) {
+    let m = BLOCK_RE.exec(lines[i]);
+    let indent = m ? m[1] : '';
+    let inList = false;
+    if (!m && list) {
+      const l = LIST_BLOCK_RE.exec(lines[i]);
+      if (l) { m = [l[0], l[1], l[3], l[4]]; indent = ' '.repeat(l[1].length + l[2].length); inList = true; }
+    }
     if (!m) return null;
     const kind = m[2] ? 'decision' : 'question';
     // Ende: die erste Zeile "```" ausserhalb eines Codes im Block ("~~~" oder "```sprache" bis zur nächsten Zeile mit demselben Zeichen)
@@ -182,12 +200,12 @@
       }
     }
     const head = heading(kind, raw);
-    const rest = [];
-    for (let k = contentStart; k < contentEnd; k++) rest.push(taken.has(k) || k === titleLine ? '' : lines[k]);
+    const body = contentLines(lines, { list: inList, indent, contentStart, contentEnd });
+    const rest = body.map((l, x) => (taken.has(contentStart + x) || contentStart + x === titleLine ? '' : l));
     const ans = closed ? readAnswers(lines, j + 1, lines.length) : { lines: [], end: lines.length };
     return Object.assign(head, answerOf(kind, ans.lines), {
-      end: ans.end, answerStart: closed ? j + 1 : lines.length, indent: m[1],
-      block: true, closed, contentStart, contentEnd, titleLine, details: tidy(rest), children,
+      end: ans.end, answerStart: closed ? j + 1 : lines.length, indent,
+      block: true, closed, contentStart, contentEnd, titleLine, details: tidy(rest), children, list: inList,
     });
   }
 
@@ -195,11 +213,11 @@
    *  Ergebnis: { kind, text, due, people, answer, decided, decidedRaw, end, answerStart, indent } – end ist die erste Zeile danach
    *  (exklusiv). Ein Block hat dazu block: true, closed, contentStart, contentEnd (exklusiv), titleLine (oder null), details
    *  (Beschreibung ohne Unter-Einträge, oder null) und children (die Unter-Einträge mit lineIndex); sein Titel kann leer sein.
-   *  options.list: auch "- ? …" (dann list: true); options.inner: keine Blöcke (im Block selbst). */
+   *  options.list: auch "- ? …" und "- ?!``` …" (dann list: true); options.inner: keine Blöcke (im Block selbst). */
   function parseBlock(lines, i, options) {
     const o = options || {};
     if (!o.inner) {
-      const b = blockEntry(lines, i);
+      const b = blockEntry(lines, i, !!o.list);
       if (b) return b;
     }
     if (o.list) {
@@ -335,5 +353,5 @@
     return offset;
   }
 
-  global.NoNotesQuestions = { parse, parseBlock, nest, people, splitDecided, normalize, writeAnswer, locate, toggleLinePrefix, offsetOfLine, PERSON_RE };
+  global.NoNotesQuestions = { parse, parseBlock, contentLines, nest, people, splitDecided, normalize, writeAnswer, locate, toggleLinePrefix, offsetOfLine, PERSON_RE };
 })(window);

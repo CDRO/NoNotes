@@ -4,6 +4,9 @@
   'use strict';
 
   const SCHEMA_VERSION = 15;
+  // Regeln, nach denen die Indexe (Fragen, Aufgaben, Querverweise) aus den Texten entstehen. Steigt die Zahl ohne neues Schema
+  // (2: Blöcke in Listen, v2.6.0), füllt das Öffnen die Indexe neu; ältere Versionen öffnen die Datei weiter.
+  const INDEX_RULES = 2;
 
   // Verlauf pro Notiz: eine «Arbeitsphase» endet nach so langer Pause oder so langer Dauer; danach beginnt eine neue Fassung.
   // Aufbewahrt werden höchstens so viele Fassungen und Tage; meta history_max_versions / history_max_days / history_enabled ('0') ändern das.
@@ -91,7 +94,7 @@
       'CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes (updated_at DESC)',
       'CREATE INDEX IF NOT EXISTS idx_notes_parent ON notes (parent_id, sort_order)',
     ] },
-    // schema_version, created_at, map_title, accent, theme, calendar_uid, calendar_sequence, calendar_known
+    // schema_version, index_rules, created_at, map_title, accent, theme, calendar_uid, calendar_sequence, calendar_known
     { name: 'meta', columns: [['key', 'TEXT PRIMARY KEY'], ['value', 'TEXT NOT NULL']] },
     // Index über die ?-, ?!-, !- und !!-Zeilen, aus dem Text abgeleitet (packages/core/questions.js)
     { name: 'questions', columns: [
@@ -178,6 +181,7 @@
     for (const t of SCHEMA) db.exec(createTableSql(t));
     for (const t of SCHEMA) for (const sql of t.indexes || []) db.exec(sql);
     setMeta(db, 'schema_version', SCHEMA_VERSION);
+    setMeta(db, 'index_rules', INDEX_RULES);
     setMeta(db, 'created_at', nowIso());
     setMeta(db, 'map_title', defaultMapTitle);
   }
@@ -197,14 +201,19 @@
       selectAll(db, 'SELECT id FROM notes ORDER BY created_at, id').forEach((row, i) => db.run('UPDATE notes SET sort_order = ? WHERE id = ?', [i, row.id]));
     }
     if (getMeta(db, 'map_title') == null) setMeta(db, 'map_title', defaultMapTitle);
-    // Die Indexe aus den Texten neu füllen: so gelten die heutigen Regeln (Termine mit Uhrzeit, Unteraufgaben, Entscheide,
-    // Personen, Querverweise) auch für Texte, die mit einer älteren Version geschrieben wurden.
+    reindex(db);
+    setMeta(db, 'schema_version', SCHEMA_VERSION);
+  }
+
+  /** Die Indexe aus den Texten neu füllen: so gelten die heutigen Regeln (Termine mit Uhrzeit, Unteraufgaben, Entscheide,
+   *  Personen, Querverweise, Blöcke in Listen) auch für Texte, die mit einer älteren Version geschrieben wurden. */
+  function reindex(db) {
     for (const row of selectAll(db, 'SELECT id, body, deleted_at FROM notes')) {
       syncQuestions(db, row.id, row.body);
       syncTasks(db, row.id, row.body);
       if (!row.deleted_at) syncLinks(db, row.id, row.body);
     }
-    setMeta(db, 'schema_version', SCHEMA_VERSION);
+    setMeta(db, 'index_rules', INDEX_RULES);
   }
 
   /** Öffnet eine Datenbank aus Bytes (oder legt eine neue an) und bringt sie auf das aktuelle Schema.
@@ -224,6 +233,7 @@
           throw fail('SCHEMA_TOO_NEW', `Diese Datenbank hat Schema-Version ${version}, diese App versteht nur bis ${SCHEMA_VERSION}. Bitte App aktualisieren.`, { version, unterstuetzt: SCHEMA_VERSION });
         }
         if (version < SCHEMA_VERSION) upgrade(db);
+        else if (Number(getMeta(db, 'index_rules') || 1) < INDEX_RULES) reindex(db);
       }
       registerFunctions(db);
       return db;

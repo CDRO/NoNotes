@@ -57,7 +57,8 @@
   }
 
   /** Wandelt den Notiztext in portables Markdown: ?/?!/! werden zu Zitatblöcken, [[Titel]] zu Links. Ein Block ("?!```" … "```")
-   *  wird ein Zitat mit Beschreibung, seine Unter-Einträge darin ein Zitat im Zitat; ein Eintrag in einer Liste bleibt ein Listenpunkt.
+   *  wird ein Zitat mit Beschreibung, seine Unter-Einträge darin ein Zitat im Zitat; ein Eintrag in einer Liste bleibt ein Listenpunkt,
+   *  ein Block in einer Liste ("- ?!```") ein Listenpunkt mit der Beschreibung eingerückt darunter.
    *  Code bleibt, wie er ist. inner: im Block (dort gibt es keine Blöcke). */
   function bodyToMarkdown(body, resolveLink, resolveAttachment, inner) {
     const lines = String(body || '').replace(/\r\n?/g, '\n').split('\n');
@@ -77,7 +78,16 @@
         const lm = /^(\s*)((?:[-*+]|\d+[.)])\s+)/.exec(line);
         const pad = ' '.repeat(lm[0].length);
         const answer = qb.answer ? qb.answer.split('\n').map(md) : [];
-        out.push(`${lm[1]}${lm[2]}**${labelOf(qb)}:** ${md(qb.text)}${dueOf(qb)}${answer.length === 1 ? ` — **${headOf(qb)}:** ${answer[0]}` : ''}`);
+        const inline = answer.length === 1 && !qb.block;
+        out.push(`${lm[1]}${lm[2]}**${labelOf(qb)}:** ${md(qb.text)}${dueOf(qb)}${inline ? ` — **${headOf(qb)}:** ${answer[0]}` : ''}`);
+        if (qb.block) {
+          const content = Q.contentLines(lines, qb);
+          if (qb.titleLine != null) content[qb.titleLine - qb.contentStart] = '';
+          const described = bodyToMarkdown(content.join('\n'), resolveLink, resolveAttachment, true);
+          if (described) { out.push(''); for (const l of described.split('\n')) out.push(l ? pad + l : ''); }
+          if (answer.length) out.push('');
+          if (answer.length === 1) out.push(`${pad}**${headOf(qb)}:** ${answer[0]}`);
+        }
         if (answer.length > 1) { out.push(`${pad}**${headOf(qb)}:**  `); for (const a of answer) out.push(pad + a + '  '); }
         i = qb.end - 1;
         continue;
@@ -86,7 +96,7 @@
         if (out.length && out[out.length - 1].trim() !== '' && !out[out.length - 1].startsWith('>')) out.push('');
         out.push(`> **${labelOf(qb)}:** ${md(qb.text)}${dueOf(qb)}`);
         if (qb.block) {
-          const content = lines.slice(qb.contentStart, qb.contentEnd);
+          const content = Q.contentLines(lines, qb);
           if (qb.titleLine != null) content[qb.titleLine - qb.contentStart] = '';
           const described = bodyToMarkdown(content.join('\n'), resolveLink, resolveAttachment, true);
           if (described) { out.push('>'); for (const l of described.split('\n')) out.push(l ? '> ' + l : '>'); }

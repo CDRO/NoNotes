@@ -39,7 +39,7 @@ Namen und Beschreibungen sind Englisch, weil Agenten sie lesen. Inhalte bleiben,
 
 Dazu zwei **Ressourcen** für Agenten, die lieber lesen als Werkzeuge rufen: `nonotes://overview` und `nonotes://note/<id>`
 (die Notiz als Markdown). Der Katalog gibt dem Agenten ausserdem eine kurze Anleitung mit (`NoNotesAgent.INSTRUCTIONS`): was
-`?`, `?!`, `!`, `!!`, `- [ ]`, `@Datum` und `@kürzel` bedeuten, wie Einträge in Listen und mehrzeilige Blöcke `?!```` … ```` ``` ```` mit Unterentscheiden aussehen, und dass er die passenden Werkzeuge einem Umschreiben der
+`?`, `?!`, `!`, `!!`, `- [ ]`, `@Datum` und `@kürzel` bedeuten, wie Einträge in Listen und mehrzeilige Blöcke `?!```` … ```` ``` ```` mit Unterentscheiden aussehen (auch als Listenpunkt `- ?!````), und dass er die passenden Werkzeuge einem Umschreiben der
 ganzen Notiz vorziehen soll.
 
 **Regeln, die für Agenten wie für Menschen gelten:**

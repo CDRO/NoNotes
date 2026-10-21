@@ -341,6 +341,15 @@ Ab 1.11. liegen alle Projektordner auf SharePoint.
 - Budget 2027
 - ?! Neues Tool kaufen? @anna
   !! 20.10.2026: Ja, Variante B
+- ?!``` Welches Ticketsystem? @anna @15.11.2026
+  Wir brauchen bis Ende Jahr eines.
+  - Variante A: günstig
+  - Variante B: mit Schnittstelle
+  ?! Budget freigeben? @ben
+  !! 21.10.2026: Ja
+  ```
+  !! 22.10.2026: Variante B
+- Nächster Punkt
 ````
 
 - **Block:** `?!```` öffnet einen mehrzeiligen Entscheid, eine Zeile ```` ``` ```` schliesst ihn. Der Rest der
@@ -355,6 +364,12 @@ Ab 1.11. liegen alle Projektordner auf SharePoint.
   ```` ```sprache ````, damit ein schlichtes ```` ``` ```` den Block schliessen kann.
 - **In Listen:** `- ?! …` oder `1. ? …` ist ein Eintrag als Listenpunkt, die Antwort steht eingerückt darunter.
   Auch eine eingerückte `?`-Zeile unter einem Listenpunkt wird zum Kasten.
+- **Blöcke in Listen (seit 2.6.0):** `- ?!``` Titel` (auch `1.`, `*`, `+` und in Unterlisten) macht den Block zum
+  Listenpunkt. Beschreibung, Unter-Einträge und ```` ``` ```` stehen eingerückt unter dem Text des Punkts, der
+  Entscheid gleich eingerückt danach; die Liste geht danach weiter. Die Einrückung ist nachsichtig: Zum Block gehört
+  alles bis zum ```` ``` ````, auch eine Zeile ohne Einrückung. Eine Aufgabe (`- [ ] …`) ist nie zugleich ein
+  Eintrag. Ältere Notizen mit `- ?!```` kommen beim ersten Öffnen mit 2.6.0 in die Übersicht (Merker `index_rules`
+  in `meta`, ohne neues Schema).
 - **Vorschau:** ein Kasten je Block mit Titel, Beschreibung, den Unter-Einträgen an ihrem Platz und dem
   Entscheid unten. Aufgaben im Block lassen sich abhaken.
 - **Ansichten «Entscheide» und «Fragen»:** Unter dem Titel stehen die ersten Zeilen der Beschreibung als
@@ -365,11 +380,13 @@ Ab 1.11. liegen alle Projektordner auf SharePoint.
   bei einem Unterentscheid im Block; einem Block ohne Ende setzt es das ```` ``` ```` davor.
 - **Editor:** Mehrere Zeilen markieren und **?!** (oder `Ctrl+Shift+D`, für Fragen **?**) macht daraus einen
   Block, die erste Zeile wird der Titel; nochmals drücken macht ihn wieder zu Text, das andere Zeichen wechselt
-  die Art. In einer Liste setzen **?** und **?!** das Zeichen hinter das Listenzeichen. `Enter` am Ende von
-  `?!``` Titel` setzt das ```` ``` ```` darunter, wenn es noch fehlt.
+  die Art. In einer Liste setzen **?** und **?!** das Zeichen hinter das Listenzeichen; sind mehrere Listenpunkte
+  markiert, wird der Block der erste Punkt, die übrigen rücken als Beschreibung darunter (und zurück). `Enter` am
+  Ende von `?!``` Titel` setzt das ```` ``` ```` darunter, wenn es noch fehlt; bei `- ?!``` Titel` eingerückt auf
+  den Text des Punkts, und auch bei einem fertigen Block nur eingerückt statt mit einem neuen Listenpunkt.
 - **Druck und Export:** Der Druck zeigt die ganze Beschreibung und rückt Unterentscheide ein. Der Markdown-Export
   macht aus einem Block ein Zitat mit Beschreibung, Unter-Einträge darin werden ein Zitat im Zitat; Einträge in
-  Listen bleiben Listenpunkte. Code (```` ``` ```` und `~~~`) zählt weder als Frage noch als Querverweis.
+  Listen bleiben Listenpunkte, ein Block in einer Liste ein Listenpunkt mit der Beschreibung eingerückt darunter. Code (```` ``` ```` und `~~~`) zählt weder als Frage noch als Querverweis.
 
 ### Vorlagen (seit 2.5.0)
 

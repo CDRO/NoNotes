@@ -76,11 +76,12 @@
   }
 
   const LIST_ITEM_RE = /^(\s*(?:[-*+]|\d+[.)])\s+)(?!\[[ xX]\]\s)/; // Listenpunkt ohne Kästchen
-  const BLOCK_OPEN_RE = /^(\s*)\?(!?)\s?```(.*)$/;
+  const BLOCK_OPEN_RE = /^(\s*)((?:[-*+]|\d+[.)])\s+)?\?(!?)\s?```(.*)$/; // "?!``` Titel", auch als Listenpunkt "- ?!``` Titel" (v2.6.0)
   const BLOCK_CLOSE_RE = /^\s*```\s*$/;
 
   /** Mehrere Zeilen als Block "?!``` Titel" … "```" (die erste Zeile wird der Titel); ein markierter Block wird wieder Text, mit dem
-   *  anderen Zeichen wechselt er die Art. null, wenn das nicht passt (dann gilt das Umschalten Zeile für Zeile). */
+   *  anderen Zeichen wechselt er die Art. Ist die erste Zeile ein Listenpunkt, wird der Block dieser Listenpunkt ("- ?!``` Titel"),
+   *  die übrigen Zeilen rücken unter seinen Text (und zurück). null, wenn das nicht passt (dann gilt das Umschalten Zeile für Zeile). */
   function toggleBlock(text, s, e, kind) {
     const marker = kind === 'decision' ? '?!' : '?';
     const { from, to } = lineBounds(text, s, e);
@@ -92,17 +93,29 @@
     const open = BLOCK_OPEN_RE.exec(first);
     let out;
     if (open && BLOCK_CLOSE_RE.test(last)) {
-      if ((open[2] ? '?!' : '?') !== marker) {
+      const list = open[2] || '';
+      const title = open[4].trim();
+      if ((open[3] ? '?!' : '?') !== marker) {
         out = lines.slice();
-        out[fi] = open[1] + marker + '```' + (open[3].trim() ? ' ' + open[3].trim() : '');
+        out[fi] = open[1] + list + marker + '```' + (title ? ' ' + title : '');
       } else {
-        out = lines.slice(0, fi).concat(open[3].trim() ? [open[1] + open[3].trim()] : [], lines.slice(fi + 1, li), lines.slice(li + 1));
+        const unpad = ' '.repeat(list.length);
+        const inner = lines.slice(fi + 1, li).map(l => (list && l.startsWith(unpad) ? l.slice(unpad.length) : l));
+        out = lines.slice(0, fi).concat(title ? [open[1] + list + title] : [], inner, lines.slice(li + 1));
       }
     } else {
       const re = PREFIX_RE[kind];
       if (filled.every(([l]) => re.test(l.replace(LIST_ITEM_RE, '')))) return null; // alles schon markiert: Zeile für Zeile entfernen
       const indent = (first.match(/^\s*/) || [''])[0];
-      out = lines.slice(0, fi).concat([indent + marker + '``` ' + stripLinePrefixes(first).trim()], lines.slice(fi + 1, li + 1), [indent + '```'], lines.slice(li + 1));
+      const item = LIST_ITEM_RE.exec(first);
+      if (item) {
+        // Block als Listenpunkt: die weiteren Zeilen rücken um das Listenzeichen ein, unter den Text des Punkts
+        const pad = ' '.repeat(item[1].length - indent.length);
+        const inner = lines.slice(fi + 1, li + 1).map(l => (l.trim() ? pad + l : l));
+        out = lines.slice(0, fi).concat([item[1] + marker + '``` ' + stripLinePrefixes(first).trim()], inner, [' '.repeat(item[1].length) + '```'], lines.slice(li + 1));
+      } else {
+        out = lines.slice(0, fi).concat([indent + marker + '``` ' + stripLinePrefixes(first).trim()], lines.slice(fi + 1, li + 1), [indent + '```'], lines.slice(li + 1));
+      }
     }
     const joined = out.join('\n');
     return { text: text.slice(0, from) + joined + text.slice(to), selStart: from, selEnd: from + joined.length };
@@ -252,17 +265,21 @@
     return off;
   }
 
-  /** Enter am Ende von "?!``` Titel" ohne "```" weiter unten: eine leere Zeile für die Beschreibung und das "```" darunter. */
+  /** Enter am Ende von "?!``` Titel" ohne "```" weiter unten: eine leere Zeile für die Beschreibung und das "```" darunter. Als
+   *  Listenpunkt ("- ?!``` Titel") eingerückt auf den Text des Punkts, und auch mit "```" weiter unten nur eingerückt (kein neuer Punkt). */
   function closeBlock(base, s, lineStart, lineEnd) {
     const line = base.slice(lineStart, lineEnd);
     const m = BLOCK_OPEN_RE.exec(line);
     if (!m || s !== lineEnd) return null;
+    const pad = m[1] + ' '.repeat((m[2] || '').length);
+    let closed = false;
     for (const l of base.slice(lineEnd + 1).split('\n')) {
-      if (BLOCK_CLOSE_RE.test(l)) return null;
+      if (BLOCK_CLOSE_RE.test(l)) { closed = true; break; }
       if (BLOCK_OPEN_RE.test(l)) break;
     }
-    const out = base.slice(0, s) + '\n' + m[1] + '\n' + m[1] + '```' + base.slice(s);
-    const caret = s + 1 + m[1].length;
+    if (closed && !m[2]) return null;
+    const out = base.slice(0, s) + '\n' + pad + (closed ? '' : '\n' + pad + '```') + base.slice(s);
+    const caret = s + 1 + pad.length;
     return { text: out, selStart: caret, selEnd: caret };
   }
 

@@ -1236,6 +1236,50 @@ async function runDecisions(browser, part, step) {
   assert.deepEqual(errors, [], 'keine Fehler im Browser');
   part('Vorschau: Block als ein Kasten mit Unter-Einträgen, Listenpunkte; mehrere markierte Zeilen und «?!» ergeben einen Block; Druck mit Beschreibung');
 
+  // Blöcke in Listen (v2.6.0): markierte Listenpunkte werden mit «?!» ein Block im ersten Punkt, Enter rückt ein, Kasten im Listenpunkt
+  const items = '- Werkzeug wählen @anna\n- Variante A\n- Variante B';
+  await page.evaluate(text => {
+    const b = document.querySelector('#body');
+    b.value += '\n\n' + text;
+    b.dispatchEvent(new Event('input', { bubbles: true }));
+    b.focus();
+    b.setSelectionRange(b.value.length - text.length, b.value.length);
+  }, items);
+  await page.click('#decisionBtn');
+  await page.waitForFunction(() => document.querySelector('#body').value.endsWith('\n- ?!``` Werkzeug wählen @anna\n  - Variante A\n  - Variante B\n  ```'));
+  await page.waitForFunction(() => document.querySelectorAll('#preview li.q-li .md-q-block').length === 1);
+  assert.match(await page.locator('#preview li.q-li .md-q-block .md-q-details').innerText(), /Variante A\s+Variante B/);
+  await page.evaluate(() => {
+    const b = document.querySelector('#body');
+    b.value += '\n- ?!``` Zweiter Punkt';
+    b.dispatchEvent(new Event('input', { bubbles: true }));
+    b.focus();
+    b.setSelectionRange(b.value.length, b.value.length);
+  });
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Beschreibung');
+  await page.waitForFunction(() => document.querySelector('#body').value.endsWith('\n- ?!``` Zweiter Punkt\n  Beschreibung\n  ```'));
+  await page.waitForFunction(() => document.querySelectorAll('#preview li.q-li .md-q-block').length === 2);
+  await page.waitForFunction(SAVED);
+  // In der Ansicht «Entscheide» mit Beschreibung; entscheiden schreibt nach dem "```", eingerückt unter den Text des Punkts
+  await page.click('#backBtn');
+  await page.waitForSelector('body:not(.editor-open)');
+  await page.click('#viewDecisionsBtn');
+  await page.waitForSelector('body.view-decisions');
+  const tool = page.locator('.q-item', { hasText: 'Werkzeug wählen' });
+  await tool.waitFor();
+  assert.match(await tool.locator('.q-details').innerText(), /Variante A/);
+  await tool.locator('button:has-text("Entscheiden")').click();
+  await tool.locator('.q-form textarea').fill('Variante B');
+  await tool.locator('.q-form button[type="submit"]').click();
+  await page.waitForFunction(SAVED);
+  await page.waitForFunction(async id => (await __ctx.backend.getNote(id)).body.includes('  - Variante B\n  ```\n  !! '), blockNote);
+  const listBody = await page.evaluate(id => __ctx.backend.getNote(id).then(n => n.body.split('\n')), blockNote);
+  const at = listBody.indexOf('- ?!``` Werkzeug wählen @anna');
+  assert.deepEqual(listBody.slice(at + 3, at + 6), ['  ```', `  !! ${todayText()}: Variante B`, '- ?!``` Zweiter Punkt']);
+  assert.deepEqual(errors, [], 'keine Fehler im Browser');
+  part('Blöcke in Listen: Listenpunkte mit «?!» zum Block, Enter rückt ein und setzt "```", Kasten im Listenpunkt, Übersicht mit Beschreibung, entscheiden nach dem "```"');
+
   await ctx.close();
   fs.rmSync(tmp, { recursive: true, force: true });
 }
@@ -1967,7 +2011,7 @@ suite('Erweiterungs-Test', [
   { name: 'Hauptfarbe: Palette, Auswahl, Datei, Export und Druck, hell und dunkel', run: runPalette },
   { name: 'Videos: Karte statt Rahmen, Klick lädt abgeschottet, Druck und Listen mit Links, ausgeschaltet, Lesemodus', run: runEmbedsUi },
   { name: 'Querverweise: gestrichelte Linien, Schalter, eingeklappte Ziele, Vorschau, Export und Druck, gelöschtes Ziel', run: runLinks },
-  { name: 'Entscheide und Personen: Reiter, Ansicht, Entscheiden mit Datum, Vorschau, Toolleiste, Vorschläge beim Tippen von @, Export und Druck', run: runDecisions },
+  { name: 'Entscheide und Personen: Reiter, Ansicht, Entscheiden mit Datum, Vorschau, Toolleiste, Vorschläge beim Tippen von @, Export und Druck, Blöcke in Listen', run: runDecisions },
   { name: 'Vorlagen: Ordner verbinden, speichern, aus Vorlage anlegen und einfügen, Erlaubnis, ohne Ordner, Datei hinzufügen', run: runTemplatesUi },
   { name: 'Sprachen: Pseudo-Sprache durch alle Ansichten, Englisch, Browsersprache, Mehrzahl, Testpaket, Wechsel', run: runI18n },
   { name: 'WebMCP: Werkzeuge für den Agenten des Browsers, Aufrufe ändern Daten und Oberfläche, gespeichert, Lesemodus, ohne Schnittstelle nichts', run: runWebMcp },
