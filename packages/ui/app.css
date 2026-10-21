@@ -595,6 +595,9 @@ body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-
 .md a.md-wiki, .q-item a.md-wiki { text-decoration: none; border-bottom: 1px dashed var(--accent-ink); }
 .md a.md-wiki.missing, .q-item a.md-wiki.missing { color: var(--muted); border-bottom-color: var(--muted); }
 .md a.md-wiki-cross::before { content: "⇢ "; opacity: .7; }
+.md a.md-note, .q-item a.md-note, .t-item a.md-note { text-decoration: none; border-bottom: 1px solid var(--accent-ink); }
+.md a.md-note::before, .q-item a.md-note::before, .t-item a.md-note::before { content: "↗ "; opacity: .7; }
+.md a.md-note.missing, .q-item a.md-note.missing, .t-item a.md-note.missing { color: var(--muted); border-bottom-color: var(--muted); text-decoration: line-through; }
 .md a.md-wiki.missing::after { content: " +"; opacity: .7; }
 .q-item a.md-wiki.missing::after { content: " ?"; opacity: .7; }
 .md-q { display: flex; gap: 10px; align-items: flex-start; margin: .6em 0; padding: 8px 12px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border); }

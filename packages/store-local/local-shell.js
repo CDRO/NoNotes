@@ -29,6 +29,7 @@
   const DEFAULT_FILENAME = 'NoNotes.sqlite';
   const SAVE_DELAY_MS = 600;
   const AREA_PARAM = 'w';                     // index.html#w=<bereich> (oder ?w=<bereich>)
+  const NOTE_PARAM = 'n';                     // index.html#w=<bereich>&n=42-titel: die offene Notiz (v2.7.0)
   const SESSION_AREA_KEY = 'nonotes.area';    // aktiver Bereich dieses Tabs (übersteht Neuladen)
   const MAIN = Store.MAIN_AREA;
 
@@ -724,6 +725,8 @@
         s.areas.last = s.area.id;
         if (!s.areas.implicit) Store.browserStore.saveAreas(s.areas).catch(() => {});
       }
+      // Mit laufender Navigation schreibt der Kern die Adresse (Bereich und offene Notiz, routes.href unten)
+      if (host.replaceNav && host.replaceNav()) { if (s.baseTitle != null) document.title = multiArea() ? `${s.area.name} – ${s.baseTitle}` : s.baseTitle; return; }
       try {
         // In der Adresse steht der Bereich als #w=<kennung>; ein ?w=… von aussen wird dabei umgeschrieben
         const u = new URL(global.location.href);
@@ -905,6 +908,52 @@
       ]);
     }
 
+    // ---------- Adressen von Notizen (v2.7.0): «index.html#w=arbeit&n=42-sitzungsprotokoll» ----------
+    // Der Bereich steht in der Adresse, sobald es mehrere gibt (oder er schon drinsteht); die Notiz mit Nummer und lesbarem Titel.
+    // Ein Link gilt nur in diesem Browser auf diesem Rechner: dort liegen die Daten.
+    const R = global.NoNotesRoutes;
+    const routes = {
+      current() {
+        const h = R.hashParams(new URL(global.location.href));
+        return { area: urlArea(), note: R.noteOf(h.get(NOTE_PARAM)) };
+      },
+      href({ note, title }) {
+        const u = new URL(global.location.href);
+        const h = R.hashParams(u);
+        const withArea = multiArea() || h.has(AREA_PARAM) || u.searchParams.has(AREA_PARAM);
+        u.searchParams.delete(AREA_PARAM);
+        const out = new URLSearchParams();
+        if (withArea && s.area) out.set(AREA_PARAM, s.area.id);
+        for (const [k, v] of h) if (k !== AREA_PARAM && k !== NOTE_PARAM) out.set(k, v); // andere Teile bleiben
+        if (note != null) out.set(NOTE_PARAM, R.segment(note, title));
+        u.hash = out.toString();
+        return u.href;
+      },
+      parse(url) {
+        let u;
+        try { u = new URL(url, global.location.href); } catch (e) { return null; }
+        if (!R.samePage(u, new URL(global.location.href))) return null;
+        const h = R.hashParams(u);
+        const note = R.noteOf(h.get(NOTE_PARAM));
+        if (note == null) return null;
+        return { note, area: h.get(AREA_PARAM) || u.searchParams.get(AREA_PARAM) || null };
+      },
+      /** Gehört das Ziel zum offenen Bereich? */
+      isHere(target) {
+        if (!target.area || !s.area) return true;
+        const a = s.areas ? Store.findArea(s.areas.list, target.area) : null;
+        return !!a && a.id === s.area.id;
+      },
+      /** In den Bereich des Ziels wechseln; fehlt er in diesem Browser, ein Hinweis und false. */
+      async enter(target) {
+        if (!target || !target.area || !s.areas || !s.area) return true;
+        const a = Store.findArea(s.areas.list, target.area);
+        if (!a) { showMissingAreaBanner(target.area); return false; }
+        if (a.id === s.area.id) return true;
+        return switchArea(a.id);
+      },
+    };
+
     /** Adresse, die genau diesen Bereich öffnet (für Lesezeichen und Verknüpfungen auf dem Desktop). */
     function areaUrl() {
       const u = new URL(global.location.href); // genau der Pfad, unter dem die App gerade läuft (index.html oder /)
@@ -1035,14 +1084,7 @@
           switchArea(target.id);
         });
       }
-      // #w=… von Hand in der Adressleiste geändert: kein Neuladen, also hier wechseln
-      global.addEventListener('hashchange', () => {
-        const v = urlArea();
-        if (!v || !s.areas) return;
-        const a = Store.findArea(s.areas.list, v);
-        if (!a) { showMissingAreaBanner(v); return; }
-        if (a.id !== s.area.id) switchArea(a.id);
-      });
+      // #w=… von Hand in der Adressleiste geändert: der Kern meldet es über routes.enter (Zurück, Vor, Adresse, Links; v2.7.0)
       global.addEventListener('beforeunload', e => {
         if (isDirty()) { e.preventDefault(); e.returnValue = ''; }
       });
@@ -1072,6 +1114,7 @@
       id: 'local',
       start, afterReady, bind,
       templates,
+      routes,
       /** Aktiver Bereich und Verzeichnis (für Tests und Erweiterungen). */
       get area() { return s.area ? { id: s.area.id, name: s.area.name } : null; },
       get areas() { return s.areas ? s.areas.list.map(a => ({ id: a.id, name: a.name })) : []; },

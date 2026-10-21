@@ -60,6 +60,13 @@
 
   // ---------- Inline ----------
 
+  /** Link auf eine Notiz dieser App (v2.7.0, ctx.noteLink): öffnet sich in der App; ohne eigenen Linktext steht der Titel der Notiz da. */
+  function noteLinkHtml(nl, url, labelHtml, ctx) {
+    const label = labelHtml || ctx.text(nl.title || url);
+    return `<a href="${escapeHtml(url)}" class="md-note${nl.missing ? ' missing' : ''}" data-note-id="${nl.id}"${nl.area ? ` data-area="${escapeHtml(nl.area)}"` : ''}` +
+      `${nl.missing ? ` title="${escapeHtml(t('Diese Notiz gibt es nicht (mehr).'))}"` : ''}>${label}</a>`;
+  }
+
   function renderInline(src, ctx) {
     const text = ctx.text;
     let out = '';
@@ -130,6 +137,12 @@
       // Link [text](url)
       if (ch === '[') {
         const m = /^\[([^\]]+)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/.exec(src.slice(i));
+        const nl = m && ctx.noteLink ? ctx.noteLink(m[2]) : null;
+        if (nl) {
+          out += noteLinkHtml(nl, m[2], m[1] === m[2] ? null : renderInline(m[1], ctx), ctx);
+          i += m[0].length;
+          continue;
+        }
         if (m) {
           const url = safeUrl(m[2]);
           if (url) out += `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"${m[3] ? ` title="${escapeHtml(m[3])}"` : ''}>${renderInline(m[1], ctx)}</a>`;
@@ -147,6 +160,13 @@
       const it = /^(\*|_)(?=\S)([^*_]*?\S)\1(?![\w*_])/.exec(src.slice(i));
       if (it && (i === 0 || !/\w/.test(src[i - 1]))) { out += '<em>' + renderInline(it[2], ctx) + '</em>'; i += it[0].length; continue; }
 
+      // Adresse einer Notiz dieser App (auch file:// in der lokalen Version): Link mit dem Titel der Notiz
+      if (ctx.noteLink && (ch === 'h' || ch === 'f') && (i === 0 || !/[\w@]/.test(src[i - 1]))) {
+        const um = /^(?:https?|file):\/\/[^\s<>()\]]+[^\s<>()\].,;:!?'"]/.exec(src.slice(i));
+        const nl = um ? ctx.noteLink(um[0]) : null;
+        if (nl) { out += noteLinkHtml(nl, um[0], null, ctx); i += um[0].length; continue; }
+      }
+
       // Automatischer Link (https://… oder www.…)
       const auto = /^(https?:\/\/|www\.)[^\s<>()\]]+[^\s<>()\].,;:!?'"]/.exec(src.slice(i));
       if (auto && (i === 0 || !/[\w@]/.test(src[i - 1]))) {
@@ -157,7 +177,7 @@
       }
 
       // Normaler Text bis zum nächsten Sonderzeichen (mit Personen-Marken auch bis "@" und "(")
-      const stops = ctx.people ? '`![*_~hw@(' : '`![*_~hw';
+      const stops = (ctx.people ? '`![*_~hw@(' : '`![*_~hw') + (ctx.noteLink ? 'f' : '');
       let j = i + 1;
       while (j < n && !stops.includes(src[j])) j++;
       emit(src.slice(i, j));
@@ -170,7 +190,7 @@
 
   function makeCtx(options) {
     options = options || {};
-    return { text: makeText(options.highlight), resolveTitle: options.resolveTitle, resolveAttachment: options.resolveAttachment, interactiveTasks: !!options.interactiveTasks, lineMap: !!options.lineMap, embeds: !!options.embeds, embedLoad: options.embedLoad, people: !!options.people,
+    return { text: makeText(options.highlight), resolveTitle: options.resolveTitle, noteLink: options.noteLink || null, resolveAttachment: options.resolveAttachment, interactiveTasks: !!options.interactiveTasks, lineMap: !!options.lineMap, embeds: !!options.embeds, embedLoad: options.embedLoad, people: !!options.people,
       inBlock: !!options.inBlock, lineOffset: options.lineOffset || 0, options };
   }
 

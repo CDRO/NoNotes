@@ -21,6 +21,7 @@
   const Dates = window.NoNotesDates;
   const Cal = window.NoNotesCalendar;
   const Merge = window.NoNotesMerge;
+  const Routes = window.NoNotesRoutes;
   const joinParts = (...parts) => parts.filter(Boolean).join(', ');
   const errorText = e => Backend.errorText(e);
   const THEME_KEY = 'nonotes.theme';   // Zwischenspeicher des Designs; massgebend ist meta 'theme' der Datenbank
@@ -77,7 +78,7 @@
     exportBtn: $('#exportBtn'), exportDialog: $('#exportDialog'), exportForm: $('#exportForm'),
     exportDirBtn: $('#exportDirBtn'), exportZipBtn: $('#exportZipBtn'), exportHint: $('#exportHint'),
     attachBtn: $('#attachBtn'), attachInput: $('#attachInput'), attachments: $('#attachments'),
-    mapPrintBtn: $('#mapPrintBtn'), qPrintBtn: $('#qPrintBtn'), printBtn: $('#printBtn'),
+    mapPrintBtn: $('#mapPrintBtn'), qPrintBtn: $('#qPrintBtn'), printBtn: $('#printBtn'), copyLinkBtn: $('#copyLinkBtn'),
     multiBar: $('#multiBar'), multiCount: $('#multiCount'), multiPrintBtn: $('#multiPrintBtn'), multiClearBtn: $('#multiClearBtn'),
     printDialog: $('#printDialog'), printForm: $('#printForm'), printGoBtn: $('#printGoBtn'),
     printScopeCurrent: $('#printScopeCurrent'), printScopeSubtree: $('#printScopeSubtree'),
@@ -129,6 +130,10 @@
   };
 
   const state = {
+    navReady: false,             // Navigation mit dem Verlauf läuft (nach dem Start)
+    navApplying: false,          // ein Eintrag des Verlaufs wird gerade angewendet: keine neuen Schritte
+    navChain: Promise.resolve(), // Schritte nacheinander
+    navTitleTimer: null,
     currentId: null,
     query: '',
     view: 'map',
@@ -304,6 +309,7 @@
     showEditorView(false);
     document.body.classList.remove('editor-open');
     if (state.map) state.map.requestFit();
+    replaceNav(); // keine Notiz mehr offen
   }
 
   function shellHost() {
@@ -318,6 +324,8 @@
       ensureSaved: () => ensureSaved(),
       renderAll: () => renderAll(),
       onDatabaseReplaced,
+      // Adresse nachführen (v2.7.0); false, solange die Navigation noch nicht läuft (dann setzt die Hülle die Adresse selbst)
+      replaceNav: () => { if (!state.navReady) return false; replaceNav(); return true; },
     };
   }
 
@@ -370,6 +378,7 @@
     await setView(['list', 'questions', 'decisions', 'tasks'].includes(view) ? view : 'map');
     await renderAll();
     shell.afterReady();
+    await startNav();
     setupTemplates();
     Mentions.provide(localPeople); // Kürzel, die in der Datei schon vorkommen
     await Plugins.activateAll(pluginContext);
@@ -580,6 +589,7 @@
       await renderEditor();
     }
     renderMulti();
+    pushNav();
   }
 
   /** Zeichnet die aktive Ansicht neu (nach Schliessen des Editors oder Änderungen). */
@@ -1459,6 +1469,7 @@
       el.editorPane.hidden = true;
       el.editorEmpty.hidden = false;
       el.statusbar.classList.remove('has-note');
+      replaceNav();
       return;
     }
     el.editorEmpty.hidden = true;
@@ -1723,11 +1734,13 @@
     const isLatest = fresh('preview');
     const text = el.body.value;
     const resolveTitle = await wikiResolver();
+    const noteLink = await noteLinkResolver([text]);
     await prefetchAttachments(text);
     if (!isLatest()) return;
     el.preview.innerHTML = M.render(text, {
       highlight: state.query.trim() || null,
       resolveTitle,
+      noteLink,
       resolveAttachment: id => state.attachmentUrls.get(id) || null,
       interactiveTasks: !el.body.readOnly,
       lineMap: true,
@@ -1811,6 +1824,7 @@
     if (load) { e.preventDefault(); loadEmbed(load.closest('.md-embed'), true); return; }
     const a = e.target.closest('a');
     if (!a) return;
+    if (a.classList.contains('md-note')) { e.preventDefault(); await followNoteLink(a.getAttribute('href')); return; }
     if (a.classList.contains('md-wiki')) {
       e.preventDefault();
       if (a.dataset.noteId) { await openNote(Number(a.dataset.noteId)); return; }
@@ -1832,6 +1846,7 @@
     const a = e.target.closest('a');
     if (!a) return;
     e.stopPropagation();
+    if (a.classList.contains('md-note')) { e.preventDefault(); await followNoteLink(a.getAttribute('href')); return; }
     if (a.classList.contains('md-wiki')) {
       e.preventDefault();
       if (a.dataset.noteId) await openNote(Number(a.dataset.noteId));
@@ -1947,6 +1962,7 @@
     await renderEditor();
     if (isNarrow()) showEditorView(true);
     if (focusEditor) (el.title.value ? el.body : el.title).focus();
+    pushNav();
   }
 
   /** Öffnet eine Notiz im Editor: in der Liste rechts, aus der Mindmap als Vollbild. */
@@ -1963,6 +1979,7 @@
       await selectNote(id, true);
     }
     if (opts && typeof opts.line === 'number') jumpToLine(opts.line);
+    pushNav();
     emitPlugins('note:open', { id });
   }
 
@@ -1994,6 +2011,180 @@
     } else if (state.view === 'tasks') {
       await renderTasks();
     }
+    pushNav();
+  }
+
+  // ---------- Navigation mit dem Verlauf des Browsers (v2.7.0) ----------
+  // Ein Schritt ist: eine Notiz öffnen (in der Liste: wählen), zur Übersicht zurück, die Ansicht wechseln, einem Verweis folgen. Jeder
+  // Schritt ist ein Eintrag im Verlauf (history.pushState); Zurück und Vor, auch mit den Maustasten, bewegen sich darin. Die Adresse nennt
+  // die offene Notiz mit Nummer und lesbarem Titel; ihre Form bestimmt die Hülle (shell.routes, packages/core/routes.js), sonst «#n=…».
+  // Keine Schritte: Auswahl in der Mindmap, Bearbeiten/Vorschau, Suche, Filter, Sortierung.
+
+  const VIEWS = ['map', 'list', 'questions', 'decisions', 'tasks'];
+  let defaultRoutes = null;
+  const routes = () => (shell && shell.routes) || defaultRoutes || (defaultRoutes = Routes.hashRoutes());
+  const navEntry = () => (history.state && history.state.nn) || null;
+
+  /** Was gerade offen ist: die Notiz im Editor (in der Liste die gewählte) und die Ansicht. */
+  function navNow() {
+    const open = isEditorOpen() || state.view === 'list';
+    return { note: open && state.currentId != null ? state.currentId : null, view: state.view };
+  }
+
+  function writeNav(push) {
+    const cur = navEntry();
+    const now = navNow();
+    const entry = push
+      ? { note: now.note, view: now.view, depth: (cur ? cur.depth : 0) + 1, fromOverview: !!cur && cur.note == null }
+      : Object.assign({ depth: 0, fromOverview: false }, cur || {}, now);
+    const url = routes().href({ note: now.note, title: now.note != null && now.note === state.currentId ? el.title.value : '' });
+    try { history[push ? 'pushState' : 'replaceState'](Object.assign({}, history.state, { nn: entry }), '', url); } catch (e) { /* manche Browser bei file:// */ }
+  }
+
+  /** Ein Schritt, wenn sich gegenüber dem jetzigen Eintrag die Notiz oder die Ansicht geändert hat; sonst nur nachführen. */
+  function pushNav() {
+    if (!state.navReady || state.navApplying) return;
+    const cur = navEntry();
+    const now = navNow();
+    writeNav(!!cur && (cur.note !== now.note || cur.view !== now.view));
+  }
+
+  /** Den jetzigen Eintrag nachführen (Titel in der Adresse, gelöschte Notiz, anderer Bereich), ohne neuen Schritt. */
+  function replaceNav() {
+    if (!state.navReady || state.navApplying) return;
+    writeNav(false);
+  }
+
+  function scheduleNavTitle() {
+    clearTimeout(state.navTitleTimer);
+    state.navTitleTimer = setTimeout(replaceNav, 600); // Browser bremsen viele Änderungen der Adresse
+  }
+
+  /** Schritte nacheinander anwenden (schnelles Zurück, Zurück während ein Bereich lädt). */
+  function queueNav(fn) {
+    state.navChain = state.navChain.then(fn).catch(e => { console.error(e); setStatus(errorText(e), 'error'); });
+    return state.navChain;
+  }
+
+  /** Eine Notiz für einen Schritt: null, wenn es sie nicht (mehr) gibt (mit Hinweis). */
+  async function noteForNav(id) {
+    const note = await B.getNote(id).catch(() => null);
+    if (note && !note.deleted_at) return note;
+    hint(note ? t('Diese Notiz liegt im Papierkorb.') : t('Diese Notiz gibt es nicht (mehr).'));
+    return null;
+  }
+
+  /** Einen Eintrag des Verlaufs anwenden (Zurück, Vor, Adresse von Hand geändert): target { note, view, area }. */
+  async function applyNav(target) {
+    let failed = false;
+    state.navApplying = true;
+    try {
+      const r = routes();
+      if (r.enter && (await r.enter(target)) === false) return; // lokal: in den Bereich der Adresse wechseln
+      const view = VIEWS.includes(target.view) ? target.view : state.view;
+      const now = navNow();
+      if (now.note === target.note && now.view === view) return;
+      if (now.note != null && now.note !== target.note && !(await ensureSaved())) { failed = true; return; }
+      const note = target.note != null ? await noteForNav(target.note) : null;
+      if (view !== state.view) await setView(view);
+      if (note) await openNote(note.id);
+      else if (isEditorOpen()) await closeEditor();
+      else if (state.view === 'list' && state.currentId != null) {
+        state.currentId = null;
+        setActiveItem(null);
+        await renderEditor();
+        showEditorView(false);
+      }
+    } finally {
+      state.navApplying = false;
+    }
+    // Was jetzt offen ist, steht in der Adresse; ging der Schritt nicht (Speichern abgebrochen), gilt der Stand der Oberfläche
+    writeNav(failed);
+  }
+
+  async function onNavEvent() {
+    const at = routes().current();
+    const entry = navEntry();
+    await applyNav(Object.assign({ view: state.view }, entry || {}, { note: at.note, area: at.area }));
+  }
+
+  /** Beim Start: Notiz aus der Adresse öffnen (Link, Lesezeichen, Neuladen, Vor nach dem Verlassen der App). */
+  async function startNav() {
+    state.navReady = true;
+    window.addEventListener('popstate', () => queueNav(onNavEvent));
+    window.addEventListener('hashchange', () => queueNav(onNavEvent)); // falls ein Browser bei «#…» kein popstate meldet
+    const at = routes().current();
+    const entry = navEntry();
+    if (at.note != null || (entry && entry.view && entry.view !== state.view)) await queueNav(onNavEvent);
+    else replaceNav();
+  }
+
+  /** Pfeil «Zurück» im Editor und Esc: war der Schritt davor die Übersicht, wie Zurück im Browser; sonst die Übersicht als Schritt. */
+  async function closeEditorStep() {
+    const cur = navEntry();
+    if (state.navReady && cur && cur.note != null && cur.note === state.currentId && cur.fromOverview && cur.depth > 0) {
+      if (!(await ensureSaved())) return;
+      history.back();
+      return;
+    }
+    await closeEditor();
+  }
+
+  /** Einem Link auf eine Notiz dieser App folgen (aus der Vorschau oder einer Liste): ein Schritt, lokal auch in einen anderen Bereich. */
+  function followNoteLink(href) {
+    const target = routes().parse(href);
+    if (!target) { window.open(href, '_blank', 'noopener'); return Promise.resolve(); }
+    return queueNav(async () => {
+      const r = routes();
+      if (r.enter) {
+        state.navApplying = true; // der Bereichswechsel schreibt die Adresse nicht um: der Eintrag davor bleibt, wie er war
+        let ok;
+        try { ok = await r.enter(target); } finally { state.navApplying = false; }
+        if (ok === false) return;
+      }
+      const note = await noteForNav(target.note);
+      if (note) await openNote(note.id);
+    });
+  }
+
+  /** «Link kopieren»: volle Adresse der Notiz in die Zwischenablage (sonst zum Kopieren angezeigt). */
+  async function copyNoteLink(id) {
+    hideContextMenu();
+    closeNoteMenu();
+    const note = id != null ? await B.getNote(id) : null;
+    if (!note) return;
+    const titel = note.title.trim() || t('Ohne Titel');
+    const url = routes().href({ note: note.id, title: note.title });
+    try {
+      await navigator.clipboard.writeText(url);
+      hint(t('Link zu „{titel}“ kopiert', { titel }));
+    } catch (e) {
+      window.prompt(t('Link zu „{titel}“ (mit Ctrl+C kopieren):', { titel }), url);
+    }
+  }
+
+  /** Links auf Notizen dieser App in Texten: Titel der Ziele vorab holen (nur, wenn es solche Links gibt), dann ein Auflöser für die
+   *  Darstellung: url → { id, title, missing, area } oder null. Ziele in einem anderen Bereich (lokal) kennen ihren Titel nicht. */
+  async function noteLinkResolver(texts) {
+    const r = routes();
+    const local = target => !target.area || (r.isHere ? r.isHere(target) : false);
+    const ids = new Set();
+    for (const text of texts) {
+      for (const m of String(text || '').matchAll(/(?:https?|file):\/\/[^\s<>()\]]+/g)) {
+        const target = r.parse(m[0].replace(/[.,;:!?'"]+$/, ''));
+        if (target && local(target)) ids.add(target.note);
+        if (ids.size > 50) break;
+      }
+    }
+    const notes = new Map();
+    await Promise.all([...ids].map(async id => { const n = await B.getNote(id).catch(() => null); if (n) notes.set(id, n); }));
+    return url => {
+      const target = r.parse(url);
+      if (!target) return null;
+      if (!local(target)) return { id: target.note, title: null, missing: false, area: target.area };
+      const n = notes.get(target.note);
+      return { id: target.note, title: n ? n.title.trim() || t('Ohne Titel') : null, missing: !n || !!n.deleted_at, area: null };
+    };
   }
 
   async function newNote() {
@@ -2008,6 +2199,7 @@
     markEdited();
     if (isNarrow()) showEditorView(true);
     el.title.focus();
+    pushNav();
   }
 
   function selectionAsParent() {
@@ -2874,6 +3066,7 @@
       B.countQuestions(today),
       B.listPeople(),
     ]);
+    const noteLink = await noteLinkResolver(rows.map(r => [r.text, r.details, r.answer].join('\n')));
     if (!isLatest()) return;
     const c = decision ? (counts.decisions || { open: 0, total: 0, overdue: 0 }) : counts;
     fillPersonFilter(people);
@@ -2915,7 +3108,7 @@
       h.appendChild(cnt);
       section.appendChild(h);
       // Unter-Einträge eines Blocks direkt unter ihm (wenn er in der Auswahl ist), sonst für sich mit «Teil von …»
-      for (const { row, nested } of Q.nest(g.items)) section.appendChild(renderQuestionItem(row, today, resolve, nested));
+      for (const { row, nested } of Q.nest(g.items)) section.appendChild(renderQuestionItem(row, today, resolve, nested, noteLink));
       frag.appendChild(section);
     }
     el.qList.replaceChildren(frag);
@@ -2934,7 +3127,7 @@
     });
   }
 
-  function renderQuestionItem(r, today, resolve, nested) {
+  function renderQuestionItem(r, today, resolve, nested, noteLink) {
     const decision = r.kind === 'decision';
     const item = document.createElement('article');
     item.className = 'q-item ' + (decision ? 'decision ' : '') + (nested ? 'sub ' : '') + (r.answer ? 'answered' : 'open');
@@ -2948,7 +3141,7 @@
     mark.textContent = r.answer ? '✓' : decision ? '?!' : '?';
     const text = document.createElement('div');
     text.className = 'q-text';
-    text.innerHTML = M.inline(r.text, { highlight: state.qQuery.trim() || null, resolveTitle: resolve, people: true });
+    text.innerHTML = M.inline(r.text, { highlight: state.qQuery.trim() || null, resolveTitle: resolve, noteLink, people: true });
     head.append(mark, text);
     if (r.due) {
       const due = document.createElement('span');
@@ -2972,7 +3165,7 @@
     if (r.details) {
       const details = document.createElement('div');
       details.className = 'q-details md';
-      details.innerHTML = M.render(r.details, { highlight: state.qQuery.trim() || null, resolveTitle: resolve });
+      details.innerHTML = M.render(r.details, { highlight: state.qQuery.trim() || null, resolveTitle: resolve, noteLink });
       item.appendChild(details);
       const long = r.details.split('\n').length > 3 || r.details.length > 240;
       if (long) {
@@ -2994,7 +3187,7 @@
     if (r.answer) {
       const a = document.createElement('div');
       a.className = 'q-answer';
-      a.innerHTML = M.render(r.answer, { highlight: state.qQuery.trim() || null, resolveTitle: resolve });
+      a.innerHTML = M.render(r.answer, { highlight: state.qQuery.trim() || null, resolveTitle: resolve, noteLink });
       item.appendChild(a);
     }
 
@@ -3250,6 +3443,7 @@
     const today = Dates.nowIso();
     const rows = await B.listTasks({ status: state.tStatus, query: state.tQuery, tag: state.tTag, sort: state.tSort });
     const counts = await B.countTasks(today);
+    const noteLink = await noteLinkResolver(rows.map(r => r.text));
     if (!isLatest()) return;
     el.tCount.textContent = t('{anzahl} von {gesamt} · {offen} offen', { anzahl: rows.length, gesamt: counts.total, offen: counts.open }) + (counts.overdue ? ' · ' + t('{n} überfällig', { n: counts.overdue }) : '');
 
@@ -3287,7 +3481,7 @@
       cnt.textContent = tn('{n} Aufgabe', '{n} Aufgaben', g.items.length);
       h.appendChild(cnt);
       section.appendChild(h);
-      for (const r of g.items) section.appendChild(renderTaskItem(r, today, resolve));
+      for (const r of g.items) section.appendChild(renderTaskItem(r, today, resolve, noteLink));
       frag.appendChild(section);
     }
     el.tList.replaceChildren(frag);
@@ -3298,7 +3492,7 @@
       : t('Noch keine Aufgaben. Eine Zeile „- [ ] Text“ wird zur Aufgabe.');
   }
 
-  function renderTaskItem(r, today, resolve) {
+  function renderTaskItem(r, today, resolve, noteLink) {
     const item = document.createElement('article');
     item.className = 'q-item t-item ' + (r.done ? 'done' : 'open') + (r.depth ? ' sub' : '');
     item.dataset.id = String(r.id);
@@ -3315,7 +3509,7 @@
     box.addEventListener('change', () => toggleTaskDone(r.id, box.checked));
     const text = document.createElement('div');
     text.className = 'q-text';
-    text.innerHTML = M.inline(r.text, { highlight: state.tQuery.trim() || null, resolveTitle: resolve });
+    text.innerHTML = M.inline(r.text, { highlight: state.tQuery.trim() || null, resolveTitle: resolve, noteLink });
     text.title = t('Doppelklick: Aufgabe samt Unteraufgaben abschliessen');
     text.addEventListener('dblclick', async e => {
       if (e.target.closest('a')) return;
@@ -3824,6 +4018,7 @@
     }
     if (templateStore() && canSaveTemplates()) items.push({ label: t('Als Vorlage speichern…'), action: () => openTemplateSave(id) });
     items.push(
+      { label: t('Link kopieren'), action: () => copyNoteLink(id) },
       { label: t('Drucken…'), action: () => openPrintDialog({ noteId: id, scope: 'subtree' }) },
       { write: true, label: t('Archivieren…'), action: () => archiveNotes([id]) },
       { write: true, label: t('Nach oben'), key: 'Alt+↑', action: async () => { state.mapSelection = id; await moveSelected(-1); } },
@@ -3887,6 +4082,7 @@
       if (e.altKey) { await moveSelected(key === 'ArrowUp' ? -1 : 1); return; }
       moveSelection(key === 'ArrowUp' ? 'up' : 'down');
     } else if (key === 'ArrowLeft' || key === 'ArrowRight') {
+      if (e.altKey) return; // Alt+← / Alt+→ sind Zurück und Vor des Browsers
       e.preventDefault();
       moveSelection(key === 'ArrowLeft' ? 'left' : 'right');
     } else if (key === '+' || key === '=') {
@@ -4053,8 +4249,9 @@
         setStatus(errorText(r), 'error');
       }
     });
-    el.backBtn.addEventListener('click', closeEditor);
+    el.backBtn.addEventListener('click', closeEditorStep);
     el.title.addEventListener('input', onEdit);
+    el.title.addEventListener('input', scheduleNavTitle);
     el.body.addEventListener('input', onEdit);
     el.search.addEventListener('input', () => onSearchInput('list'));
     el.search.addEventListener('keydown', e => {
@@ -4095,6 +4292,7 @@
     el.tList.addEventListener('click', onListLinkClick);
     el.attachBtn.addEventListener('click', () => { el.attachInput.value = ''; el.attachInput.click(); });
     el.printBtn.addEventListener('click', () => openPrintDialog({ noteId: state.currentId }));
+    el.copyLinkBtn.addEventListener('click', () => copyNoteLink(state.currentId));
     el.mapPrintBtn.addEventListener('click', () => openPrintDialog({}));
     el.multiPrintBtn.addEventListener('click', () => openPrintDialog({ scope: 'selection' }));
     el.multiClearBtn.addEventListener('click', clearMulti);
@@ -4189,7 +4387,7 @@
         if (!el.contextMenu.hidden) { hideContextMenu(); return; }
         if (!el.menu.hidden) { closeMenu(); return; }
         if (!el.noteMenu.hidden) { closeNoteMenu(); return; }
-        if (isEditorOpen()) { await closeEditor(); return; }
+        if (isEditorOpen()) { await closeEditorStep(); return; }
         if (isNarrow() && document.body.classList.contains('view-editor')) showEditorView(false);
       }
     });

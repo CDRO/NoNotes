@@ -2703,8 +2703,195 @@ async function runAreas(browser, part, step) {
   }
 }
 
+// ============================================================
+/* Navigation (v2.7.0): Schritte im Verlauf des Browsers (Notiz öffnen, Übersicht, Ansicht, Verweis), Adresse mit Nummer und lesbarem
+   Titel, Neuladen, Pfeil im Editor, Link kopieren, eingefügte Links mit dem Titel der Notiz, Umbenennen ohne neuen Schritt, direkter
+   Einstieg, fehlende Notiz, Link in einen anderen Bereich. */
+async function runNavigation(browser, part, step) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'de-CH' });
+  await ctx.addInitScript(() => {
+    window.__clip = null;
+    try { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { window.__clip = text; } } }); } catch (e) { /* bleibt echt */ }
+  });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  const answers = [];
+  page.on('dialog', d => d.accept(d.type() === 'prompt' ? (answers.shift() || '') : undefined));
+  await page.goto(APP_URL);
+  await page.waitForSelector(READY, { timeout: 30000 });
+  const param = name => page.evaluate(n => new URLSearchParams(location.hash.slice(1)).get(n), name);
+  const editor = title => page.waitForFunction(t => (t === null ? !document.body.classList.contains('editor-open')
+    : document.body.classList.contains('editor-open') && document.querySelector('#title').value === t), title);
+  const openInMap = async title => { await page.dblclick(`.mm-node:has(> text:text-is("${title}"))`); await editor(title); };
+  const len = () => page.evaluate(() => history.length);
+  try {
+    await page.click('#viewListBtn');
+    await page.waitForSelector('body.view-list');
+    for (const [title, body] of [['Budget 2027', 'Zahlen'], ['Sitzungsprotokoll', 'Traktanden'], ['Ferien', 'Plan']]) {
+      await page.click('#newBtn');
+      await page.fill('#title', title);
+      await page.fill('#body', body);
+      await page.waitForFunction(SAVED);
+    }
+    const id = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#list li[data-id]')].map(li => [li.querySelector('.note-title').textContent, Number(li.dataset.id)])));
+    assert.equal(await param('n'), `${id.Ferien}-ferien`, 'in der Liste: die gewählte Notiz steht in der Adresse');
+    await page.click('#viewMapBtn');
+    await page.waitForSelector('body.view-map');
+    assert.equal(await param('n'), null, 'Mindmap ohne offene Notiz');
+
+    // Öffnen, Zurück, Vor, Neuladen
+    await openInMap('Sitzungsprotokoll');
+    assert.equal(await param('n'), `${id.Sitzungsprotokoll}-sitzungsprotokoll`, 'Nummer und lesbarer Titel');
+    await page.goBack();
+    await editor(null);
+    assert.equal(await param('n'), null);
+    assert.ok(await page.evaluate(() => document.body.classList.contains('view-map')), 'zurück in der Mindmap, nicht ausserhalb der App');
+    await page.goForward();
+    await editor('Sitzungsprotokoll');
+    await page.reload();
+    await page.waitForSelector(READY, { timeout: 30000 });
+    await editor('Sitzungsprotokoll');
+    part('Notiz öffnen ist ein Schritt: Zurück schliesst sie, Vor öffnet sie wieder, Neuladen behält sie');
+
+    // Pfeil im Editor wie Zurück (der Schritt davor war die Übersicht); Ansicht wechseln ist ein Schritt
+    await page.click('#backBtn');
+    await editor(null);
+    await page.goForward();
+    await editor('Sitzungsprotokoll');
+    await page.keyboard.press('Escape');
+    await editor(null);
+    await page.click('#viewDecisionsBtn').catch(() => {}); // nur sichtbar mit Entscheiden
+    await page.click('#viewTasksBtn');
+    await page.waitForSelector('body.view-tasks');
+    await page.goBack();
+    await page.waitForSelector('body.view-map');
+    await page.goForward();
+    await page.waitForSelector('body.view-tasks');
+    await page.click('#viewMapBtn');
+    await page.waitForSelector('body.view-map');
+    part('Pfeil im Editor und Esc wie Zurück; Ansicht wechseln ist ein Schritt');
+
+    // Link kopieren (Menü «Notiz» und Kontextmenü der Mindmap)
+    await openInMap('Budget 2027');
+    await page.click('#noteMenuBtn');
+    await page.click('#copyLinkBtn');
+    const budgetLink = `${APP_URL}#n=${id['Budget 2027']}-budget-2027`;
+    await page.waitForFunction(u => window.__clip === u, budgetLink);
+    assert.match(await page.textContent('#status'), /Link zu „Budget 2027“ kopiert/);
+    await page.click('#backBtn');
+    await editor(null);
+    await page.click('.mm-node:has(> text:text-is("Ferien"))', { button: 'right' });
+    await page.click('#contextMenu button:has-text("Link kopieren")');
+    await page.waitForFunction(u => window.__clip === u, `${APP_URL}#n=${id.Ferien}-ferien`);
+    part('Link kopieren: volle Adresse mit Nummer und Titel, aus dem Menü «Notiz» und der Mindmap');
+
+    // Eingefügte Links: Titel statt Adresse, Klick öffnet in der App (ein Schritt), fehlende Notiz durchgestrichen
+    await openInMap('Sitzungsprotokoll');
+    await page.fill('#body', `Siehe ${budgetLink}\n\n[Die Zahlen](${budgetLink})\n\nAlt: ${APP_URL}#n=9999-weg`);
+    await page.waitForFunction(SAVED);
+    await page.click('#modeSwitch [data-mode="split"]');
+    await page.waitForFunction(() => document.querySelectorAll('#preview a.md-note').length === 3);
+    assert.deepEqual(await page.locator('#preview a.md-note').allTextContents(), ['Budget 2027', 'Die Zahlen', `${APP_URL}#n=9999-weg`]);
+    assert.equal(await page.locator('#preview a.md-note.missing').count(), 1);
+    await page.locator('#preview a.md-note.missing').click();
+    await page.waitForFunction(() => /Diese Notiz gibt es nicht \(mehr\)\./.test(document.querySelector('#status').textContent));
+    await editor('Sitzungsprotokoll');
+    await page.locator('#preview a.md-note').first().click();
+    await editor('Budget 2027');
+    assert.equal(await param('n'), `${id['Budget 2027']}-budget-2027`);
+    await page.goBack();
+    await editor('Sitzungsprotokoll');
+    await page.goForward();
+    await editor('Budget 2027');
+    part('Eingefügte Links: Titel der Notiz statt Adresse, eigener Linktext bleibt, Klick öffnet in der App als Schritt, fehlende Notiz mit Hinweis');
+
+    // Umbenennen: die Adresse folgt, ohne neuen Schritt; der Link in der anderen Notiz zeigt den neuen Titel
+    const before = await len();
+    await page.fill('#title', 'Budget 2028');
+    await page.waitForFunction(n => new URLSearchParams(location.hash.slice(1)).get('n') === n, `${id['Budget 2027']}-budget-2028`);
+    assert.equal(await len(), before, 'kein neuer Schritt');
+    await page.waitForFunction(SAVED);
+    await page.goBack();
+    await editor('Sitzungsprotokoll');
+    await page.waitForFunction(() => document.querySelector('#preview a.md-note').textContent === 'Budget 2028', null, { timeout: 5000 });
+    // der Pfeil vor einem Verweis-Schritt führt in die Übersicht (der Schritt davor war eine Notiz, keine Übersicht)
+    await page.goForward();
+    await editor('Budget 2028');
+    await page.click('#backBtn');
+    await editor(null);
+    assert.equal(await param('n'), null);
+    await page.goBack();
+    await editor('Budget 2028');
+    part('Umbenennen: Adresse folgt ohne neuen Schritt, der Link zeigt den neuen Titel; Pfeil nach einem Verweis führt in die Übersicht');
+
+    // Adresse von Hand geändert, direkter Einstieg, fehlende Notiz
+    await page.goto(`${APP_URL}#n=${id.Ferien}-alter-titel`);
+    await editor('Ferien');
+    await page.waitForFunction(n => new URLSearchParams(location.hash.slice(1)).get('n') === n, `${id.Ferien}-ferien`);
+    await page.goto('about:blank');
+    await page.goto(`${APP_URL}#n=${id.Sitzungsprotokoll}`);
+    await page.waitForSelector(READY, { timeout: 30000 });
+    await editor('Sitzungsprotokoll');
+    assert.equal(await param('n'), `${id.Sitzungsprotokoll}-sitzungsprotokoll`, 'der Titel wird ergänzt');
+    await page.click('#backBtn');
+    await editor(null);
+    assert.ok(page.url().startsWith(APP_URL), 'direkt über einen Link gekommen: der Pfeil führt in die Übersicht, nicht aus der App');
+    await page.goto('about:blank');
+    await page.goto(`${APP_URL}#n=9999-weg`);
+    await page.waitForSelector(READY, { timeout: 30000 });
+    await page.waitForFunction(() => /Diese Notiz gibt es nicht \(mehr\)\./.test(document.querySelector('#status').textContent));
+    await editor(null);
+    assert.equal(await param('n'), null);
+    part('Adresse von Hand geändert öffnet die Notiz; direkter Einstieg mit Pfeil in die Übersicht; fehlende Notiz mit Hinweis');
+
+    // Link in einen anderen Bereich: wechselt hinein und öffnet die Notiz; Zurück kehrt in den ersten Bereich zurück
+    answers.push('Privat');
+    await page.click('#storageInfo');
+    await page.waitForSelector('#contextMenu:not([hidden])');
+    await page.click('#contextMenu button:has-text("Neuer Bereich…")');
+    await page.waitForFunction(() => /^Privat/.test(document.querySelector('#storageInfo .label').textContent));
+    await page.click('#banner button:has-text("Später")').catch(() => {});
+    await page.keyboard.press('Alt+1');
+    await page.waitForFunction(() => !/^Privat/.test(document.querySelector('#storageInfo .label').textContent));
+    const main = await param('w');
+    await page.waitForSelector('.mm-node:has(> text:text-is("Ferien"))');
+    await openInMap('Ferien');
+    await page.click('#noteMenuBtn');
+    await page.click('#copyLinkBtn');
+    await page.waitForFunction(m => window.__clip && window.__clip.includes(`w=${m}&n=`), main);
+    const ferienLink = await page.evaluate(() => window.__clip);
+    await page.click('#backBtn');
+    await editor(null);
+    await page.keyboard.press('Alt+2');
+    await page.waitForFunction(() => /^Privat/.test(document.querySelector('#storageInfo .label').textContent));
+    await page.click('#viewListBtn');
+    await page.waitForSelector('body.view-list');
+    await page.click('#newBtn');
+    await page.fill('#title', 'Privatnotiz');
+    await page.fill('#body', `Siehe ${ferienLink}`);
+    await page.waitForFunction(SAVED);
+    await page.waitForFunction(() => document.querySelectorAll('#preview a.md-note').length === 1);
+    assert.equal(await page.locator('#preview a.md-note').textContent(), ferienLink, 'Ziel in einem anderen Bereich: Titel unbekannt, die Adresse bleibt');
+    await page.locator('#preview a.md-note').click();
+    await page.waitForFunction(() => !/^Privat/.test(document.querySelector('#storageInfo .label').textContent));
+    await page.waitForFunction(() => document.querySelector('#title').value === 'Ferien');
+    assert.equal(await param('w'), main);
+    await page.goBack();
+    await page.waitForFunction(() => /^Privat/.test(document.querySelector('#storageInfo .label').textContent));
+    await page.waitForFunction(() => document.querySelector('#title').value === 'Privatnotiz');
+    assert.equal(await param('w'), 'privat');
+    part('Link in einen anderen Bereich: wechselt hinein und öffnet die Notiz, Zurück kehrt in den Bereich davor zurück');
+    assert.deepEqual(errors, [], 'keine Fehler im Browser');
+  } finally {
+    await ctx.close();
+  }
+}
+
 suite('App-Test', [
   { name: null, run: runSmoke }, // druckt seine Gruppen selbst
   { name: 'Bereiche: anlegen, wechseln (Statusleiste, Menü, Alt+1 … 9), Adresse #w=… und ?w=…, Weiterleitung eines Webservers, Datei und Hauptfarbe je Bereich, umbenennen, entfernen, Datei als Bereich, zwei Tabs', run: runAreas },
+  { name: 'Navigation: Zurück und Vor, Adresse mit Notiz, Neuladen, Pfeil im Editor, Ansichten, Link kopieren, eingefügte Links, Umbenennen, direkter Einstieg, fehlende Notiz, anderer Bereich', run: runNavigation },
   { name: 'Backend-Vertrag: Methodenliste, JSON-sichere Rückgaben, Änderungsmeldung, Fehlerkennungen', run: runBackend },
 ], { browser: true });

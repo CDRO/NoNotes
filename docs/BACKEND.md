@@ -117,3 +117,20 @@ Anlegen der Notizen stehen in `packages/core/templates.js` (`NoNotesTemplates`);
 
 Die lokale Hülle nutzt `packages/store-local/templates-local.js` (Ordner `templates/`, sonst Browser); dieselbe Schnittstelle bekommt der
 Werkzeugkatalog der Agenten als `options.templates` (`list_templates`, `create_note_from_template`).
+
+**`routes`** (seit v2.7.0): wo die offene Notiz in der Adresse steht. Der Kern schreibt damit den Verlauf des Browsers (Zurück, Vor,
+Neuladen), «Link kopieren» und erkennt eingefügte Links auf Notizen; das Format des Teils für die Notiz ist immer «Nummer-titel»
+(`NoNotesRoutes.segment(id, titel)`, gelesen mit `NoNotesRoutes.noteOf`). Ohne `routes` gilt `NoNotesRoutes.hashRoutes()` (`#n=42-titel`).
+
+| Methode | Zweck |
+| --- | --- |
+| `current()` | `{ note, area? }` aus der jetzigen Adresse (`note` null: keine Notiz) |
+| `href({ note, title })` | volle Adresse für diese Notiz oder (`note` null) die Übersicht; andere Teile der Adresse bleiben |
+| `parse(url)` | `{ note, area? }`, wenn `url` eine Notiz dieser App ist (lokal: dieselbe Seite; im Dienst: derselbe Arbeitsbereich), sonst null |
+| `enter(target)` | wahlweise: `Promise<boolean>`, macht die Daten passend, bevor der Kern die Notiz öffnet (lokal: Wechsel in den Bereich `target.area`); false bricht ab |
+
+Die lokale Hülle setzt die Notiz hinter das `#` (`#w=arbeit&n=42-…`, `pushState` geht auch unter `file://`, solange sich nur der Teil
+nach `#` ändert). Der Dienst nutzt den Pfad (`/w/<id>/42-…`), damit auch ein Server oder `curl` die Notiz ansprechen kann; der Server
+muss dafür die App unter diesen Pfaden ausliefern. Der Kern speichert vor jedem Schritt und legt `{ nn: { note, view, depth,
+fromOverview } }` in `history.state` (andere Felder dort bleiben). `host.replaceNav()` schreibt die
+Adresse neu (etwa nach einem Wechsel des Bereichs) und gibt false zurück, solange die Navigation noch nicht läuft.

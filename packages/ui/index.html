@@ -175,6 +175,7 @@
                 <button type="button" id="insertTemplateBtn" data-write role="menuitem" title="Den Text einer Vorlage an der Cursorstelle einfügen, ihre Unternotizen unter dieser Notiz" hidden><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 1.5h6l3 3v10h-9z M9.5 1.5v3h3 M5.5 7.5h5 M5.5 10h5 M5.5 12.5h3"/></svg>Vorlage einfügen…</button>
                 <button type="button" id="saveTemplateBtn" role="menuitem" title="Diese Notiz (mit Unternotizen) als Vorlage speichern" hidden><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 1.5h6l3 3v10h-9z M9.5 1.5v3h3 M5.5 7.5h5 M5.5 10h5 M5.5 12.5h3"/></svg>Als Vorlage speichern…</button>
                 <button type="button" id="historyBtn" role="menuitem" title="Frühere Fassungen dieser Notiz ansehen und wiederherstellen"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9 M2.5 2.5v3h3 M8 5v3.5l2.3 1.4"/></svg>Verlauf…</button>
+                <button type="button" id="copyLinkBtn" role="menuitem" title="Adresse dieser Notiz in die Zwischenablage kopieren"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 9.5l3-3 M7 4.5l1.3-1.3a2.5 2.5 0 0 1 3.5 3.5L10.5 8 M9 11.5l-1.3 1.3a2.5 2.5 0 0 1-3.5-3.5L5.5 8"/></svg>Link kopieren</button>
                 <button type="button" id="printBtn" role="menuitem" title="Diese Notiz drucken"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6V2.5h7V6 M4.5 11H3a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1.5 M4.5 9.5h7v4h-7z"/></svg>Drucken… (Ctrl+P)</button>
                 <div class="sep" role="separator"></div>
                 <button type="button" id="archiveBtn" data-write role="menuitem" title="Notiz samt Unternotizen ins Archiv legen"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12v3H2z M3 6v7.5h10V6 M6.5 9h3"/></svg>Archivieren…</button>
@@ -524,6 +525,7 @@
             <tr><td>Vorlage</td><td><em>Notiz → Als Vorlage speichern…</em> (oder Rechtsklick in der Mindmap) macht aus einer Notiz samt Unternotizen eine Vorlage; <em>Aus Vorlage…</em>, <em>Unternotiz aus Vorlage…</em> und <em>Notiz → Vorlage einfügen…</em> wenden sie an</td><td>Antworten, erledigte Aufgaben und das heutige Datum lassen sich beim Speichern bereinigen. Platzhalter für Datum, Zeit, Woche, Bereich und Person werden beim Anlegen ersetzt; die Liste steht unter <em>Datenbank → Vorlagen…</em>.</td></tr>
             <tr><td>Datumsformat</td><td data-i18n><code>{{datum+2:JJJJ-MM-TT}}</code>, <code>{{datum:TTTT, T. MMMM JJJJ}}</code>, <code>{{datum:lang}}</code></td><td>Nach dem Doppelpunkt Kürzel für Jahr (JJJJ, JJ), Monat (MM, M, MMM, MMMM) und Tag (TT, T; TTT und TTTT für den Wochentag), gross oder klein, auch englisch (yyyy, mm, dd); Text in Hochkommas bleibt stehen. Oder ein Stil: kurz, mittel, lang, voll, iso.</td></tr>
             <tr><td>Verweis</td><td><code>[[Titel einer Notiz]]</code></td><td>Klick in der Vorschau öffnet die Notiz; fehlt sie, wird sie auf Wunsch als Unternotiz angelegt.</td></tr>
+            <tr><td>Link auf eine Notiz</td><td><em>Notiz → Link kopieren</em> (oder Rechtsklick in der Mindmap), die Adresse irgendwo einfügen</td><td>Die Adresse nennt Nummer und Titel der Notiz und öffnet sie direkt, auch als Lesezeichen. In einer Notiz zeigt die Vorschau statt der Adresse den aktuellen Titel; ein Klick öffnet die Notiz in der App. Zurück und Vor im Browser (auch mit den Maustasten) gehen von Notiz zu Notiz und zwischen den Ansichten.</td></tr>
             <tr><td>Querverweis</td><td><code>[[Titel einer Notiz*]]</code> (Stern am Ende)</td><td>Wie ein Verweis, dazu zieht die Mindmap eine gestrichelte Linie zu dieser Notiz, quer zur Hierarchie. Der Schalter «Verweise» in der Mindmap-Leiste blendet alle Linien ein oder aus.</td></tr>
             <tr><td>Bild aus der Datenbank</td><td><code>![Name](att:ID)</code>, entsteht beim Einfügen über den Bild-Knopf, per <code>Ctrl+V</code> oder Ablegen</td><td>Das Bild liegt in der SQLite-Datei und wird mitexportiert.</td></tr>
           </tbody>
@@ -657,6 +659,7 @@
   <script src="../core/markdown.js"></script>
   <script src="../core/editing.js"></script>
   <script src="../core/templates.js"></script>
+  <script src="../core/routes.js"></script>
   <script src="../core/backend.js"></script>
   <script src="../agent/catalog.js"></script>
   <script src="../agent/protocol.js"></script>

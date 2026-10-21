@@ -420,6 +420,26 @@ Eine **Vorlage** ist eine Notiz samt Unternotizen als Markdown-Datei, mit Platzh
   App oder `--templates <Ordner>`).
 - **Im Dienst** liegen Vorlagen auf dem Server: eine Organisation verwaltet sie zentral und weist sie Arbeitsbereichen zu (siehe dort).
 
+### Navigation und Links (seit 2.7.0)
+
+Zurück und Vor (Maustasten, `Alt+←`/`Alt+→`, Knöpfe des Browsers) gehen die Schritte nach, die du in der App machst: **Notiz öffnen**,
+**zurück zur Übersicht**, **Ansicht wechseln** (Mindmap, Liste, Fragen, Aufgaben …) und **einem Link auf eine Notiz folgen**. Auswahl in der
+Mindmap, Bearbeiten/Vorschau, Suche, Filter und Sortierung sind keine Schritte. Vor jedem Schritt wird gespeichert. Kehrst du zur Mindmap
+zurück, ist die zuletzt offene Notiz ausgewählt.
+
+- **Adresse:** Die offene Notiz steht in der Adresse, als Nummer mit dem Titel als lesbarem Zusatz: lokal `index.html#n=42-sitzungsprotokoll`
+  (mit mehreren Bereichen `#w=arbeit&n=42-…`), im Dienst als Pfad `/w/<Arbeitsbereich>/42-sitzungsprotokoll`. Massgebend ist die Nummer; ein
+  Link übersteht das Umbenennen, und beim Umbenennen entsteht kein neuer Schritt im Verlauf. Neuladen öffnet dieselbe Notiz wieder.
+- **Link kopieren:** *Notiz → Link kopieren* oder Rechtsklick auf einen Knoten der Mindmap oder einen Eintrag der Liste.
+- **Links im Text:** Eine eingefügte Adresse einer Notiz (auch als `[Text](Adresse)`) zeigt in der Vorschau, in Fragen und Aufgaben den
+  **aktuellen Titel** (mit ↗) und öffnet die Notiz in der App statt in einem neuen Tab. Eine fehlende Notiz erscheint durchgestrichen.
+- **Fehlt die Notiz** (gelöscht, im Papierkorb oder im Dienst ohne Zugriff), erscheint ein Hinweis und die Übersicht.
+- **Der Pfeil «Zurück» im Editor** und `Esc` gehen wie Zurück im Browser, wenn du aus der Übersicht gekommen bist; nach einem direkten
+  Einstieg über einen Link führen sie zur Übersicht.
+- **Lokal** gelten Links nur im selben Browser (die Daten liegen dort). Ein Link auf eine Notiz in einem anderen Bereich wechselt in diesen
+  Bereich; seinen Titel kennt die Vorschau erst dort. Im Dienst ist die Adresse eine echte Adresse auf dem Server: wer nicht angemeldet ist,
+  landet nach der Anmeldung bei der Notiz.
+
 ### Aufgaben
 
 Eine Markdown-Checkbox ist eine Aufgabe: `- [ ] Offerte einholen` offen, `- [x] …` erledigt.

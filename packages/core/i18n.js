@@ -17,6 +17,9 @@
 
   const SOURCE = 'de';
   const STORAGE_KEY = 'nonotes.lang';
+  // Die Wahl gilt nach dem Neuladen. Chromium verliert bei einem schnellen Neuladen gelegentlich den ganzen localStorage der Seite,
+  // sessionStorage nicht: dort liegt die Wahl bis zum nächsten Start noch einmal, init() schreibt sie dann wieder fest.
+  const PENDING_KEY = 'nonotes.lang.pending';
   const PSEUDO = 'qps'; // Entwicklungs-Sprache: umschliesst jeden Text mit ⟦ ⟧, um nicht übersetzte Stellen zu finden
 
   const packs = new Map();
@@ -122,14 +125,20 @@
     if (code !== PSEUDO && !packs.has(code)) code = SOURCE;
     current = code;
     if (global.document && global.document.documentElement) global.document.documentElement.lang = code === PSEUDO ? SOURCE : code;
-    if (remember) { try { global.localStorage.setItem(STORAGE_KEY, code); } catch (e) { /* egal */ } }
+    if (remember) {
+      try { global.localStorage.setItem(STORAGE_KEY, code); } catch (e) { /* egal */ }
+      try { global.sessionStorage.setItem(PENDING_KEY, code); } catch (e) { /* egal */ }
+    }
   }
 
   /** Beim Start: gespeicherte Wahl, sonst Browsersprache, sonst Deutsch. */
   function init() {
     started = true;
     let wanted = null;
-    try { wanted = global.localStorage.getItem(STORAGE_KEY); } catch (e) { /* egal */ }
+    let pending = null;
+    try { pending = global.sessionStorage.getItem(PENDING_KEY); if (pending) global.sessionStorage.removeItem(PENDING_KEY); } catch (e) { /* egal */ }
+    try { if (pending) global.localStorage.setItem(STORAGE_KEY, pending); wanted = global.localStorage.getItem(STORAGE_KEY); } catch (e) { /* egal */ }
+    wanted = pending || wanted;
     if (!wanted) {
       for (const l of (global.navigator && global.navigator.languages) || []) {
         const code = String(l).toLowerCase();
