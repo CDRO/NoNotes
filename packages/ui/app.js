@@ -133,6 +133,8 @@
     navReady: false,             // Navigation mit dem Verlauf läuft (nach dem Start)
     navApplying: false,          // ein Eintrag des Verlaufs wird gerade angewendet: keine neuen Schritte
     navChain: Promise.resolve(), // Schritte nacheinander
+    navSeq: 0,                   // zählt Zurück/Vor/Adresse: ein überholter Schritt schreibt nichts mehr
+    navPending: 0,               // Zurück/Vor/Adresse, die noch nicht angewendet sind: so lange schreibt niemand sonst in die Adresse
     navTitleTimer: null,
     currentId: null,
     query: '',
@@ -2043,7 +2045,7 @@
 
   /** Ein Schritt, wenn sich gegenüber dem jetzigen Eintrag die Notiz oder die Ansicht geändert hat; sonst nur nachführen. */
   function pushNav() {
-    if (!state.navReady || state.navApplying) return;
+    if (!state.navReady || state.navApplying || state.navPending) return;
     const cur = navEntry();
     const now = navNow();
     writeNav(!!cur && (cur.note !== now.note || cur.view !== now.view));
@@ -2051,7 +2053,7 @@
 
   /** Den jetzigen Eintrag nachführen (Titel in der Adresse, gelöschte Notiz, anderer Bereich), ohne neuen Schritt. */
   function replaceNav() {
-    if (!state.navReady || state.navApplying) return;
+    if (!state.navReady || state.navApplying || state.navPending) return;
     writeNav(false);
   }
 
@@ -2074,8 +2076,10 @@
     return null;
   }
 
-  /** Einen Eintrag des Verlaufs anwenden (Zurück, Vor, Adresse von Hand geändert): target { note, view, area }. */
-  async function applyNav(target) {
+  /** Einen Eintrag des Verlaufs anwenden (Zurück, Vor, Adresse von Hand geändert): target { note, view, area }.
+   *  seq: Nummer des Ereignisses; kam inzwischen ein neueres (schnell Zurück und gleich Vor, während noch gespeichert wird), steht der
+   *  Browser schon auf einem anderen Eintrag: dann nichts mehr in die Adresse schreiben, das neuere Ereignis wendet seinen Eintrag an. */
+  async function applyNav(target, seq) {
     let failed = false;
     state.navApplying = true;
     try {
@@ -2099,23 +2103,32 @@
       state.navApplying = false;
     }
     // Was jetzt offen ist, steht in der Adresse; ging der Schritt nicht (Speichern abgebrochen), gilt der Stand der Oberfläche
-    writeNav(failed);
+    if (seq == null || seq === state.navSeq) writeNav(failed);
   }
 
-  async function onNavEvent() {
+  async function onNavEvent(seq) {
+    if (seq != null && seq !== state.navSeq) return; // überholt: das neuere Ereignis liest die Adresse selbst
     const at = routes().current();
     const entry = navEntry();
-    await applyNav(Object.assign({ view: state.view }, entry || {}, { note: at.note, area: at.area }));
+    await applyNav(Object.assign({ view: state.view }, entry || {}, { note: at.note, area: at.area }), seq);
+  }
+
+  /** Zurück, Vor oder eine Adresse von Hand: der Browser steht schon auf dem neuen Eintrag, die Oberfläche folgt (nacheinander). Bis dahin
+   *  passen Oberfläche und Eintrag nicht zusammen; Nachführen (Titel, Speichern, Bereich) würde den Eintrag überschreiben. */
+  function onHistoryEvent() {
+    const seq = ++state.navSeq;
+    state.navPending++;
+    queueNav(() => onNavEvent(seq)).finally(() => { state.navPending--; });
   }
 
   /** Beim Start: Notiz aus der Adresse öffnen (Link, Lesezeichen, Neuladen, Vor nach dem Verlassen der App). */
   async function startNav() {
     state.navReady = true;
-    window.addEventListener('popstate', () => queueNav(onNavEvent));
-    window.addEventListener('hashchange', () => queueNav(onNavEvent)); // falls ein Browser bei «#…» kein popstate meldet
+    window.addEventListener('popstate', onHistoryEvent);
+    window.addEventListener('hashchange', onHistoryEvent); // falls ein Browser bei «#…» kein popstate meldet (sonst überholt)
     const at = routes().current();
     const entry = navEntry();
-    if (at.note != null || (entry && entry.view && entry.view !== state.view)) await queueNav(onNavEvent);
+    if (at.note != null || (entry && entry.view && entry.view !== state.view)) await queueNav(() => onNavEvent());
     else replaceNav();
   }
 

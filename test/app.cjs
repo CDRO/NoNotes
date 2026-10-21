@@ -2712,6 +2712,16 @@ async function runNavigation(browser, part, step) {
   await ctx.addInitScript(() => {
     window.__clip = null;
     try { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { window.__clip = text; } } }); } catch (e) { /* bleibt echt */ }
+    // Speichern einer Notiz auf Wunsch verzögern (window.__slowSave ms), wie über das Netz im Dienst
+    let real;
+    Object.defineProperty(window, 'NoNotesBackendLocal', { configurable: true, get: () => real, set: v => {
+      real = { create: o => {
+        const b = v.create(o);
+        const update = b.updateNote;
+        b.updateNote = async (...a) => { if (window.__slowSave) await new Promise(r => setTimeout(r, window.__slowSave)); return update(...a); };
+        return b;
+      } };
+    } });
   });
   const page = await ctx.newPage();
   const errors = [];
@@ -2754,6 +2764,21 @@ async function runNavigation(browser, part, step) {
     await page.waitForSelector(READY, { timeout: 30000 });
     await editor('Sitzungsprotokoll');
     part('Notiz öffnen ist ein Schritt: Zurück schliesst sie, Vor öffnet sie wieder, Neuladen behält sie');
+
+    // Schnell Zurück und gleich Vor (Maustasten), während noch gespeichert wird: am Ende ist die Notiz offen, die Adresse stimmt
+    await page.evaluate(() => { window.__slowSave = 150; });
+    for (let round = 0; round < 3; round++) {
+      await page.fill('#body', `Traktanden ${round}`);
+      // «Vor», sobald der Browser auf dem Eintrag davor steht (popstate), die App aber noch speichert und schliesst
+      await page.evaluate(() => { addEventListener('popstate', () => setTimeout(() => history.forward(), 0), { once: true }); history.back(); });
+      await page.waitForTimeout(400);
+      await editor('Sitzungsprotokoll');
+      assert.equal(await param('n'), `${id.Sitzungsprotokoll}-sitzungsprotokoll`, `Runde ${round}: die Adresse nennt die offene Notiz`);
+      assert.equal(await page.evaluate(() => history.state.nn.note), id.Sitzungsprotokoll);
+    }
+    await page.evaluate(() => { window.__slowSave = 0; });
+    await page.waitForFunction(SAVED);
+    part('Schnell Zurück und Vor, während gespeichert wird: der überholte Schritt schreibt nichts mehr in die Adresse');
 
     // Pfeil im Editor wie Zurück (der Schritt davor war die Übersicht); Ansicht wechseln ist ein Schritt
     await page.click('#backBtn');
