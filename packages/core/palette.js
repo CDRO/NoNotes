@@ -6,7 +6,7 @@
      tint      zarte Tönung (Auswahl, Tags)
    Gespeichert wird nur die Kennung (meta 'accent' in der Datenbank, dazu ein Zwischenspeicher im Browser).
    Dieses Modul kennt weder Datenbank noch Seite; die Oberfläche setzt css() ein, Export und Druck
-   benutzen light() für das Mindmap-Bild. Blau ist die Vorgabe und entspricht dem Stylesheet. */
+   benutzen light() für das Mindmap-Bild, favicon() ist das Symbol im Tab. Blau ist die Vorgabe und entspricht dem Stylesheet. */
 (function (global) {
   'use strict';
 
@@ -60,5 +60,17 @@
     return `:root { ${declarations(c.light)} }\n@media (prefers-color-scheme: dark) { :root { ${declarations(c.dark)} } }\n`;
   }
 
-  global.NoNotesPalette = { DEFAULT, COLORS, ids: COLORS.map(c => c.id), normalize, name, light, dark, css };
+  /** Symbol im Tab (v2.7.1): das «N» auf der Fläche der Hauptfarbe, im dunklen Modus des Browsers in der dunklen Fassung (wie die Seite).
+   *  Ergebnis ist eine data:-Adresse für <link rel="icon">; sie kommt ohne Datei aus und gilt auch unter file://. */
+  function favicon(id) {
+    const c = byId.get(normalize(id));
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+      + `<style>rect{fill:${c.light.accent}}text{fill:${c.light.contrast}}`
+      + `@media (prefers-color-scheme: dark){rect{fill:${c.dark.accent}}text{fill:${c.dark.contrast}}}</style>`
+      + '<rect width="32" height="32" rx="8"/>'
+      + '<text x="16" y="22" font-family="system-ui,sans-serif" font-size="18" font-weight="700" text-anchor="middle">N</text></svg>';
+    return 'data:image/svg+xml,' + encodeURIComponent(svg);
+  }
+
+  global.NoNotesPalette = { DEFAULT, COLORS, ids: COLORS.map(c => c.id), normalize, name, light, dark, css, favicon };
 })(window);

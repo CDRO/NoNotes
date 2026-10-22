@@ -184,7 +184,8 @@ Die Notizen bilden einen Baum um einen zentralen Knoten, dessen Titel du per Dop
 ### Hauptfarbe
 
 Unter **Datenbank → Hauptfarbe** stehen acht Farben zur Wahl: Blau (Vorgabe), Türkis, Grün, Gelb, Orange,
-Rot, Violett und Grau. Die Wahl wirkt sofort auf Knöpfe, Wurzelknoten, Abzeichen, Links und Auswahl, jeweils
+Rot, Violett und Grau. Die Wahl wirkt sofort auf Knöpfe, Wurzelknoten, Abzeichen, Links und Auswahl und (seit 2.7.1) auf das
+Symbol im Tab des Browsers, so lassen sich mehrere offene Bereiche oder Arbeitsbereiche an der Farbe unterscheiden; jeweils
 mit einer passenden hellen und dunklen Fassung (je nach Einstellung des Systems) und einer Schriftfarbe, die auf
 der Fläche gut lesbar bleibt. Die Farbe wird **in der Datenbankdatei** gespeichert (Tabelle `meta`, Schlüssel
 `accent`), gehört also zur Datei und wandert mit ihr; ein Zwischenspeicher im Browser verhindert, dass beim Start

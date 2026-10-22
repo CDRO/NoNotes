@@ -40,8 +40,9 @@
   I18n.init();
   I18n.translateDom(document.body);
 
-  /** Setzt die Farbvariablen der Seite für eine Hauptfarbe (Vorgabe Blau: das Stylesheet gilt). */
+  /** Setzt die Farbvariablen der Seite für eine Hauptfarbe (Vorgabe Blau: das Stylesheet gilt), dazu das Symbol im Tab. */
   function paintAccent(id) {
+    paintFavicon(id);
     const css = Palette.css(id);
     let style = document.getElementById('accentStyle');
     if (!css) { if (style) style.remove(); return; }
@@ -51,6 +52,18 @@
       document.head.appendChild(style);
     }
     style.textContent = css;
+  }
+
+  /** Das Symbol im Tab in der Hauptfarbe des Bereichs: mehrere offene Bereiche oder Arbeitsbereiche lassen sich an der Farbe unterscheiden. */
+  function paintFavicon(id) {
+    let link = document.querySelector('link[rel~="icon"]');
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
+    }
+    const href = Palette.favicon(id);
+    if (link.getAttribute('href') !== href) link.setAttribute('href', href);
   }
 
   // Sofort aus dem Zwischenspeicher, damit beim Start nichts umspringt; die Datenbank gleicht danach ab.

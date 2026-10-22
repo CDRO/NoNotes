@@ -546,8 +546,36 @@ async function runPalette(browser, part, step) {
     assert.equal(await p0.evaluate(() => NoNotesPalette.css('blue') + '|' + NoNotesPalette.normalize('unbekannt')), '|blue', 'Blau braucht kein Zusatz-Stylesheet, Unbekanntes wird Blau');
     assert.equal(await p0.evaluate(() => NoNotesPalette.ids.map(i => NoNotesPalette.name(i)).join(',')), 'Blau,Türkis,Grün,Gelb,Orange,Rot,Violett,Grau');
     assert.deepEqual(errors0, []);
-    await ctx0.close();
     part('Palette: acht Farben, Schrift lesbar in hell und dunkel, Blau wie im Stylesheet');
+
+    // Symbol im Tab: je Farbe ein gültiges Bild, Fläche und Schrift der hellen bzw. dunklen Fassung
+    const icon = p => p.evaluate(() => document.querySelector('link[rel~="icon"]').getAttribute('href'));
+    assert.equal(await icon(p0), await p0.evaluate(() => NoNotesPalette.favicon('blue')), 'ohne Wahl: Blau');
+    assert.equal(await p0.evaluate(() => NoNotesPalette.favicon('unbekannt') === NoNotesPalette.favicon('blue')), true);
+    assert.equal(await p0.locator('link[rel~="icon"]').count(), 1, 'genau ein Symbol');
+    const pixels = () => p0.evaluate(async ids => {
+      const out = {};
+      for (const id of ids) {
+        const img = new Image();
+        img.src = NoNotesPalette.favicon(id);
+        await img.decode();
+        const cv = document.createElement('canvas');
+        cv.width = cv.height = 32;
+        const g = cv.getContext('2d');
+        g.drawImage(img, 0, 0, 32, 32);
+        const d = g.getImageData(4, 16, 1, 1).data; // Fläche neben dem «N»
+        out[id] = '#' + [d[0], d[1], d[2]].map(v => v.toString(16).padStart(2, '0')).join('');
+      }
+      return out;
+    }, colors.map(c => c.id));
+    assert.deepEqual(await pixels(), Object.fromEntries(colors.map(c => [c.id, c.light.accent])), 'helle Fassung');
+    await p0.emulateMedia({ colorScheme: 'dark' });
+    assert.deepEqual(await pixels(), Object.fromEntries(colors.map(c => [c.id, c.dark.accent])), 'dunkle Fassung');
+    await p0.emulateMedia({ colorScheme: 'light' });
+    assert.ok(decodeURIComponent((await p0.evaluate(() => NoNotesPalette.favicon('yellow'))).split(',')[1]).includes(`text{fill:${colors[3].light.contrast}}`), 'Gelb: dunkle Schrift wie auf der Fläche');
+    assert.deepEqual(errors0, []);
+    await ctx0.close();
+    part('Symbol im Tab: je Farbe gültig, Fläche in der hellen und der dunklen Fassung, Schrift wie auf der Fläche');
 
     // ---------- Auswahl im Menü, Speichern, Neuladen ----------
     const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 }, acceptDownloads: true, locale: 'de-CH' });
@@ -568,7 +596,8 @@ async function runPalette(browser, part, step) {
     assert.equal(await page.locator('#menu').isVisible(), true, 'Menü bleibt offen, die Farbe wirkt sofort');
     await page.waitForFunction(SAVED);
     assert.equal(await page.evaluate(() => localStorage.getItem('nonotes.accent')), 'green', 'Zwischenspeicher im Browser');
-    part('Hauptfarbe: Auswahl im Menü wirkt sofort und wird gemerkt');
+    assert.equal(await page.evaluate(() => document.querySelector('link[rel~="icon"]').getAttribute('href') === NoNotesPalette.favicon('green')), true, 'das Symbol im Tab folgt der Hauptfarbe');
+    part('Hauptfarbe: Auswahl im Menü wirkt sofort und wird gemerkt, auch im Symbol des Tabs');
 
     // Massgebend ist die Datenbank: Zwischenspeicher weg, Farbe bleibt
     await page.keyboard.press('Escape');
@@ -577,6 +606,7 @@ async function runPalette(browser, part, step) {
     await page.waitForSelector(READY);
     assert.equal(await cssVar(page, '--accent'), '#15803d', 'Farbe kommt aus der Datenbank');
     assert.equal(await page.evaluate(() => localStorage.getItem('nonotes.accent')), 'green', 'Zwischenspeicher wird nachgeführt');
+    assert.equal(await page.evaluate(() => document.querySelector('link[rel~="icon"]').getAttribute('href') === NoNotesPalette.favicon('green')), true, 'Symbol im Tab aus der Datenbank');
     part('Hauptfarbe: nach dem Neuladen aus der Datenbank, Zwischenspeicher nachgeführt');
 
     // Datei: meta accent

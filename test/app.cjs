@@ -2458,13 +2458,16 @@ async function runAreas(browser, part, step) {
     await waitLabel(page, /^Meine Notizen · /);
     await page.click('#menuBtn');
     assert.notEqual(await page.locator('#accentSwatches .swatch[aria-pressed="true"]').getAttribute('data-accent'), swatch, 'die Farbe gehört zum Bereich');
+    const tabIcon = () => page.evaluate(() => document.querySelector('link[rel~="icon"]').getAttribute('href'));
+    assert.equal(await tabIcon(), await page.evaluate(() => NoNotesPalette.favicon('blue')), 'Symbol im Tab in der Farbe dieses Bereichs');
     await page.keyboard.press('Escape');
     await page.keyboard.press('Alt+2');
     await waitLabel(page, /^Privat · /);
     await page.click('#menuBtn');
     assert.equal(await page.locator('#accentSwatches .swatch[aria-pressed="true"]').getAttribute('data-accent'), swatch);
+    assert.equal(await tabIcon(), await page.evaluate(id => NoNotesPalette.favicon(id), swatch), 'nach dem Wechsel: Symbol in der Farbe des anderen Bereichs');
     await page.keyboard.press('Escape');
-    part('Hauptfarbe je Bereich (sie steht in der Datei)');
+    part('Hauptfarbe je Bereich (sie steht in der Datei), auch im Symbol des Tabs');
 
     // ---------- Adresse ----------
     await page.reload();
