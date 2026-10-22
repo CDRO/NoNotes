@@ -215,7 +215,8 @@ geänderte Stelle.
 NoNotes lässt sich mit **Erweiterungen** (Plugins) ergänzen: Skriptdateien im Ordner `plugins/` neben der App.
 Unter **Datenbank → Erweiterungen…** siehst du, was im Ordner liegt, und schaltest es mit einem Schalter ein oder aus,
 sofort und ohne die Seite neu zu laden; die Wahl merkt sich der Browser. Eine eigene Datei legst du in den Ordner und
-gibst im Dialog ihren Namen ein. Eine Erweiterung kann Menüeinträge und Toolleistenknöpfe hinzufügen, auf Ereignisse
+gibst im Dialog ihren Namen ein. Eine Erweiterung kann Menüeinträge, Toolleistenknöpfe und (seit 2.8.0) Einträge mit
+Untermenü im Kontextmenü eines Knotens der Mindmap hinzufügen, auf Ereignisse
 reagieren, über dieselbe Schnittstelle wie die App auf die Daten zugreifen und ein **Design** mitbringen (Auswahl
 «Design» im Menü, gespeichert in der Datei wie die Hauptfarbe).
 

@@ -173,6 +173,8 @@
     mention: null,        // offene Vervollständigung @kürzel: { start, items, index }
     mentionSeq: 0,
     pluginProviders: new Map(), // Lieferanten für @kürzel je Erweiterung (zum Abmelden beim Ausschalten)
+    pluginContextItems: [],     // Einträge der Erweiterungen im Kontextmenü eines Knotens (seit 2.8.0): { plugin, spec }
+    contextSub: null,           // offenes Untermenü des Kontextmenüs: { anchor, el }
     editorMode: 'edit',   // 'edit' | 'split' | 'preview'
     previewTimer: null,
     listScope: 'live',    // 'live' | 'trash'
@@ -912,6 +914,7 @@
         setStatus: (text, kind) => setStatus(String(text), ['saved', 'dirty', 'saving', 'error'].includes(kind) ? kind : ''),
         addMenuItem: item => addPluginMenuItem(entry, item),
         addToolbarButton: item => addPluginToolbarButton(entry, item),
+        addContextMenuItem: item => addPluginContextItem(entry, item),
       }),
       editor: pluginEditorApi(),
       people: Object.freeze({ provide: fn => providePeople(id, fn) }),
@@ -961,6 +964,41 @@
     el.mdToolbar.appendChild(b);
   }
 
+  /** Eintrag im Kontextmenü eines Knotens der Mindmap (seit 2.8.0). spec: { label, title?, write?, visible?(target),
+   *  action?(target) oder panel?(target, { close }) }; genau eines von action und panel. target: { id, ids } (ids: die
+   *  ausgewählten Notizen, wenn der Knoten zur Mehrfachauswahl gehört, sonst nur er; ohne archivierte). panel liefert den
+   *  Inhalt eines Untermenüs (ein Element), das die App neben dem Menü zeigt. write (Vorgabe true): fehlt im Lesemodus. */
+  function addPluginContextItem(entry, spec) {
+    const ok = spec && typeof spec.label === 'string' && spec.label.trim()
+      && (typeof spec.action === 'function') !== (typeof spec.panel === 'function')
+      && (spec.visible == null || typeof spec.visible === 'function');
+    if (!ok) throw new Error(t('addContextMenuItem braucht label (Text) und entweder action oder panel (Funktion)'));
+    state.pluginContextItems.push({ entry, spec });
+  }
+
+  /** Die Einträge der Erweiterungen für einen Knoten, für showContextMenu. */
+  function pluginContextEntries(target) {
+    const out = [];
+    for (const { entry, spec } of state.pluginContextItems) {
+      if (entry.status !== 'active') continue;
+      if (spec.visible) {
+        let show = false;
+        try { show = !!spec.visible(target); } catch (e) { console.warn(`Erweiterung ${entry.id}`, e); } // i18n-ignore: Protokoll
+        if (!show) continue;
+      }
+      const item = { label: spec.label.trim(), title: spec.title ? String(spec.title) : '', write: spec.write !== false, plugin: entry.id };
+      if (spec.panel) {
+        item.panel = () => {
+          try { return spec.panel(target, { close: hideContextMenu }); } catch (e) { runPlugin(entry, () => { throw e; }); return null; }
+        };
+      } else {
+        item.action = () => runPlugin(entry, () => spec.action(target));
+      }
+      out.push(item);
+    }
+    return out;
+  }
+
   /** Die in diesem Browser eingeschalteten Dateien (relativ zu plugins/). Die Datenbankdatei bestimmt nie, was geladen wird. */
   function loadPluginChoice() {
     try {
@@ -984,6 +1022,7 @@
     for (const b of el.mdToolbar.querySelectorAll(`.tb-plugin[data-plugin="${id}"]`)) b.remove();
     for (const off of state.pluginProviders.get(id) || []) off();
     state.pluginProviders.delete(id);
+    state.pluginContextItems = state.pluginContextItems.filter(x => x.entry.id !== id);
   }
 
   /** Schaltet eine Datei aus plugins/ ein (lädt sie bei Bedarf) oder aus. Gemerkt wird nur, was sich gültig gemeldet hat. */
@@ -3957,9 +3996,11 @@
 
   // ---------- Kontextmenü ----------
 
-  /** items: { label, key, action, danger, write, checked } oder 'sep'; opts.above: Menü endet über y (etwa über der Statusleiste). */
+  /** items: { label, key, action, danger, write, checked, title, plugin, panel } oder 'sep'; opts.above: Menü endet über y (etwa über
+   *  der Statusleiste). panel() statt action: Untermenü daneben (Inhalt als Element, für Erweiterungen). */
   function showContextMenu(items, x, y, opts) {
     const menu = el.contextMenu;
+    closeContextSub();
     menu.replaceChildren();
     if (readOnly()) { // Lesemodus: nur Einträge ohne Schreibzugriff, ohne verwaiste Trennlinien
       items = items.filter(i => i === 'sep' || !i.write)
@@ -3986,7 +4027,23 @@
       }
       if (item.danger) b.classList.add('danger');
       if (item.checked) { b.classList.add('checked'); b.setAttribute('aria-current', 'true'); }
-      b.addEventListener('click', () => { hideContextMenu(); item.action(); });
+      if (item.title) b.title = item.title;
+      if (item.plugin) b.dataset.plugin = item.plugin;
+      if (item.panel) { // Untermenü (Erweiterungen, seit 2.8.0): Klick, Zeigen oder Pfeil rechts öffnet es daneben
+        const k = document.createElement('span');
+        k.className = 'key';
+        k.textContent = '▸';
+        b.appendChild(k);
+        b.classList.add('has-sub');
+        b.setAttribute('aria-haspopup', 'menu');
+        b.setAttribute('aria-expanded', 'false');
+        b.addEventListener('click', () => openContextSub(b, item, true));
+        b.addEventListener('mouseenter', () => openContextSub(b, item, false));
+        b.addEventListener('keydown', e => { if (e.key === 'ArrowRight') { e.preventDefault(); openContextSub(b, item, true); } });
+      } else {
+        b.addEventListener('click', () => { hideContextMenu(); item.action(); });
+        b.addEventListener('mouseenter', closeContextSub);
+      }
       menu.appendChild(b);
     }
     menu.hidden = false;
@@ -3998,7 +4055,51 @@
   }
 
   function hideContextMenu() {
+    closeContextSub();
     el.contextMenu.hidden = true;
+  }
+
+  /** Öffnet das Untermenü eines Eintrags neben dem Kontextmenü; focus: gleich hinein (Klick, Tastatur). */
+  function openContextSub(anchor, item, focus) {
+    const open = state.contextSub;
+    if (open && open.anchor === anchor) { if (focus) focusFirstIn(open.el); return; }
+    closeContextSub();
+    const content = item.panel();
+    if (!content || typeof content.nodeType !== 'number') return;
+    const sub = document.createElement('div');
+    sub.className = 'context-menu context-sub';
+    sub.setAttribute('role', 'menu');
+    sub.appendChild(content);
+    sub.addEventListener('keydown', e => {
+      if (e.key !== 'Escape' && e.key !== 'ArrowLeft') return;
+      if (e.key === 'ArrowLeft' && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) && e.target.type !== 'checkbox') return;
+      e.preventDefault();
+      e.stopPropagation();
+      closeContextSub();
+      anchor.focus();
+    });
+    document.body.appendChild(sub);
+    const m = el.contextMenu.getBoundingClientRect(), a = anchor.getBoundingClientRect();
+    const w = sub.offsetWidth, h = sub.offsetHeight;
+    const left = m.right + 4 + w <= window.innerWidth - 8 ? m.right + 4 : Math.max(8, m.left - w - 4);
+    sub.style.left = `${left}px`;
+    sub.style.top = `${Math.max(8, Math.min(a.top - 7, window.innerHeight - h - 8))}px`;
+    anchor.setAttribute('aria-expanded', 'true');
+    state.contextSub = { anchor, el: sub };
+    if (focus) focusFirstIn(sub);
+  }
+
+  function closeContextSub() {
+    const open = state.contextSub;
+    if (!open) return;
+    state.contextSub = null;
+    open.anchor.setAttribute('aria-expanded', 'false');
+    open.el.remove();
+  }
+
+  function focusFirstIn(container) {
+    const f = container.querySelector('button:not([disabled]), input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])');
+    if (f) f.focus();
   }
 
   function showNodeMenu(id, x, y) {
@@ -4056,9 +4157,13 @@
       { write: true, label: t('Archivieren…'), action: () => archiveNotes([id]) },
       { write: true, label: t('Nach oben'), key: 'Alt+↑', action: async () => { state.mapSelection = id; await moveSelected(-1); } },
       { write: true, label: t('Nach unten'), key: 'Alt+↓', action: async () => { state.mapSelection = id; await moveSelected(1); } },
-      'sep',
-      { write: true, label: t('Löschen'), key: t('Entf'), danger: true, action: () => deleteNoteById(id) },
     );
+    // Einträge der Erweiterungen (seit 2.8.0): für die Mehrfachauswahl, wenn der Knoten dazugehört, sonst für ihn allein
+    const ids = (state.multi.has(id) ? [id, ...[...state.multi].filter(x => x !== id)] : [id])
+      .filter(x => { const i = state.map.nodeInfo(x); return !i || !i.archived; });
+    const fromPlugins = pluginContextEntries(Object.freeze({ id, ids: Object.freeze(ids) }));
+    if (fromPlugins.length) items.push('sep', ...fromPlugins);
+    items.push('sep', { write: true, label: t('Löschen'), key: t('Entf'), danger: true, action: () => deleteNoteById(id) });
     showContextMenu(items, x, y);
   }
 

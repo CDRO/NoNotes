@@ -106,6 +106,7 @@ gilt für eine Erweiterung, deren `activate` oder deren Ereignisrückruf einen F
 | `ctx.ui.setStatus(text, art)` | Text in der Statuszeile; `art` ist `'saved'`, `'dirty'`, `'saving'` oder `'error'` |
 | `ctx.ui.addMenuItem({ label, title?, action })` | Eintrag im Menü **Datenbank** |
 | `ctx.ui.addToolbarButton({ label, title?, action })` | Knopf in der Toolleiste des Editors; `action(editor)` bekommt die Editor-Schnittstelle |
+| `ctx.ui.addContextMenuItem({ label, title?, write?, visible?, action? \| panel? })` | Seit 2.8.0. Eintrag im Kontextmenü eines Knotens der Mindmap (Rechtsklick), mit `action(target)` oder einem Untermenü `panel(target, { close })`; siehe unten |
 | `ctx.editor.noteId()` | Kennung der offenen Notiz oder `null` |
 | `ctx.editor.isWritable()` | `true`, wenn eine Notiz offen und nicht schreibgeschützt ist |
 | `ctx.editor.selection()` | `{ start, end, text }` der Markierung im Text |
@@ -114,6 +115,46 @@ gilt für eine Erweiterung, deren `activate` oder deren Ereignisrückruf einen F
 
 `action`-Funktionen dürfen `async` sein. Wirft eine Aktion einen Fehler, erscheint er in der Statuszeile; die App
 läuft weiter.
+
+## Kontextmenü eines Knotens (seit 2.8.0)
+
+`ctx.ui.addContextMenuItem(spec)` setzt einen Eintrag in das Menü, das ein Rechtsklick auf einen Knoten der Mindmap öffnet.
+Die Einträge der Erweiterungen stehen gesammelt vor «Löschen». Die Wurzel, leere Fläche und archivierte Notizen bekommen
+keine.
+
+| Feld | Bedeutung |
+| --- | --- |
+| `label` | Text des Eintrags (Pflicht) |
+| `title` | Tooltip |
+| `write` | Vorgabe `true`: der Eintrag ändert Daten und fehlt im Lesemodus. `false` für Einträge, die nur lesen |
+| `visible(target)` | Wahlweise: `false` blendet den Eintrag für dieses Ziel aus |
+| `action(target)` | Ein Klick führt das aus (darf `async` sein); das Menü schliesst sich vorher |
+| `panel(target, { close })` | Statt `action`: Untermenü. Liefert ein Element, das die App neben dem Menü zeigt (Klick, Zeigen oder Pfeil rechts auf den Eintrag öffnet es, `Esc` oder Pfeil links schliesst es). `close()` schliesst Untermenü und Menü |
+
+`target` ist `{ id, ids }`: `id` ist der angeklickte Knoten. `ids` enthält **alle ausgewählten Notizen**, wenn der Knoten zur
+Mehrfachauswahl (`Ctrl`+Klick) gehört, sonst nur `id`; archivierte fehlen. Wer Daten ändert, nimmt `ctx.backend` und danach
+`ctx.refresh()`. Fehler in `action` und `panel` erscheinen in der Statuszeile; wirft `visible`, fehlt der Eintrag. Das Menü
+bleibt in beiden Fällen bedienbar.
+Beim Ausschalten der Erweiterung verschwinden ihre Einträge.
+
+```js
+ctx.ui.addContextMenuItem({
+  label: 'Markieren',
+  panel(target, { close }) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = `${target.ids.length} Notiz(en) markieren`;
+    b.addEventListener('click', async () => {
+      for (const id of target.ids) await ctx.backend.setTags(id, [...await ctx.backend.getTags(id), 'markiert']);
+      close();
+      await ctx.refresh();
+    });
+    return b;
+  },
+});
+```
+
+Ältere Versionen haben die Funktion nicht: `if (ctx.ui.addContextMenuItem) …`.
 
 ## Ereignisse
 
@@ -192,6 +233,7 @@ anbieten will, wählt anhand von `ctx.language()` selbst aus.
   (`if (ctx.ui.addSomething) …`).
 - Ein Bruch käme frühestens mit `api: 2` in NoNotes 2.0; die App meldet dann eine ältere Erweiterung
   deutlich, statt sie still falsch zu behandeln.
+- Seit 2.8.0 dazugekommen (ohne Änderung an `api`): `ctx.ui.addContextMenuItem` (Kontextmenü eines Knotens, mit Untermenü).
 - Seit 1.7.0 dazugekommen (ohne Änderung an `api`): `deactivate()` in `register`, das Verzeichnis
   `NoNotesPlugins.catalog([...])`/`available()` und das Laden und Schalten zur Laufzeit (`load`, `activate`, `disable`);
   nach 1.8.0 die Ereignisse `mindmap:rendered` und `mindmap:select` samt den `data-`Attributen an den Linien.

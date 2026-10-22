@@ -505,6 +505,8 @@ body:not(.view-list).editor-open #editorPane { max-width: 1000px; }
 .context-menu button.checked { font-weight: 600; }
 .context-menu button.checked > span:first-child::before { content: "✓ "; color: var(--accent); }
 .context-menu .sep { height: 1px; background: var(--border); margin: 6px 0; }
+.context-menu button.has-sub[aria-expanded="true"] { background: var(--hover); }
+.context-sub { min-width: 0; z-index: 51; }
 
 @media (max-width: 760px) {
   .map-hint { display: none; }

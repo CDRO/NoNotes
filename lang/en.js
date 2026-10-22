@@ -287,6 +287,7 @@ NoNotesI18n.register('en', 'English', {
   'Den Verlauf dieser Notiz löschen? Der aktuelle Text bleibt erhalten.': 'Delete the history of this note? The current text is kept.',
   'Erweiterung «{name}»: {fehler}': 'Extension “{name}”: {fehler}',
   '{was} braucht label (Text) und action (Funktion)': '{was} needs label (text) and action (function)',
+  'addContextMenuItem braucht label (Text) und entweder action oder panel (Funktion)': 'addContextMenuItem needs label (text) and either action or panel (function)',
   'Erweiterung «{name}» eingeschaltet': 'Extension “{name}” switched on',
   'Erweiterung «{name}» ausgeschaltet': 'Extension “{name}” switched off',
   'aktiv': 'active',

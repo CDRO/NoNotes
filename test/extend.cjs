@@ -40,6 +40,7 @@ async function runPlugins(browser, part, step) {
             window.__editorBefore = { id: editor.noteId(), writable: editor.isWritable(), selection: editor.selection() };
             await editor.replaceSelection('[Stempel]');
           } });
+          if (ctx.ui.addContextMenuItem) ctx.ui.addContextMenuItem({ label: 'OK-Eintrag', action() {} });
           ctx.ui.addMenuItem({ label: 'Neue Notiz per Erweiterung', action: async () => {
             const id = await ctx.backend.createNote(null);
             await ctx.backend.renameNote(id, 'Von Erweiterung');
@@ -66,6 +67,31 @@ async function runPlugins(browser, part, step) {
       NoNotesPlugins.register({ id: 'test-event-throw', name: 'Ereignis wirft', api: 1,
         activate(ctx) { ctx.on('note:open', () => { throw new Error('Ereignis kaputt'); }); } });`,
     'test-syntax-error.js': `this is not javascript (`,
+    // Kontextmenü eines Knotens (seit 2.8.0): Aktion, Untermenü, visible, Fehler, ungültige Angaben
+    'test-ctxmenu.js': `
+      NoNotesPlugins.register({ id: 'test-ctxmenu', name: 'Kontextmenü', api: 1,
+        activate(ctx) {
+          window.__ctxTargets = [];
+          ctx.ui.addContextMenuItem({ label: 'Testaktion', title: 'Ein Tooltip', action: t => { window.__ctxTargets.push({ kind: 'action', id: t.id, ids: [...t.ids], frozen: Object.isFrozen(t) && Object.isFrozen(t.ids) }); } });
+          ctx.ui.addContextMenuItem({ label: 'Testfeld', panel(t, api) {
+            const d = document.createElement('div');
+            d.className = 'test-panel';
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.textContent = 'Wählen ' + t.ids.length;
+            b.addEventListener('click', () => { window.__ctxTargets.push({ kind: 'panel', ids: [...t.ids], checked: d.querySelector('input').checked }); api.close(); });
+            const c = document.createElement('input');
+            c.type = 'checkbox';
+            d.append(b, c);
+            return d;
+          } });
+          ctx.ui.addContextMenuItem({ label: 'Nur bei Alpha', write: false, visible: t => window.__onlyId === t.id, action() {} });
+          ctx.ui.addContextMenuItem({ label: 'Wirft', panel() { throw new Error('Feld kaputt'); } });
+          ctx.ui.addContextMenuItem({ label: 'Sieht nichts', visible() { throw new Error('visible kaputt'); }, action() {} });
+          for (const bad of [{ label: 'ohne' }, { label: '', action() {} }, { label: 'beides', action() {}, panel() {} }]) {
+            try { ctx.ui.addContextMenuItem(bad); window.__ctxBad = (window.__ctxBad || 0) - 100; } catch (e) { window.__ctxBad = (window.__ctxBad || 0) + 1; }
+          }
+        } });`,
     'test-deactivate.js': `
       NoNotesPlugins.register({ id: 'test-deactivate', name: 'Räumt auf', api: 1,
         activate(ctx) { window.__deact = 0; ctx.ui.addMenuItem({ label: 'Aufräumer', action() {} }); },
@@ -328,6 +354,100 @@ async function runPlugins(browser, part, step) {
     await ctx2.close();
     part('Fehlt die Erweiterung eines gewählten Designs, gilt Standard');
 
+    // ---------- Kontextmenü eines Knotens (seit 2.8.0) ----------
+    const urlCm = buildWithPlugins(tmp, ['test-ctxmenu.js']);
+    const ctxCm = await browser.newContext({ viewport: { width: 1400, height: 900 }, locale: 'de-CH' });
+    const { page: pCm, errors: eCm } = await openApp(ctxCm, urlCm);
+    eCm.length = 0;
+    pCm.on('console', m => { if (m.type() === 'warning' && !/visible kaputt|Feld kaputt/.test(m.text())) eCm.push('warning: ' + m.text()); });
+    for (const title of ['Alpha', 'Beta', 'Gamma']) await newRootNote(pCm, title);
+    const idsCm = await pCm.evaluate(() => Object.fromEntries([...document.querySelectorAll('.mm-node:not(.mm-root)')].map(g => [g.querySelector(':scope > text').textContent, Number(g.dataset.id)])));
+    const nodeOf = title => pCm.locator(`.mm-node:has(> text:text-is("${title}"))`);
+    const menuLabels = () => pCm.evaluate(() => [...document.querySelectorAll('#contextMenu > button, #contextMenu > .sep')].map(b => (b.classList.contains('sep') ? '—' : b.firstChild.textContent + (b.dataset.plugin ? '@' + b.dataset.plugin : ''))));
+    const targets = () => pCm.evaluate(() => window.__ctxTargets.splice(0));
+    assert.equal(await pCm.evaluate(() => window.__ctxBad), 3, 'ungültige Angaben werfen (ohne action/panel, ohne label, beides)');
+
+    await nodeOf('Alpha').click({ button: 'right' });
+    await pCm.waitForSelector('#contextMenu:not([hidden])');
+    const labels = await menuLabels();
+    assert.deepEqual(labels.slice(-6), ['—', 'Testaktion@test-ctxmenu', 'Testfeld@test-ctxmenu', 'Wirft@test-ctxmenu', '—', 'Löschen'], 'Einträge der Erweiterungen gesammelt vor «Löschen»');
+    assert.ok(!labels.some(l => /Nur bei Alpha|Sieht nichts/.test(l)), 'visible: ausgeblendet (auch wenn visible wirft)');
+    assert.equal(await pCm.getAttribute('#contextMenu button[data-plugin]:has-text("Testaktion")', 'title'), 'Ein Tooltip');
+    assert.equal(await pCm.locator('#contextMenu button:has-text("Testfeld") .key').innerText(), '▸');
+    await pCm.click('#contextMenu button:has-text("Testaktion")');
+    assert.equal(await pCm.locator('#contextMenu').isHidden(), true, 'Aktion schliesst das Menü');
+    await pCm.waitForFunction(() => window.__ctxTargets.length === 1);
+    assert.deepEqual(await targets(), [{ kind: 'action', id: idsCm.Alpha, ids: [idsCm.Alpha], frozen: true }]);
+    part('Kontextmenü: Einträge der Erweiterung vor «Löschen», Tooltip, Untermenü-Pfeil; Aktion bekommt den Knoten, Menü schliesst');
+
+    // Mehrfachauswahl: gehört der Knoten dazu, gilt der Eintrag für alle ausgewählten; sonst nur für ihn
+    await nodeOf('Alpha').click({ modifiers: ['Control'] });
+    await nodeOf('Beta').click({ modifiers: ['Control'] });
+    await pCm.waitForFunction(() => document.querySelectorAll('.mm-node.mm-multi').length === 2);
+    await nodeOf('Beta').click({ button: 'right' });
+    await pCm.click('#contextMenu button:has-text("Testaktion")');
+    await nodeOf('Gamma').click({ button: 'right' });
+    await pCm.click('#contextMenu button:has-text("Testaktion")');
+    await pCm.waitForFunction(() => window.__ctxTargets.length === 2);
+    const multi = await targets();
+    assert.deepEqual(multi.map(x => x.ids), [[idsCm.Beta, idsCm.Alpha], [idsCm.Gamma]], 'Mehrfachauswahl: der angeklickte zuerst, dann die übrigen; ausserhalb nur der Knoten');
+    part('Kontextmenü: Mehrfachauswahl gibt alle ausgewählten Notizen mit, ein Knoten ausserhalb nur sich');
+
+    // Untermenü mit der Maus: neben dem Menü, Klick in das Feld schliesst nichts, close() schliesst beides
+    await nodeOf('Beta').click({ button: 'right' });
+    await pCm.hover('#contextMenu button:has-text("Testfeld")');
+    await pCm.waitForSelector('.context-sub .test-panel');
+    const box = await pCm.evaluate(() => { const m = document.querySelector('#contextMenu').getBoundingClientRect(), s = document.querySelector('.context-sub').getBoundingClientRect(); return { right: m.right, left: s.left }; });
+    assert.ok(box.left >= box.right, 'Untermenü rechts neben dem Menü');
+    assert.equal(await pCm.getAttribute('#contextMenu button:has-text("Testfeld")', 'aria-expanded'), 'true');
+    assert.equal(await pCm.locator('.context-sub button').innerText(), 'Wählen 2', 'das Untermenü kennt die Mehrfachauswahl');
+    await pCm.click('.context-sub input[type="checkbox"]');
+    assert.equal(await pCm.locator('.context-sub').isVisible(), true, 'Klick in das Untermenü schliesst es nicht');
+    await pCm.hover('#contextMenu button:has-text("Testaktion")');
+    await pCm.waitForFunction(() => !document.querySelector('.context-sub'));
+    await pCm.hover('#contextMenu button:has-text("Testfeld")');
+    await pCm.click('.context-sub button');
+    assert.equal(await pCm.locator('#contextMenu').isHidden(), true, 'close() schliesst das Menü');
+    assert.equal(await pCm.locator('.context-sub').count(), 0);
+    assert.deepEqual(await targets(), [{ kind: 'panel', ids: [idsCm.Beta, idsCm.Alpha], checked: false }], 'neues Untermenü, neuer Inhalt');
+    part('Untermenü: öffnet beim Zeigen rechts neben dem Menü, bleibt beim Klick hinein offen, schliesst beim Zeigen auf einen anderen Eintrag und mit close()');
+
+    // Tastatur: Pfeil rechts öffnet und springt hinein, Esc schliesst nur das Untermenü, Esc nochmals das Menü
+    await nodeOf('Gamma').click({ button: 'right' });
+    await pCm.focus('#contextMenu button:has-text("Testfeld")');
+    await pCm.keyboard.press('ArrowRight');
+    await pCm.waitForFunction(() => document.activeElement && document.activeElement.closest('.context-sub'));
+    await pCm.keyboard.press('Escape');
+    await pCm.waitForFunction(() => !document.querySelector('.context-sub'));
+    assert.equal(await pCm.evaluate(() => document.activeElement.textContent.startsWith('Testfeld')), true, 'Fokus zurück auf dem Eintrag');
+    assert.equal(await pCm.locator('#contextMenu').isVisible(), true, 'das Menü bleibt offen');
+    await pCm.keyboard.press('Escape');
+    await pCm.waitForSelector('#contextMenu', { state: 'hidden' });
+    part('Untermenü per Tastatur: Pfeil rechts öffnet und springt hinein, Esc schliesst erst das Untermenü, dann das Menü');
+
+    // Fehler im Untermenü: Statuszeile, kein Untermenü; visible; Wurzel und leere Fläche ohne Einträge der Erweiterungen
+    await nodeOf('Alpha').click({ button: 'right' });
+    await pCm.hover('#contextMenu button:has-text("Wirft")');
+    await pCm.waitForFunction(() => /Feld kaputt/.test(document.querySelector('#status').textContent));
+    assert.equal(await pCm.locator('.context-sub').count(), 0);
+    await pCm.keyboard.press('Escape');
+    await pCm.evaluate(id => { window.__onlyId = id; }, idsCm.Alpha);
+    await nodeOf('Alpha').click({ button: 'right' });
+    assert.ok((await menuLabels()).includes('Nur bei Alpha@test-ctxmenu'), 'visible(target): sichtbar beim passenden Knoten');
+    await pCm.keyboard.press('Escape');
+    await nodeOf('Beta').click({ button: 'right' });
+    assert.ok(!(await menuLabels()).includes('Nur bei Alpha@test-ctxmenu'), 'und nicht bei anderen');
+    await pCm.keyboard.press('Escape');
+    await pCm.click('.mm-root', { button: 'right' });
+    assert.equal(await pCm.locator('#contextMenu button[data-plugin]').count(), 0, 'Wurzel: keine Einträge der Erweiterungen');
+    await pCm.keyboard.press('Escape');
+    await pCm.click('#mindmap', { button: 'right', position: { x: 30, y: 700 } });
+    assert.equal(await pCm.locator('#contextMenu button[data-plugin]').count(), 0, 'leere Fläche: keine');
+    await pCm.keyboard.press('Escape');
+    assert.deepEqual(eCm, [], 'keine Fehler im Browser');
+    await ctxCm.close();
+    part('Kontextmenü: Fehler im Untermenü in der Statuszeile, visible je Knoten, Wurzel und leere Fläche ohne Einträge');
+
     // ---------- Zur Laufzeit ein- und ausschalten (v1.7.0): Verzeichnis aus dem Build, Schalter, eigene Datei per Name ----------
     const catalog = [
       { file: 'test-ok.js', id: 'test-ok', name: 'Test OK', version: '2.0.0', api: 1, description: 'Prüft die Schnittstelle' },
@@ -375,6 +495,12 @@ async function runPlugins(browser, part, step) {
     await p6.dblclick('.mm-node:not(.mm-root)');
     await p6.waitForSelector('#editorPane:not([hidden])');
     assert.equal(await p6.locator('#mdToolbar button[data-plugin="test-ok"]').count(), 1, 'Toolleistenknopf ohne Neuladen');
+    await p6.keyboard.press('Escape');
+    await p6.click('.mm-node:not(.mm-root)', { button: 'right' });
+    assert.equal(await p6.locator('#contextMenu button[data-plugin="test-ok"]').count(), 1, 'Eintrag im Kontextmenü ohne Neuladen');
+    await p6.keyboard.press('Escape');
+    await p6.dblclick('.mm-node:not(.mm-root)');
+    await p6.waitForSelector('#editorPane:not([hidden])');
     await p6.waitForFunction(() => window.__events.some(e => e[0] === 'note:open'));
     await p6.keyboard.press('Escape');
     part('Einschalten: lädt und aktiviert sofort; Menü, Toolleiste, Ereignisse und Design sind da, ohne die Seite neu zu laden');
@@ -399,6 +525,9 @@ async function runPlugins(browser, part, step) {
     await p6.dblclick('.mm-node:not(.mm-root)');
     await p6.waitForSelector('#editorPane:not([hidden])');
     assert.equal(await p6.locator('#mdToolbar button[data-plugin="test-ok"]').count(), 0, 'Toolleistenknopf weg');
+    await p6.keyboard.press('Escape');
+    await p6.click('.mm-node:not(.mm-root)', { button: 'right' });
+    assert.equal(await p6.locator('#contextMenu button[data-plugin]').count(), 0, 'Eintrag im Kontextmenü weg');
     await p6.keyboard.press('Escape');
     await p6.waitForTimeout(200);
     assert.deepEqual(await p6.evaluate(() => window.__events), [], 'Ereignisse erreichen die ausgeschaltete Erweiterung nicht mehr');
