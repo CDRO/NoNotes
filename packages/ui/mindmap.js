@@ -147,23 +147,111 @@
 
   // ---------- Querverweise ----------
 
-  /** Pfad eines Querverweises von Knoten a zu Knoten b: waagerecht zwischen den zugewandten Seiten; liegen beide in derselben
-   *  Spalte, als Bogen über die Aussenseite der Karte, damit die Linie nicht durch die Knoten dazwischen läuft. */
-  function linkPath(a, b) {
-    const y1 = a.y + a.h / 2;
-    const y2 = b.y + b.h / 2;
-    const rightOf = b.x >= a.x + a.w;
-    if (rightOf || b.x + b.w <= a.x) {
-      const x1 = rightOf ? a.x + a.w : a.x;
-      const x2 = rightOf ? b.x : b.x + b.w;
-      const dx = (x2 - x1) / 2;
-      return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+  const LINK_TURN = 12;   // Abstand der Kehre vom Knoten, wenn die Linie zurück Richtung Wurzel muss
+  const LINK_STEPS = 24;  // Stützpunkte je Kurvenstück für die Bewertung
+  const LINK_CELL = 64;   // Rasterweite für die Suche nach Knoten in der Nähe eines Stützpunkts
+  const LINK_PAD = 6;     // so nah soll eine Linie an fremde Knoten nicht heran
+
+  /** Rechteck eines Knotens; bei eingeklappten Ästen samt Kreis mit der Zahl am äusseren Ende. */
+  function boxOf(n) {
+    const bubble = !n.isRoot && n.collapsed && n.children.length ? 22 : 0;
+    return { x1: n.x - (n.dir < 0 ? bubble : 0), y1: n.y, x2: n.x + n.w + (n.dir > 0 ? bubble : 0), y2: n.y + n.h };
+  }
+
+  /** Raster der Knoten für linkPath (einmal je Zeichnen): Zelle → Einträge { n, r: Rechteck, x1…y2: mit Abstand }. */
+  function linkIndex(nodes) {
+    const cells = new Map();
+    const cell = v => Math.floor(v / LINK_CELL);
+    for (const n of nodes) {
+      const r = boxOf(n);
+      const e = { n, r, x1: r.x1 - LINK_PAD, y1: r.y1 - LINK_PAD, x2: r.x2 + LINK_PAD, y2: r.y2 + LINK_PAD };
+      for (let cx = cell(e.x1); cx <= cell(e.x2); cx++) {
+        for (let cy = cell(e.y1); cy <= cell(e.y2); cy++) {
+          const k = cx * 65536 + cy;
+          const list = cells.get(k);
+          if (list) list.push(e); else cells.set(k, [e]);
+        }
+      }
     }
-    const dir = (a.dir || b.dir || 1) > 0 ? 1 : -1; // Seite der Karte: der Bogen zeigt von der Wurzel weg
-    const x1 = dir > 0 ? a.x + a.w : a.x;
-    const x2 = dir > 0 ? b.x + b.w : b.x;
-    const bulge = dir * Math.min(90, Math.abs(y2 - y1) / 2 + 24);
-    return `M ${x1} ${y1} C ${x1 + bulge} ${y1}, ${x2 + bulge} ${y2}, ${x2} ${y2}`;
+    return cells;
+  }
+
+  function bezier(s, t) {
+    const u = 1 - t, a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+    return { x: a * s[0].x + b * s[1].x + c * s[2].x + d * s[3].x, y: a * s[0].y + b * s[1].y + c * s[2].y + d * s[3].y };
+  }
+
+  /** Kurvenstück von P (Richtung dir waagerecht) zum Ziel E (E.ax/E.ay: woher die Linie ankommt); f, g: Steifigkeit. Wo eine
+   *  Richtung vom anderen Ende weg zeigt, bleibt der Bogen klein. */
+  function linkCurve(P, dir, E, f, g) {
+    const dx = Math.abs(E.x - P.x), dy = Math.abs(E.y - P.y);
+    const k1 = dir * (E.x - P.x) > 0 ? Math.max(30, f * dx) : 30 + 60 * f;
+    const toward = E.ax ? E.ax * (P.x - E.x) > 0 : E.ay * (P.y - E.y) > 0;
+    const k2 = Math.min(toward ? 160 : 100, Math.max(36, g * (E.ay ? Math.max(dy, dx / 2) : Math.max(dx, dy / 2))));
+    return [P, { x: P.x + dir * k1, y: P.y }, { x: E.x + E.ax * k2, y: E.y + E.ay * k2 }, E];
+  }
+
+  /** Pfad eines Querverweises von Knoten a zu Knoten b (seit 2.8.2): beginnt am äusseren Ende von a (weg von der Wurzel, wo keine
+   *  Linien zu den Elternknoten ansetzen) und endet von unten in der Mitte der Unterkante von b oder, wenn b keine Unternotizen
+   *  hat, von aussen an dessen äusserem Ende. Muss die Linie zurück Richtung Wurzel, macht sie zuerst eine Kehre über oder unter
+   *  a. Von mehreren Kurven gewinnt die, die am wenigsten durch andere Knoten läuft und kurz ist. index: linkIndex() aller
+   *  gezeichneten Knoten. Ergebnis: { d, box } mit dem Rechteck, das die Linie samt Pfeilspitze braucht. */
+  function linkPath(a, b, index) {
+    const sa = a.dir < 0 ? -1 : 1, sb = b.dir < 0 ? -1 : 1;
+    const S = { x: sa > 0 ? a.x + a.w : a.x, y: a.y + a.h / 2 };
+    const ends = [{ x: b.x + b.w / 2, y: b.y + b.h, ax: 0, ay: 1 }];
+    if (!b.children.length) ends.push({ x: sb > 0 ? b.x + b.w : b.x, y: b.y + b.h / 2, ax: sb, ay: 0 });
+    const u = a.h / 2 + LINK_TURN;
+    const cands = [];
+    for (const E of ends) {
+      for (const f of [0.3, 0.55, 0.8]) {
+        for (const g of [0.35, 0.7]) {
+          cands.push([linkCurve(S, sa, E, f, g)]);
+          for (const v of [-1, 1]) {
+            const U = { x: S.x, y: S.y + v * u };
+            cands.push([[S, { x: S.x + sa * u * 0.8, y: S.y }, { x: U.x + sa * u * 0.8, y: U.y }, U], linkCurve(U, -sa, E, f, g)]);
+          }
+        }
+      }
+    }
+    // Kosten: Länge, dazu jedes Stück durch einen fremden Knoten (mit Abstand) sechsfach, durch a oder b selbst zwanzigfach
+    let best = null;
+    for (const segs of cands) {
+      let cost = 0;
+      for (const s of segs) {
+        let prev = s[0];
+        for (let i = 1; i <= LINK_STEPS; i++) {
+          const p = bezier(s, i / LINK_STEPS);
+          const d = Math.hypot(p.x - prev.x, p.y - prev.y), mx = (p.x + prev.x) / 2, my = (p.y + prev.y) / 2;
+          cost += d;
+          const list = index.get(Math.floor(mx / LINK_CELL) * 65536 + Math.floor(my / LINK_CELL));
+          if (list) {
+            for (const e of list) {
+              const own = e.n === a || e.n === b, r = own ? e.r : e;
+              if (mx > r.x1 && mx < r.x2 && my > r.y1 && my < r.y2) cost += d * (own ? 20 : 6);
+            }
+          }
+          prev = p;
+        }
+      }
+      if (!best || cost < best.cost) best = { segs, cost };
+    }
+    const box = { minX: S.x, minY: S.y, maxX: S.x, maxY: S.y };
+    for (const s of best.segs) {
+      for (let i = 1; i <= LINK_STEPS; i++) {
+        const p = bezier(s, i / LINK_STEPS);
+        box.minX = Math.min(box.minX, p.x - 6); box.maxX = Math.max(box.maxX, p.x + 6);
+        box.minY = Math.min(box.minY, p.y - 6); box.maxY = Math.max(box.maxY, p.y + 6);
+      }
+    }
+    const f = v => Math.round(v * 10) / 10;
+    const d = `M ${f(S.x)} ${f(S.y)} ` + best.segs.map(s => `C ${f(s[1].x)} ${f(s[1].y)}, ${f(s[2].x)} ${f(s[2].y)}, ${f(s[3].x)} ${f(s[3].y)}`).join(' ');
+    return { d, box };
+  }
+
+  /** Rechteck aus beiden. */
+  function unionBox(a, b) {
+    return { minX: Math.min(a.minX, b.minX), minY: Math.min(a.minY, b.minY), maxX: Math.max(a.maxX, b.maxX), maxY: Math.max(a.maxY, b.maxY) };
   }
 
   /** Querverweise, deren beide Enden gezeichnet sind (nicht eingeklappt, nicht die Wurzel): [{ a, b, title }], je Paar einmal. */
@@ -304,14 +392,16 @@
     /** Gestrichelte Linie eines Querverweises; bei einer Suche blass, wenn ein Ende kein Treffer ist. */
     function drawLink(l) {
       const dim = svg.classList.contains('has-matches') && [l.a, l.b].some(n => !n.match && !n.matchInside);
+      const path = linkPath(l.a, l.b, inst.linkIndex || (inst.linkIndex = linkIndex(inst.placed)));
       const p = svgEl('path', {
         class: 'mm-link' + (dim ? ' mm-dim' : ''),
-        d: linkPath(l.a, l.b),
+        d: path.d,
         'data-from': l.a.id, 'data-to': l.b.id,
         'marker-end': 'url(#mmLinkArrow)',
       }, linksG);
       const name = n => (n.title || '').trim() || t('Ohne Titel');
       svgEl('title', null, p).textContent = t('Verweis von „{von}“ auf „{nach}“', { von: name(l.a), nach: name(l.b) });
+      return path.box;
     }
 
     /** rows wie getTree; options.mapTitle, options.matchIds (Suche), options.links (Querverweise, nur sichtbare Enden werden gezeichnet). */
@@ -344,7 +434,8 @@
       for (const n of placed) {
         for (const c of n.visibleChildren) drawEdge(n, c);
       }
-      for (const l of drawableLinks(options.links, placed)) drawLink(l);
+      inst.linkIndex = null; // wird beim ersten Verweis gebaut
+      for (const l of drawableLinks(options.links, placed)) inst.bounds = unionBox(inst.bounds, drawLink(l)); // Einpassen mit den Linien
       for (const n of placed) drawNode(n);
 
       if (inst.needsFit) { fit(); inst.needsFit = false; }
@@ -615,7 +706,12 @@
     const prepared = options.expandAll ? rows.map(r => Object.assign({}, r, { collapsed: 0 })) : rows;
     const { root, byId } = buildTree(prepared, options.mapTitle || '');
     for (const n of byId.values()) { n.match = false; n.matchInside = false; }
-    const { placed, bounds } = layoutTree(root);
+    const layout = layoutTree(root);
+    const placed = layout.placed;
+    const drawable = drawableLinks(options.links, placed);
+    const index = drawable.length ? linkIndex(placed) : null;
+    const links = drawable.map(l => linkPath(l.a, l.b, index));
+    const bounds = links.reduce((b, l) => unionBox(b, l.box), layout.bounds); // Platz für die Linien
     const pad = 32;
     const width = Math.ceil(bounds.maxX - bounds.minX + 2 * pad);
     const height = Math.ceil(bounds.maxY - bounds.minY + 2 * pad);
@@ -644,11 +740,10 @@
         parts.push(`<path d="M ${px} ${py} C ${mx} ${py}, ${mx} ${cy}, ${cx} ${cy}" fill="none" stroke="${c.muted}" stroke-opacity="0.55" stroke-width="2"/>`);
       }
     }
-    const links = drawableLinks(options.links, placed);
     if (links.length) {
       const attrs = Object.entries(ARROW_ATTRS).map(([k, v]) => `${k}="${v}"`).join(' ');
       parts.push(`<defs><marker id="mmLinkArrow" ${attrs}><path d="${ARROW_PATH}" fill="${c.muted}"/></marker></defs>`);
-      for (const l of links) parts.push(`<path d="${linkPath(l.a, l.b)}" fill="none" stroke="${c.muted}" stroke-opacity="0.8" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#mmLinkArrow)"/>`);
+      for (const l of links) parts.push(`<path d="${l.d}" fill="none" stroke="${c.muted}" stroke-opacity="0.8" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#mmLinkArrow)"/>`);
     }
     for (const n of placed) {
       const fill = n.isRoot ? c.accent : c.panel;

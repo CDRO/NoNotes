@@ -1043,6 +1043,39 @@ async function runLinks(browser, part, step) {
   ]);
   part('[[Titel*]] zeichnet eine gestrichelte Linie mit Pfeil; ohne Stern, auf sich selbst oder ohne Ziel keine');
 
+  // Linienführung (seit 2.8.2): Anfang am äusseren Ende der Quelle (weg von der Wurzel, nicht dort, wo die Linie zum Elternknoten
+  // ansetzt), Ende von unten in der Mitte des Ziels oder aussen an ihm; die Linien liegen unter den Knoten
+  const geo = await page.evaluate(() => {
+    const box = id => {
+      const g = document.querySelector(`#mindmap .mm-node[data-id="${id}"]`);
+      const [x, y] = g.getAttribute('transform').match(/-?[\d.]+/g).map(Number);
+      const r = g.querySelector('rect');
+      return { x, y, w: Number(r.getAttribute('width')), h: Number(r.getAttribute('height')) };
+    };
+    const root = box('root');
+    const outer = n => (n.x + n.w / 2 > root.x + root.w / 2 ? n.x + n.w : n.x);
+    const at = (p, x, y) => Math.abs(p.x - x) < 0.5 && Math.abs(p.y - y) < 0.5;
+    const layers = [...document.querySelector('#mindmap .mm-viewport').children].map(g => g.getAttribute('class'));
+    return {
+      under: layers.indexOf('mm-links') < layers.indexOf('mm-nodes'),
+      links: [...document.querySelectorAll('#mindmap path.mm-link')].map(p => {
+        const a = box(p.dataset.from), b = box(p.dataset.to);
+        const s = p.getPointAtLength(0), e = p.getPointAtLength(p.getTotalLength());
+        return {
+          start: at(s, outer(a), a.y + a.h / 2),
+          end: at(e, b.x + b.w / 2, b.y + b.h) ? 'unten' : at(e, outer(b), b.y + b.h / 2) ? 'aussen' : `${e.x} ${e.y}`,
+        };
+      }),
+    };
+  });
+  assert.equal(geo.under, true, 'Linien unter den Knoten');
+  assert.equal(geo.links.length, 2);
+  for (const l of geo.links) {
+    assert.equal(l.start, true, 'beginnt am äusseren Ende der Quelle');
+    assert.match(l.end, /^(unten|aussen)$/, 'endet unten in der Mitte oder aussen am Ziel');
+  }
+  part('Linienführung: vom äusseren Ende der Quelle unten in die Mitte oder aussen ans Ziel, unter den Knoten');
+
   // Schalter: nur sichtbar, wenn es Linien gibt; die Wahl merkt sich der Browser
   const btn = page.locator('#mapLinksBtn');
   assert.equal(await btn.isVisible(), true);
