@@ -1,7 +1,10 @@
 /* NoNotes – Export als Markdown mit Mindmap-Bild.
    Zwei Formen: ein Ordner mit index.md und einer Datei pro Notiz, oder eine einzige
    Markdown-Datei mit allen Notizen als Abschnitte. In beiden Fällen liegen mindmap.svg
-   und mindmap.png daneben und werden oben in der Übersicht eingebunden. */
+   und mindmap.png daneben und werden oben in der Übersicht eingebunden.
+   Eine Datei pro Notiz bildet den Baum als Ordner ab (seit 2.8.3): notes/planung.md, die Unternotizen in notes/planung/,
+   deren Unternotizen in notes/planung/budget/ usw. Namen sind nur unter Geschwistern eindeutig zu machen; gleichnamige
+   Notizen an verschiedenen Orten überschreiben sich so nicht. */
 (function (global) {
   'use strict';
 
@@ -17,17 +20,43 @@
     const s = String(text || '').replace(/[äöüÄÖÜßéèêàâç]/g, ch => map[ch] || ch)
       .toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
       .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60).replace(/-+$/g, '');
+    if (/^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/.test(s)) return s + '-notiz'; // unter Windows keine Dateinamen
     return s || 'notiz';
   }
 
+  /** Eindeutige Namen (slug) innerhalb von nodes: gleiche Titel bekommen -2, -3 …, auch wenn ein Name wie «titel-2» schon
+   *  aus einem anderen Titel entstanden ist. */
   function uniqueSlugs(nodes) {
-    const used = new Map();
+    const used = new Set();
     for (const n of nodes) {
       const base = slugify(n.title.trim() || t('Ohne Titel'));
-      const count = used.get(base) || 0;
-      used.set(base, count + 1);
-      n.slug = count === 0 ? base : `${base}-${count + 1}`;
+      let slug = base;
+      for (let k = 2; used.has(slug); k++) slug = `${base}-${k}`;
+      used.add(slug);
+      n.slug = slug;
     }
+  }
+
+  /** Datei jeder Notiz im Ordner-Export: Notizen an der Wurzel in notes/, Unternotizen im Ordner ihrer Elternnotiz
+   *  (notes/planung.md und notes/planung/budget.md). Setzt n.slug (eindeutig unter Geschwistern) und n.file. */
+  function placeFiles(nodes) {
+    const roots = nodes.filter(n => !n.parentNode);
+    const place = (siblings, dir) => {
+      uniqueSlugs(siblings);
+      for (const n of siblings) {
+        n.file = `${dir}/${n.slug}.md`;
+        place(n.children, `${dir}/${n.slug}`);
+      }
+    };
+    place(roots, 'notes');
+  }
+
+  /** Relativer Link von der Datei from zur Datei to (beide vom Export-Ordner aus, mit / getrennt). */
+  function relPath(from, to) {
+    const a = from.split('/').slice(0, -1), b = to.split('/');
+    let i = 0;
+    while (i < a.length && i < b.length - 1 && a[i] === b[i]) i++;
+    return '../'.repeat(a.length - i) + b.slice(i).join('/');
   }
 
   /** Lebende Notizen in Baumreihenfolge (Tiefensuche), mit depth und children.
@@ -197,7 +226,6 @@
     const mode = options.mode === 'single' ? 'single' : 'folder';
     const archived = !!options.archived;
     const nodes = await treeOrder(backend, { archived });
-    uniqueSlugs(nodes);
     const byTitle = new Map();
     for (const n of nodes) {
       const key = n.title.trim().toLowerCase();
@@ -213,12 +241,11 @@
       return `${a.id}-${base}${ext}`;
     };
     const attById = new Map(attachments.map(a => [a.id, attName(a)]));
-    const attFrom = prefix => id => attById.has(id) ? `${prefix}attachments/${attById.get(id)}` : null;
+    const attFrom = from => id => attById.has(id) ? relPath(from, `attachments/${attById.get(id)}`) : null;
 
     if (mode === 'folder') {
-      const hrefFromIndex = n => `notes/${n.slug}.md`;
-      const hrefFromNote = n => `${n.slug}.md`;
-      const resolveFromNote = title => { const target = byTitle.get(title.toLowerCase()); return target ? hrefFromNote(target) : null; };
+      placeFiles(nodes);
+      const hrefFromIndex = n => n.file;
       const index = await header(backend, options.version);
       index.push('## Inhalt', '');
       index.push(...(nodes.length ? tocLines(nodes, hrefFromIndex) : [t('Noch keine Notizen.')]));
@@ -229,16 +256,18 @@
       for (const n of nodes) {
         const note = await backend.getNote(n.id);
         const lines = [`# ${n.title.trim() || t('Ohne Titel')}`, '', ...await metaLines(backend, n, note), ''];
-        const body = bodyToMarkdown(note.body, resolveFromNote, attFrom('../'));
+        const resolve = title => { const target = byTitle.get(title.toLowerCase()); return target ? relPath(n.file, target.file) : null; };
+        const body = bodyToMarkdown(note.body, resolve, attFrom(n.file));
         if (body) lines.push(body, '');
         if (n.children.length) {
           lines.push('---', '', `**${t('Unternotizen')}**`, '');
-          for (const c of n.children) lines.push(`- [${c.title.trim() || t('Ohne Titel')}](${hrefFromNote(c)})`);
+          for (const c of n.children) lines.push(`- [${c.title.trim() || t('Ohne Titel')}](${relPath(n.file, c.file)})`);
           lines.push('');
         }
-        files.push({ path: `notes/${n.slug}.md`, data: lines.join('\n') });
+        files.push({ path: n.file, data: lines.join('\n') });
       }
     } else {
+      uniqueSlugs(nodes); // Anker in einer Datei: über alle Notizen eindeutig
       const anchorOf = n => `#${n.slug}`;
       const resolve = title => { const target = byTitle.get(title.toLowerCase()); return target ? anchorOf(target) : null; };
       const doc = await header(backend, options.version);
@@ -251,7 +280,7 @@
         const note = await backend.getNote(n.id);
         const level = Math.min(6, n.depth + 1);
         doc.push('---', '', `<a id="${n.slug}"></a>`, '', `${'#'.repeat(level)} ${n.title.trim() || t('Ohne Titel')}`, '', ...await metaLines(backend, n, note), '');
-        const body = bodyToMarkdown(note.body, resolve, attFrom(''));
+        const body = bodyToMarkdown(note.body, resolve, id => (attById.has(id) ? `attachments/${attById.get(id)}` : null));
         if (body) doc.push(body, '');
       }
       files.push({ path: `${slugify(await backend.getMapTitle())}.md`, data: doc.join('\n') });
@@ -334,5 +363,5 @@
     return `NoNotes-${slugify(await backend.getMapTitle())}-${stamp()}.zip`;
   }
 
-  global.NoNotesExport = { buildFiles, renderSvg, accentOf, svgToPng, writeToDirectory, suggestedZipName, slugify, bodyToMarkdown, treeOrder };
+  global.NoNotesExport = { buildFiles, renderSvg, accentOf, svgToPng, writeToDirectory, suggestedZipName, slugify, bodyToMarkdown, treeOrder, relPath };
 })(window);

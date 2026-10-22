@@ -1161,8 +1161,47 @@ async function runLinks(browser, part, step) {
   await page.evaluate(async id => { await __ctx.backend.deleteNote(id); await __ctx.refresh(); }, ids.gamma);
   await page.waitForFunction(() => document.querySelectorAll('#mindmap path.mm-link').length === 0);
   assert.equal(await btn.isVisible(), false, 'ohne Linien kein Schalter');
-  assert.deepEqual(errors, [], 'keine Fehler im Browser');
   part('Gelöschtes Ziel: keine Linie, kein Schalter');
+
+  // Markdown-Export als Ordnerbaum (seit 2.8.3): gleichnamige Notizen an verschiedenen Orten gehen nicht verloren, Links stimmen
+  const tree = await page.evaluate(async () => {
+    const B = __ctx.backend;
+    const mk = async (parent, title, body) => { const id = await B.createNote(parent); await B.updateNote(id, title, body || '', {}); return id; };
+    const a = await mk(null, 'Projekt A'), b = await mk(null, 'Projekt B');
+    await mk(a, 'Protokoll', 'Zurück zu [[Projekt B]], siehe [[Protokoll 2]].');
+    const pb = await mk(b, 'Protokoll');
+    await mk(pb, '22.10.2026');
+    await mk(pb, '22.10.2026');
+    await mk(null, 'Protokoll 2'); // hiess früher wie das zweite «Protokoll» (protokoll-2.md)
+    await mk(null, 'Con');
+    await __ctx.refresh();
+    const files = await NoNotesExport.buildFiles(B, { mode: 'folder' });
+    return {
+      paths: files.map(f => f.path),
+      texts: Object.fromEntries(files.filter(f => f.path.endsWith('.md')).map(f => [f.path, String(f.data)])),
+      count: (await B.getTree({})).length,
+    };
+  });
+  assert.equal(new Set(tree.paths).size, tree.paths.length, 'keine Datei doppelt');
+  assert.equal(tree.paths.filter(p => p.startsWith('notes/')).length, tree.count, 'jede Notiz eine Datei');
+  for (const p of ['notes/projekt-a.md', 'notes/projekt-a/protokoll.md', 'notes/projekt-b/protokoll.md', 'notes/projekt-b/protokoll/22-10-2026.md',
+    'notes/projekt-b/protokoll/22-10-2026-2.md', 'notes/protokoll-2.md', 'notes/con-notiz.md', 'notes/ordner/beta.md']) {
+    assert.ok(tree.paths.includes(p), p + ' fehlt in ' + tree.paths.join(', '));
+  }
+  const exported = new Set(tree.paths);
+  const resolveHref = (from, href) => {
+    const parts = from.split('/').slice(0, -1);
+    for (const s of href.split('/')) { if (s === '..') parts.pop(); else parts.push(s); }
+    return parts.join('/');
+  };
+  for (const [file, text] of Object.entries(tree.texts)) {
+    for (const m of text.matchAll(/\]\(([^)#\s]+\.md)\)/g)) assert.ok(exported.has(resolveHref(file, m[1])), `${file}: ${m[1]} zeigt auf keine Datei`);
+  }
+  assert.ok(tree.texts['notes/projekt-a/protokoll.md'].includes('Zurück zu [Projekt B](../projekt-b.md), siehe [Protokoll 2](../protokoll-2.md).'));
+  assert.ok(tree.texts['notes/projekt-b/protokoll.md'].includes('- [22.10.2026](protokoll/22-10-2026.md)\n- [22.10.2026](protokoll/22-10-2026-2.md)'));
+  assert.ok(tree.texts['index.md'].includes('(notes/projekt-b/protokoll/22-10-2026-2.md)'));
+  assert.deepEqual(errors, [], 'keine Fehler im Browser');
+  part('Markdown-Export: Ordner wie der Baum, gleichnamige Notizen getrennt, Links relativ und gültig');
 
   await ctx.close();
   fs.rmSync(tmp, { recursive: true, force: true });

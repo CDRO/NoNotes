@@ -121,8 +121,12 @@ mit Linien für handschriftliche Antworten bei offenen Fragen.
 Mindmap (`mindmap.svg` und `mindmap.png`), das oben in der Übersicht eingebunden ist:
 
 - **Eine Datei pro Notiz**: `index.md` mit Mindmap, Inhaltsverzeichnis in Baumreihenfolge
-  und der Liste offener Fragen, dazu `notes/<titel>.md` pro Notiz mit Pfad, Datum, Tags,
-  Inhalt und Links zu den Unternotizen.
+  und der Liste offener Fragen, dazu eine Datei pro Notiz mit Pfad, Datum, Tags, Inhalt und
+  Links zu den Unternotizen. Die Ordner bilden den Baum ab (seit 2.8.3): `notes/planung.md`,
+  ihre Unternotizen in `notes/planung/`, deren Unternotizen in `notes/planung/budget/` usw.
+  Gleichnamige Notizen an verschiedenen Orten (etwa jedes «Protokoll» unter seinem Projekt)
+  bleiben so getrennt; gleichnamige Geschwister heissen `titel.md`, `titel-2.md` usw.
+  Alle Links sind relativ und funktionieren auch im ZIP.
 - **Alles in einer Datei**: eine Markdown-Datei mit dem Bild oben, Inhaltsverzeichnis und
   allen Notizen als Abschnitte (Tiefe = Überschriftenebene); die Bilder liegen als Anhänge daneben.
 

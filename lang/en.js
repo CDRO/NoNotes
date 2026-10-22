@@ -859,7 +859,7 @@ NoNotesI18n.register('en', 'English', {
   'Aktueller Stand': 'Current status',
   'Als Markdown exportieren': 'Export as Markdown',
   'Das Bild der Mindmap wird mitexportiert und steht oben in der Übersicht.': 'The mind map image is exported as well and appears at the top of the overview.',
-  '<strong>Eine Datei pro Notiz</strong><br><small><code>index.md</code> mit Mindmap und Inhaltsverzeichnis, dazu <code>notes/…</code>, <code>mindmap.svg</code> und <code>mindmap.png</code></small>': '<strong>One file per note</strong><br><small><code>index.md</code> with the mind map and table of contents, plus <code>notes/…</code>, <code>mindmap.svg</code> and <code>mindmap.png</code></small>',
+  '<strong>Eine Datei pro Notiz</strong><br><small><code>index.md</code> mit Mindmap und Inhaltsverzeichnis, dazu <code>notes/…</code> mit Ordnern wie im Baum, <code>mindmap.svg</code> und <code>mindmap.png</code></small>': '<strong>One file per note</strong><br><small><code>index.md</code> with the mind map and table of contents, plus <code>notes/…</code> with folders like the tree, <code>mindmap.svg</code> and <code>mindmap.png</code></small>',
   '<strong>Alles in einer Datei</strong><br><small>Eine Markdown-Datei mit dem Mindmap-Bild oben und allen Notizen als Abschnitte; die Bilder liegen als Anhänge daneben</small>': '<strong>Everything in one file</strong><br><small>One Markdown file with the mind map image at the top and all notes as sections; the images are next to it as attachments</small>',
   'In Ordner speichern…': 'Save to folder…',
   'Als ZIP herunterladen': 'Download as ZIP',
