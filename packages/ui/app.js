@@ -175,6 +175,7 @@
     pluginProviders: new Map(), // Lieferanten für @kürzel je Erweiterung (zum Abmelden beim Ausschalten)
     pluginContextItems: [],     // Einträge der Erweiterungen im Kontextmenü eines Knotens (seit 2.8.0): { plugin, spec }
     contextSub: null,           // offenes Untermenü des Kontextmenüs: { anchor, el }
+    contextUse: null,           // Kontextmenü eines Knotens mit Einträgen der Erweiterungen: { multi, applied }
     editorMode: 'edit',   // 'edit' | 'split' | 'preview'
     previewTimer: null,
     listScope: 'live',    // 'live' | 'trash'
@@ -316,6 +317,8 @@
     hideBanner();
     state.query = '';
     state.mapSelection = null;
+    state.multi.clear(); // die Nummern gehören zur alten Datenbank (anderer Bereich, andere Datei)
+    renderMulti();
     state.mapDirty = true;
     state.accentStale = true;
     state.tagFilter = '';
@@ -623,11 +626,13 @@
   async function renderAll() {
     const replaced = state.accentStale;
     if (state.accentStale) { await loadAccent(); await loadTheme(); }
+    // Erweiterungen erfahren vom Wechsel der Datenbank vor dem Zeichnen (seit 2.8.1): Zwischenstände zur alten Datei
+    // (gleiche Nummern, andere Notizen) dürfen nicht in die neue Mindmap geraten.
+    if (replaced) emitPlugins('database:replaced', {});
     // Unabhängige Abfragen gleichzeitig stellen: bei einem Backend über das Netz zählt jede Laufzeit nur einmal.
     await Promise.all([renderTagFilters(), renderList(), renderEditor(), renderCount(), renderMap(), renderQuestionCounts(), renderTaskCounts()]);
     if (inQuestions()) await renderQuestions();
     if (state.view === 'tasks') await renderTasks();
-    if (replaced) emitPlugins('database:replaced', {});
   }
 
   // ---------- Hauptfarbe ----------
@@ -976,8 +981,9 @@
     state.pluginContextItems.push({ entry, spec });
   }
 
-  /** Die Einträge der Erweiterungen für einen Knoten, für showContextMenu. */
-  function pluginContextEntries(target) {
+  /** Die Einträge der Erweiterungen für einen Knoten, für showContextMenu. use: { multi, applied } dieses Menüs; wurde mit
+   *  einem Eintrag etwas getan (action, close() oder applied() im Untermenü), wird die Mehrfachauswahl danach aufgehoben. */
+  function pluginContextEntries(target, use) {
     const out = [];
     for (const { entry, spec } of state.pluginContextItems) {
       if (entry.status !== 'active') continue;
@@ -988,11 +994,15 @@
       }
       const item = { label: spec.label.trim(), title: spec.title ? String(spec.title) : '', write: spec.write !== false, plugin: entry.id };
       if (spec.panel) {
+        const api = Object.freeze({
+          close: () => { use.applied = true; hideContextMenu(); },
+          applied: () => { use.applied = true; },
+        });
         item.panel = () => {
-          try { return spec.panel(target, { close: hideContextMenu }); } catch (e) { runPlugin(entry, () => { throw e; }); return null; }
+          try { return spec.panel(target, api); } catch (e) { runPlugin(entry, () => { throw e; }); return null; }
         };
       } else {
-        item.action = () => runPlugin(entry, () => spec.action(target));
+        item.action = () => { if (use.multi) clearMulti(); return runPlugin(entry, () => spec.action(target)); };
       }
       out.push(item);
     }
@@ -4057,6 +4067,14 @@
   function hideContextMenu() {
     closeContextSub();
     el.contextMenu.hidden = true;
+    finishContextUse();
+  }
+
+  /** Das Menü ist zu: wurde mit einem Eintrag der Erweiterungen etwas an der Mehrfachauswahl getan, ist sie erledigt. */
+  function finishContextUse() {
+    const use = state.contextUse;
+    state.contextUse = null;
+    if (use && use.applied && use.multi) clearMulti();
   }
 
   /** Öffnet das Untermenü eines Eintrags neben dem Kontextmenü; focus: gleich hinein (Klick, Tastatur). */
@@ -4159,12 +4177,16 @@
       { write: true, label: t('Nach unten'), key: 'Alt+↓', action: async () => { state.mapSelection = id; await moveSelected(1); } },
     );
     // Einträge der Erweiterungen (seit 2.8.0): für die Mehrfachauswahl, wenn der Knoten dazugehört, sonst für ihn allein
-    const ids = (state.multi.has(id) ? [id, ...[...state.multi].filter(x => x !== id)] : [id])
+    finishContextUse(); // ein noch offenes Menü (Rechtsklick auf einen anderen Knoten) zuerst abschliessen
+    const multi = state.multi.has(id);
+    const ids = (multi ? [id, ...[...state.multi].filter(x => x !== id)] : [id])
       .filter(x => { const i = state.map.nodeInfo(x); return !i || !i.archived; });
-    const fromPlugins = pluginContextEntries(Object.freeze({ id, ids: Object.freeze(ids) }));
+    const use = { multi, applied: false };
+    const fromPlugins = pluginContextEntries(Object.freeze({ id, ids: Object.freeze(ids) }), use);
     if (fromPlugins.length) items.push('sep', ...fromPlugins);
     items.push('sep', { write: true, label: t('Löschen'), key: t('Entf'), danger: true, action: () => deleteNoteById(id) });
     showContextMenu(items, x, y);
+    if (fromPlugins.length) state.contextUse = use;
   }
 
   // ---------- Suche, Menü ----------
@@ -4230,7 +4252,8 @@
     } else if (key === '0') {
       e.preventDefault(); state.map.fit();
     } else if (key === 'Escape') {
-      if (!el.contextMenu.hidden) { hideContextMenu(); return; }
+      // Nur das Menü schliessen: ohne stopPropagation höbe das Dokument danach auch die Mehrfachauswahl auf
+      if (!el.contextMenu.hidden) { e.stopPropagation(); hideContextMenu(); return; }
       state.mapSelection = null;
       state.map.setSelected(null);
     }

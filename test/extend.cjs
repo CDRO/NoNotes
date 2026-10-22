@@ -82,6 +82,7 @@ async function runPlugins(browser, part, step) {
             b.addEventListener('click', () => { window.__ctxTargets.push({ kind: 'panel', ids: [...t.ids], checked: d.querySelector('input').checked }); api.close(); });
             const c = document.createElement('input');
             c.type = 'checkbox';
+            c.addEventListener('change', () => api.applied());
             d.append(b, c);
             return d;
           } });
@@ -333,6 +334,9 @@ async function runPlugins(browser, part, step) {
     page.on('dialog', d => d.accept());
     await page.setInputFiles('#importInput', path.join(tmp, 'skript.sqlite'));
     await page.waitForFunction(() => window.__events.some(e => e[0] === 'database:replaced'));
+    await page.waitForFunction(() => window.__events.some(e => e[0] === 'mindmap:rendered'));
+    const evOrder = await page.evaluate(() => window.__events.map(e => e[0]).filter(n => n === 'database:replaced' || n === 'mindmap:rendered'));
+    assert.equal(evOrder[0], 'database:replaced', 'database:replaced kommt vor dem Zeichnen der neuen Mindmap (seit 2.8.1): ' + evOrder.join(', '));
     await page.dblclick('.mm-node:not(.mm-root)');
     await page.waitForSelector('#editorPane:not([hidden])');
     await page.click('#modeSwitch [data-mode="preview"]');
@@ -391,9 +395,22 @@ async function runPlugins(browser, part, step) {
     await pCm.waitForFunction(() => window.__ctxTargets.length === 2);
     const multi = await targets();
     assert.deepEqual(multi.map(x => x.ids), [[idsCm.Beta, idsCm.Alpha], [idsCm.Gamma]], 'Mehrfachauswahl: der angeklickte zuerst, dann die übrigen; ausserhalb nur der Knoten');
-    part('Kontextmenü: Mehrfachauswahl gibt alle ausgewählten Notizen mit, ein Knoten ausserhalb nur sich');
+    assert.equal(await pCm.locator('.mm-node.mm-multi').count(), 0, 'nach der Aktion ist die Mehrfachauswahl aufgehoben (seit 2.8.1)');
+    assert.equal(await pCm.locator('#multiBar').isVisible(), false);
+    // Abbrechen (Esc) behält die Auswahl
+    const pick = async () => {
+      await nodeOf('Alpha').click({ modifiers: ['Control'] });
+      await nodeOf('Beta').click({ modifiers: ['Control'] });
+      await pCm.waitForFunction(() => document.querySelectorAll('.mm-node.mm-multi').length === 2);
+    };
+    await pick();
+    await nodeOf('Beta').click({ button: 'right' });
+    await pCm.keyboard.press('Escape');
+    await pCm.waitForSelector('#contextMenu', { state: 'hidden' });
+    assert.equal(await pCm.locator('.mm-node.mm-multi').count(), 2, 'abgebrochen: die Auswahl bleibt');
+    part('Kontextmenü: Mehrfachauswahl gibt alle ausgewählten Notizen mit, ein Knoten ausserhalb nur sich; nach der Aktion ist die Auswahl aufgehoben, nach Esc nicht');
 
-    // Untermenü mit der Maus: neben dem Menü, Klick in das Feld schliesst nichts, close() schliesst beides
+    // Untermenü mit der Maus: neben dem Menü, Klick in das Feld schliesst nichts, close() schliesst beides (die Auswahl steht noch)
     await nodeOf('Beta').click({ button: 'right' });
     await pCm.hover('#contextMenu button:has-text("Testfeld")');
     await pCm.waitForSelector('.context-sub .test-panel');
@@ -410,6 +427,17 @@ async function runPlugins(browser, part, step) {
     assert.equal(await pCm.locator('#contextMenu').isHidden(), true, 'close() schliesst das Menü');
     assert.equal(await pCm.locator('.context-sub').count(), 0);
     assert.deepEqual(await targets(), [{ kind: 'panel', ids: [idsCm.Beta, idsCm.Alpha], checked: false }], 'neues Untermenü, neuer Inhalt');
+    assert.equal(await pCm.locator('.mm-node.mm-multi').count(), 0, 'close(): die Mehrfachauswahl ist aufgehoben');
+    // applied(): etwas getan, das Menü blieb offen; beim Schliessen (hier Esc) ist die Auswahl erledigt
+    await pick();
+    await nodeOf('Alpha').click({ button: 'right' });
+    await pCm.hover('#contextMenu button:has-text("Testfeld")');
+    await pCm.click('.context-sub input[type="checkbox"]');
+    assert.equal(await pCm.locator('.mm-node.mm-multi').count(), 2, 'solange das Menü offen ist, bleibt die Auswahl');
+    await pCm.keyboard.press('Escape');
+    await pCm.keyboard.press('Escape');
+    await pCm.waitForSelector('#contextMenu', { state: 'hidden' });
+    assert.equal(await pCm.locator('.mm-node.mm-multi').count(), 0, 'applied() und dann geschlossen: Auswahl aufgehoben');
     part('Untermenü: öffnet beim Zeigen rechts neben dem Menü, bleibt beim Klick hinein offen, schliesst beim Zeigen auf einen anderen Eintrag und mit close()');
 
     // Tastatur: Pfeil rechts öffnet und springt hinein, Esc schliesst nur das Untermenü, Esc nochmals das Menü

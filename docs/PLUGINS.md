@@ -129,10 +129,12 @@ keine.
 | `write` | Vorgabe `true`: der Eintrag ändert Daten und fehlt im Lesemodus. `false` für Einträge, die nur lesen |
 | `visible(target)` | Wahlweise: `false` blendet den Eintrag für dieses Ziel aus |
 | `action(target)` | Ein Klick führt das aus (darf `async` sein); das Menü schliesst sich vorher |
-| `panel(target, { close })` | Statt `action`: Untermenü. Liefert ein Element, das die App neben dem Menü zeigt (Klick, Zeigen oder Pfeil rechts auf den Eintrag öffnet es, `Esc` oder Pfeil links schliesst es). `close()` schliesst Untermenü und Menü |
+| `panel(target, { close, applied })` | Statt `action`: Untermenü. Liefert ein Element, das die App neben dem Menü zeigt (Klick, Zeigen oder Pfeil rechts auf den Eintrag öffnet es, `Esc` oder Pfeil links schliesst es). `close()` heisst «erledigt» und schliesst Untermenü und Menü. `applied()` (seit 2.8.1) heisst «etwas getan, das Menü bleibt offen», etwa bei einem Häkchen |
 
 `target` ist `{ id, ids }`: `id` ist der angeklickte Knoten. `ids` enthält **alle ausgewählten Notizen**, wenn der Knoten zur
-Mehrfachauswahl (`Ctrl`+Klick) gehört, sonst nur `id`; archivierte fehlen. Wer Daten ändert, nimmt `ctx.backend` und danach
+Mehrfachauswahl (`Ctrl`+Klick) gehört, sonst nur `id`; archivierte fehlen. **Nach einer Aktion ist die Mehrfachauswahl
+erledigt** (seit 2.8.1): Die App hebt sie auf, sobald ein Eintrag mit `action` gewählt wurde oder sich das Menü nach `close()`
+bzw. `applied()` schliesst. Wer abbricht (`Esc`, Klick daneben), behält die Auswahl. Wer Daten ändert, nimmt `ctx.backend` und danach
 `ctx.refresh()`. Fehler in `action` und `panel` erscheinen in der Statuszeile; wirft `visible`, fehlt der Eintrag. Das Menü
 bleibt in beiden Fällen bedienbar.
 Beim Ausschalten der Erweiterung verschwinden ihre Einträge.
@@ -166,7 +168,7 @@ ctx.ui.addContextMenuItem({
 | `note:saved` | Nach einer Pause im Schreiben, nachdem die Änderung übernommen wurde | `{ id }` |
 | `mindmap:rendered` | Die Mindmap wurde (neu) gezeichnet. Die Verbindungslinien sind `path.mm-edge` mit `data-from` (Kennung der Elternnotiz, bei der Wurzel `root`), `data-to` (Kennung der Unternotiz) und den Endpunkten `data-x1`, `data-y1`, `data-x2`, `data-y2` | `{}` |
 | `mindmap:select` | Die Auswahl in der Mindmap hat sich geändert (Klick, Tastatur, Neuzeichnen mit anderer Auswahl) | `{ id }`: Notizkennung, `'root'` für die Wurzel oder `null` ohne Auswahl |
-| `database:replaced` | Eine andere Datei wurde geöffnet oder importiert | `{}` |
+| `database:replaced` | Eine andere Datei wurde geöffnet oder importiert, lokal auch beim Wechsel des Bereichs. Seit 2.8.1 **vor** dem Neuzeichnen: Zwischenstände zur alten Datei (gleiche Nummern, andere Notizen) hier verwerfen; `mindmap:rendered` folgt mit der neuen | `{}` |
 | `template:saved` | Eine Vorlage wurde gespeichert (seit 2.5.0) | `{ name, where, id }`: `where` ist `'folder'`, `'download'` oder `'server'` |
 | `template:applied` | Eine Vorlage wurde angewendet (seit 2.5.0) | `{ name, mode }`: `mode` ist `'new'` (neue Notiz) oder `'insert'` (in die offene Notiz) |
 | `questions:rendered` | Die Ansicht «Fragen» oder «Entscheide» wurde (neu) gezeichnet (seit 1.11.0) | `{ kind, items }`: `kind` ist `'question'` oder `'decision'`, `items` die gezeigten Einträge mit `id`, `noteId`, `kind`, `text`, `answer`, `decided`, `due`, `people` (`[{ handle, optional }]`), seit 2.4.0 `details` (Beschreibung eines Blocks oder `null`) und `parentId` (Block eines Unter-Eintrags oder `null`), und `element` (der Eintrag in der Liste, zum Beispiel um Knöpfe oder Marken anzuhängen) |
@@ -234,6 +236,8 @@ anbieten will, wählt anhand von `ctx.language()` selbst aus.
 - Ein Bruch käme frühestens mit `api: 2` in NoNotes 2.0; die App meldet dann eine ältere Erweiterung
   deutlich, statt sie still falsch zu behandeln.
 - Seit 2.8.0 dazugekommen (ohne Änderung an `api`): `ctx.ui.addContextMenuItem` (Kontextmenü eines Knotens, mit Untermenü).
+  Seit 2.8.1: `applied()` im Untermenü, die Mehrfachauswahl wird nach einer Aktion aufgehoben, `database:replaced` kommt vor
+  dem Neuzeichnen (vorher danach; wer auf die neue Mindmap angewiesen ist, hört auf `mindmap:rendered`).
 - Seit 1.7.0 dazugekommen (ohne Änderung an `api`): `deactivate()` in `register`, das Verzeichnis
   `NoNotesPlugins.catalog([...])`/`available()` und das Laden und Schalten zur Laufzeit (`load`, `activate`, `disable`);
   nach 1.8.0 die Ereignisse `mindmap:rendered` und `mindmap:select` samt den `data-`Attributen an den Linien.

@@ -2469,6 +2469,19 @@ async function runAreas(browser, part, step) {
     await page.keyboard.press('Escape');
     part('Hauptfarbe je Bereich (sie steht in der Datei), auch im Symbol des Tabs');
 
+    // Mehrfachauswahl gehört zum Bereich: beim Wechsel aufgehoben (gleiche Nummern sind im anderen Bereich andere Notizen)
+    await page.click('#list li[data-id]', { modifiers: ['Control'] });
+    await page.waitForFunction(() => document.querySelectorAll('#list li.multi').length === 1);
+    assert.equal(await page.locator('#multiBar').isVisible(), true);
+    await page.keyboard.press('Alt+1');
+    await waitLabel(page, /^Meine Notizen · /);
+    assert.equal(await page.locator('#multiBar').isVisible(), false, 'Wechsel des Bereichs hebt die Mehrfachauswahl auf');
+    assert.equal(await page.locator('#list li.multi').count(), 0);
+    await page.keyboard.press('Alt+2');
+    await waitLabel(page, /^Privat · /);
+    assert.equal(await page.locator('#list li.multi').count(), 0, 'auch zurück im Bereich nicht mehr ausgewählt');
+    part('Mehrfachauswahl gehört zum Bereich: beim Wechsel aufgehoben');
+
     // ---------- Adresse ----------
     await page.reload();
     await page.waitForSelector(READY);
