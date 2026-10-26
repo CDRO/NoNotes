@@ -12,7 +12,10 @@ den Unterschied nicht.
    in der Oberfläche vom Warten überrascht wird, sobald ein Netz dazwischenliegt.
 2. **Rückgabewerte sind einfache Daten**: Zahlen, Texte, Listen, Objekte. Keine Funktionen, keine
    `Map`, keine `Set`. Ausnahme sind die Bytes der Bilder (`Uint8Array`) in `getAttachment` und
-   `allAttachments`. Das Verweisverzeichnis `titleIndex` liefert Paare `[Titel in Kleinschreibung, id]`.
+   `allAttachments`. Das Verweisverzeichnis `titleIndex` liefert Paare `[Titel in Kleinschreibung, id]`,
+   seit 2.9.0 für jede lebende Notiz (auch gleichnamige, archivierte und solche ohne Titel); bei gleichem
+   Titel steht die gewinnende zuletzt, `new Map(paare)` ergibt also den Index Titel → id wie bisher.
+   `NoNotesLinks.resolver(paare)` löst damit auch `[[Titel#42]]` auf.
 3. **Fehler** sind abgelehnte Promises mit einem `Error`. Ein Fehler kann ein Feld `code` tragen
    (Kennung, siehe unten) und `params` (JSON-sichere Werte für Platzhalter). Die Oberfläche übersetzt
    Fehler über die Kennung mit `NoNotesBackend.errorText(e)`; die deutsche `message` ist nur der Rückfall.
@@ -33,7 +36,7 @@ Die Argumente entsprechen den Funktionen in `packages/data/db.js` ohne das erste
 | Bereich | Methoden |
 | --- | --- |
 | Einstellungen | `getMeta(key)`, `setMeta(key, value)`, `getMapTitle()`, `setMapTitle(title)` |
-| Notizen lesen | `getTree({ archive })`, `getNote(id)`, `getPath(id)`, `listNotes(query, { tag, scope })`, `countNotes({ archived })`, `findNoteByTitle(title)`, `titleIndex()`, `getLinks()` (Querverweise `[[Titel*]]` als `{ from_id, to_id, title }`, seit v1.8.0, Schema 13) |
+| Notizen lesen | `getTree({ archive })` (Zeilen mit `updated_at` seit 2.9.0), `getNote(id)`, `getPath(id)`, `listNotes(query, { tag, scope })`, `countNotes({ archived })`, `findNoteByTitle(title)`, `titleIndex()`, `getLinks()` (Querverweise `[[Titel*]]` als `{ from_id, to_id, title }`, seit v1.8.0, Schema 13) |
 | Notizen ändern | `createNote(parentId)`, `updateNote(id, title, body, options)`, `renameNote(id, title, options)`, `setParent(id, parentId)`, `moveNote(id, anchorId, 'before' \| 'after')`, `moveAmongSiblings(id, direction)`, `setCollapsed(id, collapsed)`, `setAllCollapsed(collapsed)` |
 | Papierkorb | `deleteNote(id)`, `restoreNote(id)`, `purgeNote(id)`, `emptyTrash()`, `countTrash()` |
 | Archiv | `isArchived(id)`, `archiveCount(ids)`, `archiveNote(id)`, `unarchiveNote(id)`, `countArchived()` |

@@ -126,7 +126,7 @@
     crumbs: $('#crumbs'), noteMeta: $('#noteMeta'), childBtn: $('#childBtn'), deleteBtn: $('#deleteBtn'),
     title: $('#title'), body: $('#body'),
     viewDecisionsBtn: $('#viewDecisionsBtn'), qPersonFilter: $('#qPersonFilter'), qAnsweredBtn: $('#qAnsweredBtn'), decisionBtn: $('#decisionBtn'),
-    mentionPopup: $('#mentionPopup'), qaPrintTitle: $('#qaPrintTitle'), qaScopeOpen: $('#qaScopeOpen'), qaScopeAnswered: $('#qaScopeAnswered'),
+    mentionPopup: $('#mentionPopup'), wikiPopup: $('#wikiPopup'), wikiCount: $('#wikiCount'), wikiList: $('#wikiList'), qaPrintTitle: $('#qaPrintTitle'), qaScopeOpen: $('#qaScopeOpen'), qaScopeAnswered: $('#qaScopeAnswered'),
     qaScopeAll: $('#qaScopeAll'), qaLinesLabel: $('#qaLinesLabel'),
     mapTemplateBtn: $('#mapTemplateBtn'), newTemplateBtn: $('#newTemplateBtn'), templatesBtn: $('#templatesBtn'),
     childTemplateBtn: $('#childTemplateBtn'), insertTemplateBtn: $('#insertTemplateBtn'), saveTemplateBtn: $('#saveTemplateBtn'),
@@ -172,6 +172,9 @@
     qPerson: '',          // Filter «an @kürzel» in Fragen und Entscheiden
     mention: null,        // offene Vervollständigung @kürzel: { start, items, index }
     mentionSeq: 0,
+    wiki: null,           // offene Vorschläge für [[Verweise]] (v2.9.0): { start, end, close, query, star, items, index, shown }
+    wikiSeq: 0,
+    wikiData: null,       // Notizen für die Vorschläge, einmal je Öffnen der Liste geladen (Promise)
     pluginProviders: new Map(), // Lieferanten für @kürzel je Erweiterung (zum Abmelden beim Ausschalten)
     pluginContextItems: [],     // Einträge der Erweiterungen im Kontextmenü eines Knotens (seit 2.8.0): { plugin, spec }
     contextSub: null,           // offenes Untermenü des Kontextmenüs: { anchor, el }
@@ -1788,23 +1791,22 @@
     await setEditorMode(order[(order.indexOf(state.editorMode) + 1) % order.length]);
   }
 
-  /** Löst [[Titel]] auf Notiz-IDs auf; einmal pro Darstellung bauen. */
+  /** Löst [[Titel]] und [[Titel#42]] auf: Inhalt → { id, label } (NoNotesLinks.lookup); einmal pro Darstellung bauen. */
   async function wikiResolver() {
-    const index = new Map(await B.titleIndex());
-    return title => { const id = index.get(title.trim().toLowerCase()); return id == null ? null : id; };
+    return window.NoNotesLinks.resolver(await B.titleIndex());
   }
 
   async function renderPreview() {
     if (state.currentId == null) return;
     const isLatest = fresh('preview');
     const text = el.body.value;
-    const resolveTitle = await wikiResolver();
+    const resolveRef = await wikiResolver();
     const noteLink = await noteLinkResolver([text]);
     await prefetchAttachments(text);
     if (!isLatest()) return;
     el.preview.innerHTML = M.render(text, {
       highlight: state.query.trim() || null,
-      resolveTitle,
+      resolveRef,
       noteLink,
       resolveAttachment: id => state.attachmentUrls.get(id) || null,
       interactiveTasks: !el.body.readOnly,
@@ -2636,6 +2638,7 @@
       default: return;
     }
     await applyEdit(r);
+    if (cmd === 'wiki') await updateWikiPopup(); // Vorschläge gleich zeigen (v2.9.0)
   }
 
   async function setHeadingFromSelect() {
@@ -3223,7 +3226,7 @@
     mark.textContent = r.answer ? '✓' : decision ? '?!' : '?';
     const text = document.createElement('div');
     text.className = 'q-text';
-    text.innerHTML = M.inline(r.text, { highlight: state.qQuery.trim() || null, resolveTitle: resolve, noteLink, people: true });
+    text.innerHTML = M.inline(r.text, { highlight: state.qQuery.trim() || null, resolveRef: resolve, noteLink, people: true });
     head.append(mark, text);
     if (r.due) {
       const due = document.createElement('span');
@@ -3247,7 +3250,7 @@
     if (r.details) {
       const details = document.createElement('div');
       details.className = 'q-details md';
-      details.innerHTML = M.render(r.details, { highlight: state.qQuery.trim() || null, resolveTitle: resolve, noteLink });
+      details.innerHTML = M.render(r.details, { highlight: state.qQuery.trim() || null, resolveRef: resolve, noteLink });
       item.appendChild(details);
       const long = r.details.split('\n').length > 3 || r.details.length > 240;
       if (long) {
@@ -3269,7 +3272,7 @@
     if (r.answer) {
       const a = document.createElement('div');
       a.className = 'q-answer';
-      a.innerHTML = M.render(r.answer, { highlight: state.qQuery.trim() || null, resolveTitle: resolve, noteLink });
+      a.innerHTML = M.render(r.answer, { highlight: state.qQuery.trim() || null, resolveRef: resolve, noteLink });
       item.appendChild(a);
     }
 
@@ -3441,8 +3444,12 @@
 
   /** Setzt die Liste unter das begonnene Kürzel: ein unsichtbarer Spiegel des Textfelds misst die Cursorposition. */
   function placeMentionPopup() {
-    const m = state.mention;
-    if (!m) return;
+    if (state.mention) placePopupAt(el.mentionPopup, state.mention.start);
+  }
+
+  /** Setzt eine Vorschlagsliste unter die Textstelle start im Editor. */
+  function placePopupAt(popup, start) {
+    const m = { start };
     const ta = el.body;
     const cs = getComputedStyle(ta);
     const mirror = document.createElement('div');
@@ -3454,12 +3461,16 @@
     mirror.appendChild(marker);
     ta.parentElement.appendChild(mirror);
     const lineH = parseFloat(cs.lineHeight) || 20;
-    const top = ta.offsetTop + marker.offsetTop - ta.scrollTop + lineH + 2;
+    const lineTop = ta.offsetTop + marker.offsetTop - ta.scrollTop;
     const left = ta.offsetLeft + marker.offsetLeft - ta.scrollLeft;
     mirror.remove();
     const box = ta.parentElement;
-    el.mentionPopup.style.left = Math.max(0, Math.min(left, box.clientWidth - el.mentionPopup.offsetWidth - 4)) + 'px';
-    el.mentionPopup.style.top = Math.max(0, Math.min(top, box.clientHeight - el.mentionPopup.offsetHeight - 4)) + 'px';
+    const h = popup.offsetHeight;
+    // Unter die Zeile; reicht der Platz nicht, darüber, damit die Liste die Zeile nicht verdeckt
+    let top = lineTop + lineH + 2;
+    if (top + h > box.clientHeight - 4 && lineTop - h - 2 >= 0) top = lineTop - h - 2;
+    popup.style.left = Math.max(0, Math.min(left, box.clientWidth - popup.offsetWidth - 4)) + 'px';
+    popup.style.top = Math.max(0, Math.min(top, box.clientHeight - h - 4)) + 'px';
   }
 
   function closeMentionPopup() {
@@ -3495,6 +3506,194 @@
     const insert = handle + (/^[\s)]/.test(after) ? '' : ' ');
     closeMentionPopup();
     await applyEdit({ text: text.slice(0, m.start) + insert + after, selStart: m.start + insert.length, selEnd: m.start + insert.length });
+  }
+
+  // ---------- Vorschläge für Verweise [[…]] (v2.9.0) ----------
+  // «[[» tippen oder der Knopf öffnet eine Liste der Notizen im Bereich; Tippen schränkt sie ein. Die Anzahl steht oben, zehn Einträge
+  // sind sichtbar, Pfeile blättern weiter. Enter oder Tab übernehmen, Umschalt+Enter als Querverweis. Gibt es den Titel mehrfach,
+  // steht der Eltern-Node dabei und der Verweis bekommt die Nummer ([[Protokoll#42]], NoNotesLinks.lookup); Strg zeigt alle Pfade.
+
+  const WIKI_PAGE = 50; // so viele Einträge auf einmal in die Liste, weitere beim Blättern
+  const foldTitle = s => String(s || '').toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const atWordStart = (fold, q) => {
+    for (let i = fold.indexOf(q); i >= 0; i = fold.indexOf(q, i + 1)) if (i === 0 || !/[\p{L}\p{N}]/u.test(fold[i - 1])) return true;
+    return false;
+  };
+
+  /** Steht der Cursor in einem begonnenen Verweis «[[…» (auch zwischen «[[» und «]]»)? { start, end: Inhalt, close: ob «]]» folgt,
+   *  query: Text bis zum Cursor, star: ob der Inhalt auf * endet } oder null. */
+  function wikiContext() {
+    const ta = el.body;
+    const caret = ta.selectionStart || 0;
+    if (caret !== (ta.selectionEnd || 0)) return null;
+    const text = ta.value;
+    const before = /\[\[([^[\]\n]*)$/.exec(text.slice(Math.max(0, caret - 200), caret));
+    if (!before) return null;
+    const after = /^([^[\]\n]*)\]\]/.exec(text.slice(caret, caret + 200));
+    const start = caret - before[1].length;
+    const end = caret + (after ? after[1].length : 0);
+    return { start, end, close: !!after, query: before[1].replace(/\*\s*$/, '').trim(), star: /\*\s*$/.test(text.slice(start, end)) };
+  }
+
+  /** Notizen für die Liste, einmal je Öffnen: alle des Bereichs (auch archivierte) ausser der offenen, mit Pfad und ob der Titel
+   *  mehrfach vorkommt (wie bei der Auflösung: ohne Gross-/Kleinschreibung, über alle Notizen). */
+  function wikiNotes() {
+    if (!state.wikiData) {
+      state.wikiData = (async () => {
+        const rows = await B.getTree({ archive: true });
+        const mapTitle = (await B.getMapTitle()) || '';
+        const byId = new Map(rows.map(r => [r.id, r]));
+        const count = new Map();
+        const key = r => window.NoNotesLinks.normalize(r.title);
+        for (const r of rows) if (key(r)) count.set(key(r), (count.get(key(r)) || 0) + 1);
+        const pathOf = r => {
+          const out = [];
+          const seen = new Set();
+          for (let p = byId.get(r.parent_id); p && !seen.has(p.id); p = byId.get(p.parent_id)) { seen.add(p.id); out.unshift(p.title.trim() || t('Ohne Titel')); }
+          return out;
+        };
+        return rows.filter(r => r.id !== state.currentId && r.title.trim() && !/[[\]]/.test(r.title)).map(r => ({
+          id: r.id, title: r.title.trim(), fold: foldTitle(r.title.trim()), archived: !!r.archived_at, updated: r.updated_at || '',
+          path: pathOf(r), mapTitle, dup: count.get(key(r)) > 1,
+        }));
+      })();
+    }
+    return state.wikiData;
+  }
+
+  /** Passende Notizen: der Text kommt im Titel vor (ohne Gross-/Kleinschreibung, «ue» findet «ü»). Aktive vor archivierten, dann
+   *  Titelanfang, Wortanfang, irgendwo; darin die zuletzt geänderten zuerst. */
+  function wikiMatches(notes, query) {
+    const q = foldTitle(query);
+    const out = [];
+    for (const n of notes) {
+      let rank = 0;
+      if (q) {
+        const at = n.fold.indexOf(q);
+        if (at < 0) continue;
+        rank = at === 0 ? 0 : atWordStart(n.fold, q) ? 1 : 2;
+      }
+      out.push({ n, rank });
+    }
+    out.sort((a, b) => (a.n.archived - b.n.archived) || (a.rank - b.rank)
+      || (a.n.updated < b.n.updated ? 1 : a.n.updated > b.n.updated ? -1 : 0) || (a.n.id - b.n.id));
+    return out.map(x => x.n);
+  }
+
+  /** Öffnet, aktualisiert oder schliesst die Liste je nach Cursorstelle. */
+  async function updateWikiPopup() {
+    if (!window.NoNotesLinks || el.body.readOnly || state.currentId == null || document.activeElement !== el.body) { closeWikiPopup(); return; }
+    const ctx = wikiContext();
+    if (!ctx) { closeWikiPopup(); return; }
+    const token = ++state.wikiSeq;
+    let notes;
+    try { notes = await wikiNotes(); } catch (e) { closeWikiPopup(); return; }
+    if (token !== state.wikiSeq || document.activeElement !== el.body) return;
+    closeMentionPopup();
+    const before = state.wiki;
+    const items = wikiMatches(notes, ctx.query);
+    // Bei gleichem Suchtext bleibt die Wahl (etwa nach einem Klick in den Text), sonst steht der erste Vorschlag oben
+    const index = before && before.query === ctx.query && before.items.length === items.length ? before.index : 0;
+    state.wiki = Object.assign(ctx, { items, index, shown: 0 });
+    renderWikiPopup();
+  }
+
+  function renderWikiPopup() {
+    const w = state.wiki;
+    if (!w) return;
+    el.wikiCount.textContent = w.items.length ? tn('{n} passende Notiz', '{n} passende Notizen', w.items.length) : t('Keine passende Notiz');
+    el.wikiList.replaceChildren();
+    showMoreWiki(Math.max(WIKI_PAGE, w.index + 1));
+    el.wikiPopup.hidden = false;
+    placePopupAt(el.wikiPopup, Math.max(0, w.start - 2));
+    markWikiSelected();
+  }
+
+  /** Hängt Einträge bis upto an (die Liste wächst beim Blättern, damit auch tausend Notizen schnell bleiben). */
+  function showMoreWiki(upto) {
+    const w = state.wiki;
+    const end = Math.min(w.items.length, upto);
+    const span = (cls, text) => { const x = document.createElement('span'); x.className = cls; x.textContent = text; return x; };
+    for (let i = w.shown; i < end; i++) {
+      const n = w.items[i];
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('role', 'option');
+      b.dataset.index = String(i);
+      b.dataset.id = String(n.id);
+      if (n.archived) b.classList.add('archived');
+      b.appendChild(span('wiki-title', n.title));
+      const parent = n.path.length ? n.path[n.path.length - 1] : n.mapTitle;
+      if (n.dup) b.appendChild(span('wiki-parent', parent));
+      let path = n.path.length ? n.path.join(' › ') : n.mapTitle;
+      if (path.length > 48) { // vorne kürzen: der Teil nahe der Notiz unterscheidet
+        const parts = [];
+        for (let k = n.path.length - 1, len = 0; k >= 0 && (len + n.path[k].length < 44 || !parts.length); k--) { parts.unshift(n.path[k]); len += n.path[k].length + 3; }
+        path = '… › ' + parts.join(' › ');
+      }
+      b.appendChild(span('wiki-path', path));
+      if (n.archived) b.appendChild(span('wiki-tag', t('archiviert')));
+      b.title = [...n.path, n.title].join(' › ');
+      el.wikiList.appendChild(b);
+    }
+    w.shown = Math.max(w.shown, end);
+  }
+
+  function markWikiSelected() {
+    const w = state.wiki;
+    if (!w) return;
+    const prev = el.wikiList.querySelector('[aria-selected="true"]');
+    if (prev) prev.setAttribute('aria-selected', 'false');
+    const cur = el.wikiList.children[w.index];
+    if (cur) { cur.setAttribute('aria-selected', 'true'); cur.scrollIntoView({ block: 'nearest' }); }
+  }
+
+  function closeWikiPopup() {
+    state.wiki = null;
+    state.wikiData = null;
+    state.wikiSeq++;
+    el.wikiPopup.hidden = true;
+    el.wikiPopup.classList.remove('with-path');
+    el.wikiList.replaceChildren();
+  }
+
+  /** Tasten bei offener Liste: Pfeile (und Bild auf/ab) wählen, Enter oder Tab übernehmen, Umschalt+Enter als Querverweis, Esc
+   *  schliesst; Strg zeigt die Pfade, solange sie gedrückt ist. Liefert true, wenn die Taste verbraucht ist. */
+  function handleWikiKey(e) {
+    const w = state.wiki;
+    if (!w) return false;
+    if (e.key === 'Control') { el.wikiPopup.classList.add('with-path'); return false; }
+    const n = w.items.length;
+    const step = { ArrowDown: 1, ArrowUp: -1, PageDown: 10, PageUp: -10 }[e.key];
+    if (n && step && !e.altKey && !e.shiftKey) {
+      e.preventDefault();
+      w.index = Math.max(0, Math.min(n - 1, w.index + step));
+      if (w.index >= w.shown) showMoreWiki(w.index + WIKI_PAGE);
+      markWikiSelected();
+      return true;
+    }
+    if (n && (e.key === 'Enter' || e.key === 'Tab') && !e.altKey) {
+      e.preventDefault();
+      acceptWiki(w.index, e.key === 'Enter' && e.shiftKey);
+      return true;
+    }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeWikiPopup(); return true; }
+    return false;
+  }
+
+  /** Übernimmt den Vorschlag: der Inhalt zwischen «[[» und «]]» wird der Titel, bei mehrfachem Titel mit Nummer; cross (oder ein
+   *  schon getippter Stern) macht einen Querverweis. Der Cursor steht danach hinter «]]». */
+  async function acceptWiki(index, cross) {
+    const w = state.wiki;
+    const n = w && w.items[index];
+    const ctx = wikiContext();
+    if (!n || !ctx) { closeWikiPopup(); return; }
+    const ins = `${n.dup ? `${n.title}#${n.id}` : n.title}${cross || ctx.star ? '*' : ''}]]`;
+    const text = el.body.value;
+    const caret = ctx.start + ins.length;
+    closeWikiPopup();
+    await applyEdit({ text: text.slice(0, ctx.start) + ins + text.slice(ctx.end + (ctx.close ? 2 : 0)), selStart: caret, selEnd: caret });
   }
 
   // ---------- Aufgaben-Ansicht ----------
@@ -3591,7 +3790,7 @@
     box.addEventListener('change', () => toggleTaskDone(r.id, box.checked));
     const text = document.createElement('div');
     text.className = 'q-text';
-    text.innerHTML = M.inline(r.text, { highlight: state.tQuery.trim() || null, resolveTitle: resolve, noteLink });
+    text.innerHTML = M.inline(r.text, { highlight: state.tQuery.trim() || null, resolveRef: resolve, noteLink });
     text.title = t('Doppelklick: Aufgabe samt Unteraufgaben abschliessen');
     text.addEventListener('dblclick', async e => {
       if (e.target.closest('a')) return;
@@ -4341,6 +4540,7 @@
     el.body.addEventListener('keydown', async e => {
       const mod = e.ctrlKey || e.metaKey;
       if (e.isComposing || el.body.readOnly) return;
+      if (state.wiki && handleWikiKey(e)) return; // offene Vorschläge für [[Verweise]]
       if (state.mention && handleMentionKey(e)) return; // offene Vorschlagsliste für @kürzel
       // Listen, Aufgaben, Zitate und Antworten weiterführen; Shift+Enter bleibt die normale neue Zeile.
       if (e.key === 'Enter' && !mod && !e.shiftKey && !e.altKey) {
@@ -4366,10 +4566,25 @@
       else if (k === 'k') { e.preventDefault(); await runCommand('link'); }
     });
 
-    el.body.addEventListener('input', () => { updateMentionPopup(); });
-    el.body.addEventListener('click', () => { if (state.mention) updateMentionPopup(); });
-    el.body.addEventListener('scroll', () => { if (state.mention) placeMentionPopup(); });
-    el.body.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== el.body) closeMentionPopup(); }, 0));
+    el.body.addEventListener('input', () => { updateMentionPopup(); updateWikiPopup(); });
+    el.body.addEventListener('click', () => { if (state.mention) updateMentionPopup(); if (state.wiki) updateWikiPopup(); });
+    el.body.addEventListener('keyup', e => {
+      if (e.key === 'Control') el.wikiPopup.classList.remove('with-path');
+      else if (state.wiki && /^(ArrowLeft|ArrowRight|Home|End)$/.test(e.key)) updateWikiPopup(); // Cursor aus dem Verweis heraus: Liste zu
+    });
+    el.body.addEventListener('scroll', () => { if (state.mention) placeMentionPopup(); if (state.wiki) placePopupAt(el.wikiPopup, Math.max(0, state.wiki.start - 2)); });
+    el.body.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== el.body) { closeMentionPopup(); closeWikiPopup(); } }, 0));
+    el.wikiPopup.addEventListener('mousedown', e => e.preventDefault()); // der Fokus bleibt im Textfeld
+    el.wikiPopup.addEventListener('click', async e => {
+      const b = e.target.closest('button[data-index]');
+      if (b) await acceptWiki(Number(b.dataset.index), e.shiftKey);
+    });
+    el.wikiList.addEventListener('scroll', () => {
+      const w = state.wiki;
+      if (w && w.shown < w.items.length && el.wikiList.scrollTop + el.wikiList.clientHeight > el.wikiList.scrollHeight - 60) showMoreWiki(w.shown + WIKI_PAGE);
+    });
+    window.addEventListener('keyup', e => { if (e.key === 'Control') el.wikiPopup.classList.remove('with-path'); });
+    window.addEventListener('blur', () => el.wikiPopup.classList.remove('with-path'));
     el.mentionPopup.addEventListener('mousedown', e => e.preventDefault()); // der Fokus bleibt im Textfeld
     el.mentionPopup.addEventListener('click', async e => {
       const b = e.target.closest('button[data-index]');

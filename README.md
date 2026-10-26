@@ -494,6 +494,22 @@ Dasselbe gilt für Fragen.
   Links, Bilder, fett und kursiv. `[[Titel]]` verweist auf eine andere Notiz; ein Klick in
   der Vorschau öffnet sie, bei fehlendem Ziel wird sie auf Wunsch als Unternotiz angelegt.
   `[[Titel*]]` ist ein **Querverweis**: derselbe Link, dazu eine gestrichelte Linie in der Mindmap.
+- **Vorschläge für Verweise** (seit 2.9.0): Sobald `[[` getippt ist (oder nach dem Knopf `[[ ]]`),
+  zeigt der Editor eine Liste der Notizen im offenen Bereich, oben ihre Anzahl. Tippen schränkt
+  sie ein: Treffer irgendwo im Titel, ohne Gross-/Kleinschreibung, «ue» findet auch «ü». Zuerst
+  stehen Titel, die so beginnen, dann Treffer an einem Wortanfang, dann der Rest, darin die zuletzt
+  geänderten zuerst; archivierte kommen blass am Schluss.
+  - Bedienung: Zehn Einträge sind sichtbar, `↑`/`↓` (und Bild auf/ab) wählen auch darüber hinaus,
+    einer ist immer hervorgehoben. `Enter` oder `Tab` übernehmen, `Umschalt+Enter` als Querverweis
+    `[[Titel*]]`, `Esc` schliesst.
+  - Gleichnamige Notizen zeigen ihren Eltern-Node, mit gedrückter `Strg`-Taste zeigen alle ihren
+    Pfad.
+  - Gibt es den Titel mehrfach, schreibt die Liste die Nummer dazu: `[[Protokoll#42]]` meint genau
+    diese Notiz, auch nach Umbenennen oder Verschieben. Vorschau, Druck und Export zeigen nur
+    «Protokoll». Liegt die Notiz im Papierkorb, ist der Verweis offen; er springt nicht auf ein
+    anderes «Protokoll».
+  - Ein Titel, der selbst auf `#Zahl` endet, geht vor.
+  - Gezählt werden die Notizen, die du im Bereich sehen kannst (im Dienst: die des Arbeitsbereichs).
   Adressen ohne `https://` wie `www.beispiel.ch` werden automatisch ergänzt.
 - Die **Toolleiste** über dem Text setzt alles per Klick: Überschrift (Auswahlliste), fett,
   kursiv, durchgestrichen, Code, Listen, Aufgabe, Zitat, Codeblock, Trennlinie, Link,
@@ -553,7 +569,7 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | KI-Agenten | `packages/agent/`: `catalog.js` beschreibt die Werkzeuge (englische Namen, Eingabeschemata) und führt sie über das Backend aus, `webmcp.js` meldet sie beim Agenten des Browsers an (`document.modelContext`, sobald ein Browser sie anbietet), `protocol.js` spricht MCP ohne Transport; `editions/local/agent/nonotes-mcp.cjs` ist das Programm für Agenten auf dem eigenen Rechner (MCP über die Standardeingabe, dieselbe Datei wie die App, atomar schreiben unter einer Sperre); `local-shell.js` führt Änderungen von aussen Notiz für Notiz zusammen; Tests `test/core.cjs` (Katalog, Protokoll, Programm), `test/collab.cjs` (Zusammenführen), `test/extend.cjs` (WebMCP gegen einen Nachbau); siehe [docs/AGENTS.md](docs/AGENTS.md) |
 | Verlauf | `packages/core/history.js` (Patches und Zeilenvergleich als reine Textfunktionen); Fassungen und Aufbewahrung in `packages/data/db.js`, Dialog in `packages/ui/app.js`; wer eine Fassung geschrieben hat, steht in `author` (nur wenn ein Backend einen Namen liefert) |
 | Videos | `packages/core/embeds.js` erkennt Adressen von YouTube, Vimeo und Dailymotion (nur genau passende Hosts und Kennungen); `markdown.js` macht aus einer Adresse allein auf einer Zeile eine Karte, die Vorschau baut den Rahmen erst nach dem Klick (siehe [docs/EMBEDS.md](docs/EMBEDS.md)); Tests `test/core.cjs` und `test/extend.cjs` |
-| Querverweise | `[[Titel*]]` im Text: `packages/core/links.js` liest sie, `db.js` führt den Index `note_links` beim Speichern nach und löst Ziele über den Titel auf (`getLinks`); die Mindmap zeichnet gestrichelte Linien mit Pfeil zwischen sichtbaren Knoten (`linkPath`: vom äusseren Ende in die untere Mitte oder ans äussere Ende, bewertet nach Länge und Weg durch andere Knoten), auch im SVG für Export und Druck; Schalter «Verweise» in der Leiste (je Browser gemerkt); Test `test/extend.cjs` |
+| Querverweise | `[[Titel*]]` im Text: `packages/core/links.js` liest sie und löst sie auf (`lookup`, `resolver`: Titel, seit 2.9.0 auch `[[Titel#42]]` für genau eine Notiz), `db.js` führt den Index `note_links` beim Speichern nach (`getLinks`); Vorschläge beim Tippen von `[[` in `packages/ui/app.js` (`updateWikiPopup`); die Mindmap zeichnet gestrichelte Linien mit Pfeil zwischen sichtbaren Knoten (`linkPath`: vom äusseren Ende in die untere Mitte oder ans äussere Ende, bewertet nach Länge und Weg durch andere Knoten), auch im SVG für Export und Druck; Schalter «Verweise» in der Leiste (je Browser gemerkt); Test `test/extend.cjs` |
 | Lesemodus | Meldet die Hülle `readOnly` (siehe [docs/BACKEND.md](docs/BACKEND.md)), sperrt `packages/ui/app.js` alle Schreibwege (`data-write`, `denyWrite()`) und `readOnlyBackend` lehnt schreibende Aufrufe mit `READ_ONLY` ab; Test `test/collab.cjs` |
 | Bereiche | `packages/store-local/storage.js` (Browser-Kopie und Datei-Handle je Bereich, Verzeichnis `areas`, Kennungen), `local-shell.js` (laden, wechseln, anlegen, öffnen, umbenennen, entfernen, `?w=` in der Adresse, `Alt+1 … 9`, Kanal zwischen Tabs mit Bereich), Menü über `host.showMenu`; `NoNotesAgent.multi()` für das Programm mit mehreren Dateien; Tests `test/app.cjs` (Abschnitt «Bereiche») und `test/core.cjs` (Programm); siehe [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Zusammenführen | `packages/core/merge.js`: zeilenweiser Dreiwege-Vergleich (Myers) für gleichzeitige Änderungen derselben Notiz; Speichern mit `baseUpdatedAt`, Konfliktdialog in `packages/ui/app.js` |

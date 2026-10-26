@@ -120,14 +120,16 @@
         }
       }
 
-      // [[Titel]] und [[Titel*]] (Querverweis: dazu eine gestrichelte Linie in der Mindmap, siehe packages/core/links.js)
+      // [[Titel]] und [[Titel*]] (Querverweis: dazu eine gestrichelte Linie in der Mindmap, siehe packages/core/links.js); [[Titel#42]]
+      // meint genau die Notiz 42 und zeigt nur den Titel (ctx.resolveRef, seit 2.9.0)
       if (ch === '[' && src[i + 1] === '[') {
         const close = src.indexOf(']]', i + 2);
         if (close > i) {
           const raw = src.slice(i + 2, close).trim();
           const cross = raw.endsWith('*');
-          const title = (cross ? raw.slice(0, -1) : raw).trim();
-          const id = ctx.resolveTitle ? ctx.resolveTitle(title) : null;
+          const target = (cross ? raw.slice(0, -1) : raw).trim();
+          const ref = ctx.resolveRef ? ctx.resolveRef(target) : { id: ctx.resolveTitle ? ctx.resolveTitle(target) : null, label: target };
+          const id = ref.id, title = ref.label;
           out += `<a href="#" class="md-wiki${cross ? ' md-wiki-cross' : ''}${id == null ? ' missing' : ''}" data-title="${escapeHtml(title)}"${id != null ? ` data-note-id="${id}"` : ''}>${text(title)}</a>`;
           i = close + 2;
           continue;
@@ -190,7 +192,7 @@
 
   function makeCtx(options) {
     options = options || {};
-    return { text: makeText(options.highlight), resolveTitle: options.resolveTitle, noteLink: options.noteLink || null, resolveAttachment: options.resolveAttachment, interactiveTasks: !!options.interactiveTasks, lineMap: !!options.lineMap, embeds: !!options.embeds, embedLoad: options.embedLoad, people: !!options.people,
+    return { text: makeText(options.highlight), resolveTitle: options.resolveTitle, resolveRef: options.resolveRef, noteLink: options.noteLink || null, resolveAttachment: options.resolveAttachment, interactiveTasks: !!options.interactiveTasks, lineMap: !!options.lineMap, embeds: !!options.embeds, embedLoad: options.embedLoad, people: !!options.people,
       inBlock: !!options.inBlock, lineOffset: options.lineOffset || 0, options };
   }
 

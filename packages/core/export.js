@@ -149,11 +149,14 @@
     return out.join('\n').trim();
   }
 
+  /** resolveLink(inhalt) → Pfad, oder { href, label } (seit 2.9.0: [[Titel#42]] zeigt nur «Titel»), oder null. */
   function inline(text, resolveLink, resolveAttachment) {
     let out = text.replace(/\[\[([^\]]+)\]\]/g, (m, inner) => {
       const title = inner.trim().replace(/\*$/, '').trim() || inner.trim(); // [[Titel*]] (Querverweis) wird derselbe Link
-      const href = resolveLink ? resolveLink(title) : null;
-      return href ? `[${title}](${href})` : title;
+      const r = resolveLink ? resolveLink(title) : null;
+      const href = r && typeof r === 'object' ? r.href : r;
+      const label = r && typeof r === 'object' && r.label ? r.label : title;
+      return href ? `[${label}](${href})` : label;
     });
     out = out.replace(/\]\((www\.[^)\s]+)/gi, '](https://$1');
     if (resolveAttachment) {
@@ -226,11 +229,14 @@
     const mode = options.mode === 'single' ? 'single' : 'folder';
     const archived = !!options.archived;
     const nodes = await treeOrder(backend, { archived });
-    const byTitle = new Map();
-    for (const n of nodes) {
-      const key = n.title.trim().toLowerCase();
-      if (key && !byTitle.has(key)) byTitle.set(key, n);
-    }
+    // [[Titel]] und [[Titel#42]] wie in der App auflösen; Ziele ausserhalb des Exports (etwa archiviert) bleiben Text
+    const findRef = global.NoNotesLinks.resolver(await backend.titleIndex());
+    const nodeById = new Map(nodes.map(n => [n.id, n]));
+    const refTo = (title, hrefOf) => {
+      const r = findRef(title);
+      const target = r.id != null ? nodeById.get(r.id) : null;
+      return { href: target ? hrefOf(target) : null, label: r.label || title };
+    };
     const files = [];
 
     // Anhänge: Dateiname aus Nummer und bereinigtem Namen, Pfad relativ zur jeweiligen Markdown-Datei.
@@ -256,7 +262,7 @@
       for (const n of nodes) {
         const note = await backend.getNote(n.id);
         const lines = [`# ${n.title.trim() || t('Ohne Titel')}`, '', ...await metaLines(backend, n, note), ''];
-        const resolve = title => { const target = byTitle.get(title.toLowerCase()); return target ? relPath(n.file, target.file) : null; };
+        const resolve = title => refTo(title, target => relPath(n.file, target.file));
         const body = bodyToMarkdown(note.body, resolve, attFrom(n.file));
         if (body) lines.push(body, '');
         if (n.children.length) {
@@ -269,7 +275,7 @@
     } else {
       uniqueSlugs(nodes); // Anker in einer Datei: über alle Notizen eindeutig
       const anchorOf = n => `#${n.slug}`;
-      const resolve = title => { const target = byTitle.get(title.toLowerCase()); return target ? anchorOf(target) : null; };
+      const resolve = title => refTo(title, anchorOf);
       const doc = await header(backend, options.version);
       doc.push('## Inhalt', '');
       doc.push(...(nodes.length ? tocLines(nodes, anchorOf) : [t('Noch keine Notizen.')]));

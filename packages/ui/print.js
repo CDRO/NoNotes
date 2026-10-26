@@ -14,10 +14,9 @@
   const esc = s => M().escapeHtml(s);
   const URGENCY_ORDER = ['overdue', 'today', 'week', 'later', 'none', 'done', 'answered'];
   const byUrgency = (a, b) => URGENCY_ORDER.indexOf(a[0]) - URGENCY_ORDER.indexOf(b[0]);
-  /** [[Titel]] im Druck auflösen, damit Verweise als vorhandene Notiz erscheinen. */
+  /** [[Titel]] und [[Titel#42]] im Druck auflösen, damit Verweise als vorhandene Notiz erscheinen (Inhalt → { id, label }). */
   async function titleResolver(backend) {
-    const index = new Map(await backend.titleIndex());
-    return title => { const id = index.get(title.trim().toLowerCase()); return id == null ? null : id; };
+    return global.NoNotesLinks.resolver(await backend.titleIndex());
   }
 
   /** Teilbaum-IDs (inklusive Wurzelknoten) aus der Baumreihenfolge. */
@@ -89,7 +88,7 @@
   async function buildNotesDocument(backend, options) {
     const list = await resolveNotes(backend, options);
     const mapTitle = await backend.getMapTitle();
-    const index = new Map(await backend.titleIndex());
+    const resolveRef = await titleResolver(backend);
     const included = new Set(list.map(n => n.id));
     const title = options.scope === 'all' ? mapTitle
       : list.length === 1 ? (list[0].title.trim() || t('Ohne Titel'))
@@ -123,7 +122,7 @@
       const note = notes.get(n.id);
       const level = Math.min(6, n.printLevel + 1);
       let body = M().render(note.body, {
-        resolveTitle: title => { const id = index.get(title.trim().toLowerCase()); return id == null ? null : id; },
+        resolveRef,
         resolveAttachment: id => urls.get(id) || null,
       });
       body = body.replace(/href="#" class="md-wiki" data-title="([^"]*)" data-note-id="(\d+)"/g, (m, wikiTitle, id) =>
@@ -162,7 +161,7 @@
       options.query ? t('Suche „{suche}“', { suche: options.query }) : null,
     ].filter(Boolean).join(', ');
     const open = rows.filter(r => !r.answer).length;
-    const resolveTitle = await titleResolver(backend);
+    const resolveRef = await titleResolver(backend);
 
     // Ein Unter-Eintrag steht eingerückt unter seinem Block, wenn der mitgedruckt wird, sonst mit «Teil von …»; die Beschreibung ganz
     const item = (r, nested) => {
@@ -176,11 +175,11 @@
         : (answered && r.answered_at ? t('Beantwortet {datum}', { datum: fmtDate(r.answered_at) }) : t('Gestellt {datum}', { datum: fmtDate(r.created_at) }));
       const subs = r.sub ? M().subEntriesHtml(r.sub, answered) : '';
       const within = r.parent_id != null && !nested && r.parent_text ? `<div class="print-within">${esc(t('Teil von «{titel}»', { titel: r.parent_text }))}</div>` : '';
-      const details = r.details ? `<div class="print-details md">${M().render(r.details, { resolveTitle })}</div>` : '';
+      const details = r.details ? `<div class="print-details md">${M().render(r.details, { resolveRef })}</div>` : '';
       return `<div class="print-q${decision ? ' decision' : ''}${nested ? ' sub' : ''} ${answered ? 'answered' : 'open'}">` +
         `<span class="print-mark">${answered ? '✓' : decision ? '?!' : '?'}</span>` +
-        `<div class="print-q-body"><div class="print-q-text">${M().inline(r.text, { resolveTitle, people: true })}${due}${subs}</div>${within}${details}` +
-        (answered ? `<div class="print-a md">${M().render(r.answer, { resolveTitle })}</div>` : ruled) +
+        `<div class="print-q-body"><div class="print-q-text">${M().inline(r.text, { resolveRef, people: true })}${due}${subs}</div>${within}${details}` +
+        (answered ? `<div class="print-a md">${M().render(r.answer, { resolveRef })}</div>` : ruled) +
         `<div class="print-q-meta">${esc(when)}${from}</div></div></div>`;
     };
 
@@ -235,7 +234,7 @@
       options.query ? t('Suche „{suche}“', { suche: options.query }) : null,
     ].filter(Boolean).join(', ');
     const open = rows.filter(r => !r.done).length;
-    const resolveTitle = await titleResolver(backend);
+    const resolveRef = await titleResolver(backend);
     const item = r => {
       const u = r.done ? 'none' : T.urgency(r.due, today);
       const meta = [
@@ -247,7 +246,7 @@
       ].filter(Boolean).join(' · ');
       const indent = options.groupBy === 'note' && r.depth ? ` style="margin-left:${Math.min(r.depth, 4) * 16}pt"` : '';
       return `<div class="print-task ${r.done ? 'done' : 'open'}"${indent}><span class="print-box" aria-hidden="true"></span>` +
-        `<span class="print-task-text">${M().inline(r.text, { resolveTitle })}</span>` +
+        `<span class="print-task-text">${M().inline(r.text, { resolveRef })}</span>` +
         (meta ? `<span class="print-task-meta${u === 'overdue' ? ' overdue' : ''}">${esc(meta)}</span>` : '') + '</div>';
     };
     const parts = [];

@@ -1200,8 +1200,114 @@ async function runLinks(browser, part, step) {
   assert.ok(tree.texts['notes/projekt-a/protokoll.md'].includes('Zurück zu [Projekt B](../projekt-b.md), siehe [Protokoll 2](../protokoll-2.md).'));
   assert.ok(tree.texts['notes/projekt-b/protokoll.md'].includes('- [22.10.2026](protokoll/22-10-2026.md)\n- [22.10.2026](protokoll/22-10-2026-2.md)'));
   assert.ok(tree.texts['index.md'].includes('(notes/projekt-b/protokoll/22-10-2026-2.md)'));
-  assert.deepEqual(errors, [], 'keine Fehler im Browser');
   part('Markdown-Export: Ordner wie der Baum, gleichnamige Notizen getrennt, Links relativ und gültig');
+
+  // Vorschläge für Verweise (seit 2.9.0): «[[» öffnet eine Liste mit Anzahl, zehn sichtbar, weiter mit Pfeilen; Enter/Tab übernehmen,
+  // Umschalt+Enter als Querverweis; gleichnamige zeigen den Eltern-Node, Strg den Pfad; mehrfacher Titel bekommt die Nummer
+  const more = await page.evaluate(async () => {
+    const B = __ctx.backend;
+    const mk = async (parent, title) => { const id = await B.createNote(parent); await B.updateNote(id, title, '', {}); return id; };
+    for (let i = 1; i <= 10; i++) await mk(await mk(null, `Sitzung ${i}`), 'Protokoll');
+    const alt = await mk(null, 'Protokoll-Vorlage');
+    await B.archiveNote(alt);
+    await __ctx.refresh();
+    const rows = await B.getTree({ archive: true });
+    const pb = rows.find(r => r.title === 'Protokoll' && rows.find(p => p.id === r.parent_id).title === 'Projekt B');
+    return { alt, pb: pb.id, titled: rows.filter(r => r.title.trim()).length };
+  });
+  await page.dblclick(`#mindmap .mm-node[data-id="${ids.alpha}"]`);
+  await page.waitForSelector('#editorPane:not([hidden])');
+  await page.click('#modeSwitch [data-mode="edit"]');
+  await page.click('#body');
+  await page.keyboard.press('Control+End');
+  const popupOpen = () => page.waitForSelector('#wikiPopup:not([hidden])');
+  const wikiState = () => page.evaluate(() => {
+    const list = document.querySelector('#wikiList');
+    const rows = [...list.children];
+    const sel = list.querySelector('[aria-selected="true"]');
+    const lr = list.getBoundingClientRect(), sr = sel ? sel.getBoundingClientRect() : null;
+    return {
+      count: document.querySelector('#wikiCount').textContent,
+      selected: sel ? { index: Number(sel.dataset.index), id: Number(sel.dataset.id), title: sel.querySelector('.wiki-title').textContent, archived: sel.classList.contains('archived') } : null,
+      visible: sr ? sr.top >= lr.top - 1 && sr.bottom <= lr.bottom + 1 : false,
+      rowsInView: rows.length ? Math.round((list.clientHeight - 8) / rows[0].offsetHeight) : 0,
+      scrolls: list.scrollHeight > list.clientHeight,
+      parents: rows.map(r => { const p = r.querySelector('.wiki-parent'); return p && getComputedStyle(p).display !== 'none' ? p.textContent : null; }),
+      paths: rows.map(r => getComputedStyle(r.querySelector('.wiki-path')).display !== 'none'),
+      titles: rows.map(r => r.querySelector('.wiki-title').textContent),
+    };
+  });
+  await page.keyboard.type(' [[');
+  await popupOpen();
+  let ws = await wikiState();
+  assert.equal(ws.count, `${more.titled - 1} passende Notizen`, 'ohne Eingabe alle Notizen des Bereichs ausser der offenen');
+  assert.equal(ws.selected.index, 0, 'ein Vorschlag ist immer hervorgehoben');
+  assert.equal(ws.rowsInView, 10, 'zehn Einträge sichtbar');
+  await page.keyboard.type('protokoll');
+  await page.waitForFunction(() => /^14 passende Notizen$/.test(document.querySelector('#wikiCount').textContent));
+  ws = await wikiState();
+  assert.ok(ws.scrolls, 'mehr als zehn: die Liste lässt sich blättern');
+  assert.equal(ws.titles[13], 'Protokoll-Vorlage', 'archivierte am Schluss');
+  ws.titles.forEach((t, i) => { if (t === 'Protokoll') assert.ok(ws.parents[i], 'gleichnamige zeigen den Eltern-Node'); });
+  assert.equal(ws.parents[ws.titles.indexOf('Protokoll 2')], null, 'eindeutige nicht');
+  assert.ok(ws.paths.every(v => !v), 'Pfade erst mit Strg');
+  await page.keyboard.down('Control');
+  ws = await wikiState();
+  assert.ok(ws.paths.every(v => v) && ws.parents.every(v => v === null), 'mit Strg: Pfad statt Eltern-Node');
+  await page.keyboard.up('Control');
+  ws = await wikiState();
+  assert.ok(ws.paths.every(v => !v), 'Strg los: wieder ohne Pfad');
+  for (let i = 0; i < 13; i++) await page.keyboard.press('ArrowDown');
+  ws = await wikiState();
+  assert.deepEqual([ws.selected.index, ws.selected.archived, ws.visible], [13, true, true], 'Pfeil runter erreicht auch den 14. Eintrag und zeigt ihn');
+  await page.keyboard.press('ArrowDown');
+  assert.equal((await wikiState()).selected.index, 13, 'am Ende bleibt die Wahl stehen');
+  // den «Protokoll» unter «Projekt B» wählen
+  const pbIndex = await page.evaluate(id => Number(document.querySelector(`#wikiList [data-id="${id}"]`).dataset.index), more.pb);
+  for (let i = 13; i > pbIndex; i--) await page.keyboard.press('ArrowUp');
+  assert.equal((await wikiState()).selected.id, more.pb);
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('#wikiPopup', { state: 'hidden' });
+  assert.ok((await page.inputValue('#body')).endsWith(` [[Protokoll#${more.pb}]]`), 'mehrfacher Titel: mit Nummer, der Cursor dahinter');
+  // eindeutiger Titel ohne Nummer, mit Tab; Umschalt+Enter macht einen Querverweis
+  await page.keyboard.type(' [[protokoll 2');
+  await page.waitForFunction(() => /^1 passende Notiz$/.test(document.querySelector('#wikiCount').textContent));
+  await page.keyboard.press('Tab');
+  await page.waitForSelector('#wikiPopup', { state: 'hidden' });
+  await page.keyboard.type(' [[bet');
+  await popupOpen();
+  await page.keyboard.press('Shift+Enter');
+  await page.waitForSelector('#wikiPopup', { state: 'hidden' });
+  assert.ok((await page.inputValue('#body')).endsWith(` [[Protokoll#${more.pb}]] [[Protokoll 2]] [[Beta*]]`), await page.inputValue('#body'));
+  // nichts passt: Anzahl 0, Enter macht eine neue Zeile; Esc schliesst, der Editor bleibt offen
+  await page.keyboard.type(' [[gibtsnicht');
+  await page.waitForFunction(() => document.querySelector('#wikiCount').textContent === 'Keine passende Notiz');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('#wikiPopup', { state: 'hidden' });
+  assert.equal(await page.locator('#editorPane').isVisible(), true, 'Esc schliesst nur die Liste');
+  await page.keyboard.press('Control+A');
+  await page.keyboard.press('Delete');
+  // Knopf [[ ]]: Klammern mit dem Cursor dazwischen, Liste offen
+  await page.click('#mdToolbar [data-cmd="wiki"]');
+  await popupOpen();
+  assert.equal(await page.inputValue('#body'), '[[]]');
+  await page.keyboard.type('sitzung 1');
+  await page.waitForFunction(() => /^2 passende Notizen$/.test(document.querySelector('#wikiCount').textContent)); // «Sitzung 1» und «Sitzung 10»
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('#wikiPopup', { state: 'hidden' });
+  assert.match(await page.inputValue('#body'), /^\[\[Sitzung 10?\]\]$/, 'der Inhalt zwischen den Klammern wird ersetzt, kein zweites ]]');
+  // Vorschau: [[Protokoll#id]] zeigt «Protokoll» und öffnet genau diese Notiz
+  await page.fill('#body', `Siehe [[Protokoll#${more.pb}*]].`);
+  await page.waitForFunction(SAVED, null, { timeout: 10000 });
+  await page.click('#modeSwitch [data-mode="preview"]');
+  await page.waitForSelector('#preview a.md-wiki');
+  assert.deepEqual(await page.evaluate(() => { const a = document.querySelector('#preview a.md-wiki'); return [a.textContent, Number(a.dataset.noteId), a.classList.contains('md-wiki-cross')]; }), ['Protokoll', more.pb, true]);
+  await page.click('#modeSwitch [data-mode="edit"]');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.body.classList.contains('editor-open'));
+  assert.deepEqual(await page.evaluate(() => __ctx.backend.getLinks()), [{ from_id: ids.alpha, to_id: more.pb, title: 'Protokoll' }], 'die Linie geht zur gewählten Notiz');
+  assert.deepEqual(errors, [], 'keine Fehler im Browser');
+  part('Vorschläge für Verweise: Anzahl, zehn sichtbar, Pfeile darüber hinaus, Eltern-Node und Strg-Pfad, Nummer bei mehrfachem Titel, Tab, Umschalt+Enter, Esc, Knopf, Vorschau');
 
   await ctx.close();
   fs.rmSync(tmp, { recursive: true, force: true });

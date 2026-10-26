@@ -287,13 +287,12 @@
     return row ? row.id : null;
   }
 
-  /** Alle Ziele für [[Titel]]-Verweise: Titel → id (lebende Notizen, auch archivierte; bei gleichem Titel gewinnt die aktive). */
+  /** Alle Ziele für [[Titel]]-Verweise: je lebende Notiz (auch archiviert) ein Paar [Titel in Kleinschreibung, id]. Bei gleichem Titel
+   *  steht die gewinnende zuletzt (die aktive, dann die zuletzt geänderte), new Map(paare) ergibt also den Index Titel → id. Seit
+   *  2.9.0 sind alle Notizen dabei (auch gleichnamige und solche ohne Titel), damit [[Titel#42]] prüfen kann, ob es 42 gibt. */
   function titleIndex(db) {
-    const map = new Map();
-    for (const r of selectAll(db, "SELECT id, title FROM notes WHERE deleted_at IS NULL AND title <> '' ORDER BY (archived_at IS NOT NULL) DESC, updated_at")) {
-      map.set(r.title.trim().toLowerCase(), r.id);
-    }
-    return map;
+    return selectAll(db, 'SELECT id, title FROM notes WHERE deleted_at IS NULL ORDER BY (archived_at IS NOT NULL) DESC, updated_at, id')
+      .map(r => [String(r.title || '').trim().toLowerCase(), r.id]);
   }
 
   /** Alle lebenden Notizen als flache Liste für den Baum. Archivierte fehlen, ausser options.archive ist
@@ -303,7 +302,7 @@
   function getTree(db, options) {
     const archive = options && options.archive;
     const rows = selectAll(db,
-      `SELECT id, title, parent_id, sort_order, collapsed, archived_at,
+      `SELECT id, title, parent_id, sort_order, collapsed, archived_at, updated_at,
               CASE WHEN archived_at IS NULL THEN (SELECT count(*) FROM questions q WHERE q.note_id = notes.id AND q.answer IS NULL) ELSE 0 END AS badge,
               CASE WHEN archived_at IS NULL THEN (SELECT count(*) FROM questions q WHERE q.note_id = notes.id AND q.answer IS NULL AND q.kind = 'decision') ELSE 0 END AS dbadge,
               CASE WHEN archived_at IS NULL THEN (SELECT count(*) FROM tasks t WHERE t.note_id = notes.id AND t.done = 0) ELSE 0 END AS tbadge
@@ -715,14 +714,17 @@
 
   /** Querverweise zwischen lebenden Notizen: [{ from_id, to_id, title }], in der Reihenfolge der Notizen und des Textes.
    *  Das Ziel ist die Notiz mit diesem Titel wie bei [[Titel]] (ohne Gross-/Kleinschreibung; bei mehreren die aktive, dann die
-   *  zuletzt geänderte); ohne Ziel oder auf sich selbst gibt es keinen Eintrag. Archivierte Notizen zählen an beiden Enden. */
+   *  zuletzt geänderte), bei [[Titel#42]] die Notiz 42 (NoNotesLinks.lookup); ohne Ziel oder auf sich selbst gibt es keinen
+   *  Eintrag. Archivierte Notizen zählen an beiden Enden. */
   function getLinks(db) {
-    const index = titleIndex(db);
+    const L = global.NoNotesLinks;
+    if (!L) return [];
+    const find = L.resolver(titleIndex(db));
     const out = [];
     for (const r of selectAll(db, 'SELECT l.note_id, l.title, l.key FROM note_links l JOIN notes n ON n.id = l.note_id WHERE n.deleted_at IS NULL ORDER BY l.note_id, l.id')) {
-      const to = index.get(r.key);
-      if (to == null || to === r.note_id) continue;
-      out.push({ from_id: r.note_id, to_id: to, title: r.title });
+      const to = find(r.title);
+      if (to.id == null || to.id === r.note_id) continue;
+      out.push({ from_id: r.note_id, to_id: to.id, title: to.label });
     }
     return out;
   }

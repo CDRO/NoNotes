@@ -617,6 +617,21 @@ body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-
 .mention-popup button[aria-selected="true"], .mention-popup button:hover { background: var(--hover); }
 .mention-handle { font-weight: 600; }
 .mention-name { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+/* Vorschläge für Verweise [[ im Editor (v2.9.0): Anzahl oben, zehn Einträge sichtbar, darunter blättern */
+.wiki-popup { min-width: 240px; max-width: 420px; padding: 0; }
+.wiki-count { padding: 6px 12px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--border); }
+.wiki-list { display: flex; flex-direction: column; padding: 4px; max-height: calc(10 * 32px + 8px); overflow-y: auto; }
+.wiki-list:empty { display: none; }
+.wiki-list button { flex: none; height: 32px; padding-top: 0; padding-bottom: 0; align-items: center; }
+.wiki-list button:hover { background: var(--hover); }
+.wiki-list button[aria-selected="true"] { background: var(--active); box-shadow: inset 3px 0 0 var(--accent); }
+.wiki-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 100%; }
+.wiki-parent, .wiki-path, .wiki-tag { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.wiki-path { display: none; }
+.wiki-popup.with-path .wiki-path { display: inline; }
+.wiki-popup.with-path .wiki-parent { display: none; }
+.wiki-list button.archived .wiki-title { opacity: .6; }
+.wiki-tag { font-style: italic; margin-left: auto; }
 .md-q-body { flex: 1; min-width: 0; }
 .md-q-text { font-weight: 600; }
 .md-a { margin-top: 6px; padding: 6px 10px; border-left: 3px solid var(--ok); background: var(--panel); border-radius: 0 6px 6px 0; }

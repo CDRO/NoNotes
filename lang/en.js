@@ -864,4 +864,10 @@ NoNotesI18n.register('en', 'English', {
   'In Ordner speichern…': 'Save to folder…',
   'Als ZIP herunterladen': 'Download as ZIP',
   'Lade NoNotes…': 'Loading NoNotes…',
+  // Vorschläge für Verweise (v2.9.0)
+  '{n} passende Notiz': { one: '{n} matching note', other: '{n} matching notes' },
+  'Keine passende Notiz': 'No matching note',
+  'Vorschläge für Verweise': 'Suggestions for references',
+  '<code>[[</code> tippen oder der Knopf <code>[[ ]]</code>': 'Type <code>[[</code> or use the <code>[[ ]]</code> button',
+  'Eine Liste mit den Notizen des Bereichs und ihrer Anzahl; Tippen schränkt sie ein. <kbd>↑</kbd> und <kbd>↓</kbd> wählen (auch über die ersten zehn hinaus), <kbd>Enter</kbd> oder <kbd>Tab</kbd> übernehmen, <kbd>Umschalt+Enter</kbd> als Querverweis, <kbd>Esc</kbd> schliesst. Gleichnamige Notizen zeigen ihren Eltern-Node, mit gedrückter <kbd>Strg</kbd>-Taste zeigen alle ihren Pfad. Gibt es den Titel mehrfach, kommt die Nummer dazu: <code>[[Protokoll#42]]</code> meint genau diese Notiz, auch nach Umbenennen oder Verschieben; die Vorschau zeigt nur «Protokoll».': 'A list of the notes in this area with their number; typing narrows it down. <kbd>↑</kbd> and <kbd>↓</kbd> select (also beyond the first ten), <kbd>Enter</kbd> or <kbd>Tab</kbd> accept, <kbd>Shift+Enter</kbd> as a cross-reference, <kbd>Esc</kbd> closes. Notes with the same title show their parent node; holding <kbd>Ctrl</kbd> shows everyone’s path. If the title exists more than once, the number is added: <code>[[Minutes#42]]</code> means exactly this note, even after renaming or moving it; the preview only shows “Minutes”.',
 }, { locale: 'en-GB' });

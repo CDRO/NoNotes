@@ -360,6 +360,34 @@ async function runDb(browser, part, step) {
     assert.equal(d.exec('SELECT count(*) FROM note_links WHERE note_id = ?', [gamma])[0].values[0][0], 0, 'endgültig gelöscht: Einträge weg');
     part('Querverweise folgen Text, Papierkorb, Archiv und Titelauflösung');
 
+    // [[Titel#42]] (seit 2.9.0): genau diese Notiz, auch nach Umbenennen; gibt es sie nicht mehr, keine Linie (kein Ausweichen)
+    const p1 = DB.createNote(d, null), p2 = DB.createNote(d, null);
+    DB.updateNote(d, p1, 'Protokoll', 'eins');
+    tick(1000);
+    DB.updateNote(d, p2, 'Protokoll', 'zwei');
+    const linker = DB.createNote(d, null);
+    DB.updateNote(d, linker, 'Verweise', `[[Protokoll#${p1}*]] und [[Protokoll*]]`);
+    const fromLinker = () => links().filter(l => l.from_id === linker);
+    assert.deepEqual(fromLinker(), [{ from_id: linker, to_id: p1, title: 'Protokoll' }, { from_id: linker, to_id: p2, title: 'Protokoll' }], 'mit Nummer die gemeinte, ohne die zuletzt geänderte');
+    DB.renameNote(d, p1, 'Protokoll alt');
+    assert.equal(fromLinker()[0].to_id, p1, 'nach dem Umbenennen bleibt das Ziel');
+    DB.deleteNote(d, p1);
+    assert.deepEqual(fromLinker().map(l => l.to_id), [p2], 'Ziel im Papierkorb: keine Linie dorthin, auch nicht zu einer anderen «Protokoll»');
+    const sprint = DB.createNote(d, null);
+    DB.updateNote(d, sprint, `Sprint#${p2}`, '');
+    DB.updateNote(d, linker, 'Verweise', `[[Sprint#${p2}*]]`);
+    assert.deepEqual(fromLinker().map(l => l.to_id), [sprint], 'ein Titel, der selbst auf #Zahl endet, gewinnt vor der Nummer');
+    const pairs = json(DB.titleIndex(d));
+    assert.equal(new Map(pairs).get('protokoll'), p2, 'new Map(titleIndex) ergibt den Index wie bisher');
+    assert.ok(pairs.some(([, id]) => id === beta2) && pairs.some(([, id]) => id === beta) && !pairs.some(([, id]) => id === p1), 'alle lebenden Notizen, auch gleichnamige; Papierkorb nicht');
+    const L = sandbox.NoNotesLinks;
+    const find = L.resolver(pairs);
+    assert.deepEqual(json(find(`Protokoll#${p2}`)), { id: p2, label: 'Protokoll' });
+    assert.deepEqual(json(find('Protokoll#99999')), { id: null, label: 'Protokoll' }, 'unbekannte Nummer: offen');
+    assert.deepEqual(json(find('protokoll')), { id: p2, label: 'protokoll' });
+    assert.deepEqual(json(find(' ')), { id: null, label: '' });
+    part('[[Titel#42]]: genau diese Notiz, auch umbenannt; ohne sie keine Linie; ein Titel mit #Zahl gewinnt; titleIndex mit allen Notizen');
+
     // Migration aus Schema 12: bestehende Texte werden gelesen
     const old = new SQL.Database(DB.exportBytes(d));
     old.run('DROP TABLE note_links');
@@ -368,7 +396,7 @@ async function runDb(browser, part, step) {
     old.close();
     const mig = DB.open(SQL, bytes);
     assert.equal(DB.getMeta(mig, 'schema_version'), SCHEMA_VERSION);
-    assert.equal(json(DB.getLinks(mig)).length, 1, 'die Linie Alpha → beta kommt aus dem bestehenden Text');
+    assert.deepEqual(json(DB.getLinks(mig)), links(), 'die Linien (Alpha → beta, Verweise → Sprint) kommen aus den bestehenden Texten');
     part('Migration aus Schema 12: Tabelle angelegt und aus den Texten gefüllt');
   }
 
@@ -1492,6 +1520,26 @@ async function runEntries(browser, part, step) {
   assert.deepEqual(json(E.continueLine('- ?!``` Titel', 13, 13)), { text: '- ?!``` Titel\n  \n  ```', selStart: 16, selEnd: 16 }, 'Enter: eingerückt, mit "```"');
   assert.deepEqual(json(E.continueLine('- ?!``` Titel\n  Text\n  ```', 13, 13)), { text: '- ?!``` Titel\n  \n  Text\n  ```', selStart: 16, selEnd: 16 }, 'schon geschlossen: nur eingerückt, kein neuer Punkt');
   part('Blöcke in Listen: Editor macht markierte Listenpunkte zum Block (und zurück, Art wechseln), Enter rückt ein und setzt "```"');
+
+  // Verweise mit Nummer (seit 2.9.0): Vorschau und Export zeigen nur den Titel; der Knopf [[ ]] lässt den Cursor für die Vorschläge drin
+  {
+    const d = DB.open(SQL, null);
+    const a = DB.createNote(d, null), b = DB.createNote(d, null);
+    DB.updateNote(d, a, 'Protokoll', '');
+    DB.updateNote(d, b, 'Protokoll', '');
+    const find = sandbox.NoNotesLinks.resolver(DB.titleIndex(d));
+    const html = M.render(`[[Protokoll#${a}]] [[Protokoll#999*]] [[Protokoll]]`, { resolveRef: find });
+    assert.match(html, new RegExp(`class="md-wiki" data-title="Protokoll" data-note-id="${a}">Protokoll</a>`), 'mit Nummer: Notiz a, Text ohne Nummer');
+    assert.match(html, /class="md-wiki md-wiki-cross missing" data-title="Protokoll">Protokoll<\/a>/, 'unbekannte Nummer: offen, ohne Nummer');
+    assert.match(html, new RegExp(`data-note-id="${b}">Protokoll</a>`), 'ohne Nummer: die zuletzt geänderte');
+    assert.match(M.render('[[Alt]]', { resolveTitle: () => 7 }), /data-note-id="7">Alt</, 'resolveTitle von früher geht weiter');
+    assert.equal(X.bodyToMarkdown(`Siehe [[Protokoll#${a}*]].`, title => ({ href: 'p.md', label: find(title).label }), null), 'Siehe [Protokoll](p.md).');
+    assert.deepEqual(json(E.wikiLink('Siehe ', 6, 6)), { text: 'Siehe [[]]', selStart: 8, selEnd: 8 }, 'ohne Markierung: Cursor zwischen den Klammern');
+    assert.deepEqual(json(E.wikiLink('Siehe Protokoll', 6, 15)), { text: 'Siehe [[Protokoll]]', selStart: 17, selEnd: 17 }, 'Markierung wird der Suchtext');
+    assert.equal(E.wikiLink('Siehe [[Protokoll]]', 6, 19).text, 'Siehe Protokoll', 'ein Verweis wird wieder Text');
+    assert.equal(E.wikiLink('Siehe [[Protokoll]]', 8, 17).text, 'Siehe Protokoll');
+    part('Verweise mit Nummer: Vorschau und Export zeigen den Titel, unbekannte Nummer offen; Knopf [[ ]] setzt den Cursor hinein');
+  }
 }
 
 // ============================================================

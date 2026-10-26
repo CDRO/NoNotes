@@ -187,9 +187,14 @@
     return { text: text.slice(0, s) + ins + text.slice(e), selStart: urlStart, selEnd: urlStart + 8 };
   }
 
-  /** Verweis auf eine Notiz: [[Titel]]. */
+  /** Verweis auf eine Notiz: [[Titel]]. Ohne Markierung «[[]]» mit dem Cursor dazwischen, mit Markierung «[[markiert]]» und dem Cursor
+   *  vor «]]»; die Vorschlagsliste im Editor (seit 2.9.0) sucht dann nach dem Text. Steht der Verweis schon da, wird der Text wieder frei. */
   function wikiLink(text, s, e) {
-    return wrap(text, s, e, '[[', ']]', t('Titel'));
+    const sel = text.slice(s, e);
+    const wrapped = (sel.startsWith('[[') && sel.endsWith(']]') && sel.length >= 4) || (text.slice(s - 2, s) === '[[' && text.slice(e, e + 2) === ']]');
+    if (wrapped) return wrap(text, s, e, '[[', ']]', t('Titel'));
+    const caret = s + 2 + sel.length;
+    return { text: text.slice(0, s) + '[[' + sel + ']]' + text.slice(e), selStart: caret, selEnd: caret };
   }
 
   /** Trennlinie auf eigener Zeile. */
