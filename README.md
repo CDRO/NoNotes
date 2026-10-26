@@ -514,8 +514,7 @@ Dasselbe gilt für Fragen.
   Adressen ohne `https://` wie `www.beispiel.ch` werden automatisch ergänzt.
 - **Tabellen** (seit 2.10.0) sind Markdown-Tabellen wie bei GitHub: `| Name | Wert |`, darunter
   `|---|---|`, dann je Zeile `| … | … |`. `:---:` zentriert eine Spalte, `---:` richtet sie rechts aus.
-  - Einfügen: Der Knopf **Tabelle einfügen** in der Toolleiste oder *Notiz → Tabelle einfügen…*
-    öffnet ein Raster mit 8 × 10 Feldern. Die Grösse zeigst du mit der Maus, ziehst sie auf oder
+  - Einfügen: Der Knopf **Tabelle einfügen** in der Toolleiste öffnet ein Raster mit 8 × 10 Feldern. Die Grösse zeigst du mit der Maus, ziehst sie auf oder
     wählst sie mit den Pfeiltasten; Klick, Loslassen oder `Enter` fügt ein. Darunter wählst du
     **Titelzeile** (vorgegeben) und **Titelspalte**.
   - Schreiben: In einer Tabelle springen `Tab` und `Umschalt+Tab` von Feld zu Feld und markieren
@@ -565,7 +564,7 @@ Dasselbe gilt für Fragen.
   Beim Export landen sie im Ordner `attachments/`.
 - Oberste Zeile ist der Titel, `Enter` springt in den Text.
 - Der Pfad über dem Titel zeigt, wo die Notiz im Baum hängt; die Einträge sind anklickbar.
-- Das Menü **Notiz ▾** rechts über dem Titel bündelt die Aktionen zur offenen Notiz: Unternotiz anlegen, Vorlage oder Tabelle einfügen, Verlauf, Drucken, Archivieren, Löschen. Links davon steht der Pfad der Notiz; wird er zu lang, fallen mittlere Glieder zu «…» zusammen.
+- Das Menü **Notiz ▾** rechts über dem Titel bündelt die Aktionen zur offenen Notiz: Unternotiz anlegen, Vorlage einfügen, Verlauf, Drucken, Archivieren, Löschen. Links davon steht der Pfad der Notiz; wird er zu lang, fallen mittlere Glieder zu «…» zusammen.
 - `Ctrl+S` speichert sofort (passiert sonst automatisch nach kurzer Pause).
 - Auf schmalen Fenstern wird zwischen Liste und Editor umgeschaltet (`Esc` oder «Zurück»).
 

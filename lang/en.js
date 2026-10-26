@@ -874,9 +874,7 @@ NoNotesI18n.register('en', 'English', {
   'tables.format braucht eine Funktion': 'tables.format needs a function',
   'Spalte {n}': 'Column {n}',
   'Tabelle einfügen': 'Insert table',
-  'Tabelle einfügen…': 'Insert table…',
   'Tabelle einfügen: Grösse im Raster wählen (bis 8 × 10)': 'Insert table: choose the size in the grid (up to 8 × 10)',
-  'Eine Tabelle an der Cursorstelle einfügen: Grösse im Raster wählen (bis 8 × 10)': 'Insert a table at the cursor: choose the size in the grid (up to 8 × 10)',
   'Grösse der Tabelle: Pfeiltasten, Enter fügt ein': 'Table size: arrow keys, Enter inserts',
   'Grösse wählen': 'Choose a size',
   '{spalten} × {zeilen}': '{spalten} × {zeilen}',
@@ -893,6 +891,6 @@ NoNotesI18n.register('en', 'English', {
   'Spalte rechts einfügen': 'Insert column right',
   'Spalte löschen': 'Delete column',
   'Tabelle': 'Table',
-  '<code>| Name | Wert |</code>, darunter <code>|---|---|</code>, dann je Zeile <code>| … | … |</code>; der Knopf <em>Tabelle einfügen</em> in der Toolleiste oder <em>Notiz → Tabelle einfügen…</em> legt eine an (Grösse im Raster ziehen oder zeigen, bis 8 × 10)': '<code>| Name | Value |</code>, below it <code>|---|---|</code>, then one <code>| … | … |</code> per row; the <em>Insert table</em> button in the toolbar or <em>Note → Insert table…</em> creates one (drag or point to the size in the grid, up to 8 × 10)',
+  '<code>| Name | Wert |</code>, darunter <code>|---|---|</code>, dann je Zeile <code>| … | … |</code>; der Knopf <em>Tabelle einfügen</em> in der Toolleiste legt eine an (Grösse im Raster ziehen oder zeigen, bis 8 × 10)': '<code>| Name | Value |</code>, below it <code>|---|---|</code>, then one <code>| … | … |</code> per row; the <em>Insert table</em> button in the toolbar creates one (drag or point to the size in the grid, up to 8 × 10)',
   'Die Titelzeile bleibt beim Scrollen der Vorschau oben und steht im Druck auf jeder Seite. Ist die erste Zeile leer, gibt es keine Titelzeile. <code>:---:</code> zentriert eine Spalte, <code>---:</code> richtet sie rechts aus. In einer Tabelle springen <kbd>Tab</kbd> und <kbd>Umschalt+Tab</kbd> von Feld zu Feld, <kbd>Enter</kbd> fügt eine Zeile an (in einer leeren letzten Zeile endet die Tabelle); die Striche werden dabei ausgerichtet. Rechtsklick auf die Tabelle in der Vorschau: Titelzeile, Titelspalte und Hervorheben ein- und ausschalten, Zeilen und Spalten einfügen oder löschen. Das Format steht unsichtbar in einer Zeile <code>&lt;!-- tabelle: … --&gt;</code> darüber.': 'The header row stays at the top when the preview scrolls and is printed on every page. If the first row is empty, there is no header row. <code>:---:</code> centres a column, <code>---:</code> aligns it right. In a table, <kbd>Tab</kbd> and <kbd>Shift+Tab</kbd> jump from cell to cell, <kbd>Enter</kbd> adds a row (in an empty last row the table ends); the pipes are aligned as you type. Right-click the table in the preview to turn the header row, header column and highlighting on and off, or to insert and delete rows and columns. The format is stored invisibly in a line <code>&lt;!-- tabelle: … --&gt;</code> above the table.',
 }, { locale: 'en-GB' });

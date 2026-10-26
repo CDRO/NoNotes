@@ -92,7 +92,7 @@
     exportBtn: $('#exportBtn'), exportDialog: $('#exportDialog'), exportForm: $('#exportForm'),
     exportDirBtn: $('#exportDirBtn'), exportZipBtn: $('#exportZipBtn'), exportHint: $('#exportHint'),
     attachBtn: $('#attachBtn'), attachInput: $('#attachInput'), attachments: $('#attachments'),
-    mapPrintBtn: $('#mapPrintBtn'), qPrintBtn: $('#qPrintBtn'), printBtn: $('#printBtn'), copyLinkBtn: $('#copyLinkBtn'), tableMenuBtn: $('#tableMenuBtn'),
+    mapPrintBtn: $('#mapPrintBtn'), qPrintBtn: $('#qPrintBtn'), printBtn: $('#printBtn'), copyLinkBtn: $('#copyLinkBtn'),
     multiBar: $('#multiBar'), multiCount: $('#multiCount'), multiPrintBtn: $('#multiPrintBtn'), multiClearBtn: $('#multiClearBtn'),
     printDialog: $('#printDialog'), printForm: $('#printForm'), printGoBtn: $('#printGoBtn'),
     printScopeCurrent: $('#printScopeCurrent'), printScopeSubtree: $('#printScopeSubtree'),
@@ -4906,7 +4906,6 @@
     el.attachBtn.addEventListener('click', () => { el.attachInput.value = ''; el.attachInput.click(); });
     el.printBtn.addEventListener('click', () => openPrintDialog({ noteId: state.currentId }));
     el.copyLinkBtn.addEventListener('click', () => copyNoteLink(state.currentId));
-    el.tableMenuBtn.addEventListener('click', () => { closeNoteMenu(); openTablePicker(el.noteMenuBtn); });
     el.preview.addEventListener('contextmenu', onPreviewContextMenu);
     el.mapPrintBtn.addEventListener('click', () => openPrintDialog({}));
     el.multiPrintBtn.addEventListener('click', () => openPrintDialog({ scope: 'selection' }));

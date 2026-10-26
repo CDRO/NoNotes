@@ -2373,7 +2373,7 @@ async function runWebMcp(browser, part, step) {
 }
 
 // ============================================================
-/* Tabellen (v2.10.0): Raster in der Toolleiste und im Menü «Notiz», Tab und Enter im Text, Titelzeile oben beim Scrollen,
+/* Tabellen (v2.10.0): Raster in der Toolleiste, Tab und Enter im Text, Titelzeile oben beim Scrollen,
    Rechtsklick in der Vorschau, Schnittstelle für Erweiterungen (ctx.tables, ctx.ui.addTableMenuItem), Druck, Lesemodus. */
 async function runTablesUi(browser, part, step) {
   const PLUGIN = `NoNotesPlugins.register({ id: 'tab-test', name: 'Tabellen-Test', api: 1, activate(ctx) {
@@ -2493,14 +2493,12 @@ async function runTablesUi(browser, part, step) {
   assert.equal(await body(), outside ? outside.text : 'Einleitung\n\n| Name      | Wert | Einheit |\n| --------- | ---- | ------- |\n| Bodensee  | 536  |         |\n| Zürichsee |      |         |\n|           |      |         |\n\nDanach', 'Tab ausserhalb einer Tabelle wie bisher');
   part('Tab und Umschalt+Tab von Feld zu Feld mit Ausrichten, Enter fügt eine Zeile an, Tab am Ende eine neue, Enter in der leeren letzten Zeile beendet');
 
-  // ---------- Menü «Notiz» und Ziehen im Raster ----------
+  // ---------- Ziehen im Raster, ohne Titelzeile ----------
   await page.fill('#body', 'Kopf');
   await page.click('#body');
   await page.keyboard.press('Control+End');
-  await page.click('#noteMenuBtn');
-  await page.click('#tableMenuBtn');
+  await page.click('#mdToolbar [data-cmd="table"]');
   await page.waitForSelector('#tablePicker:not([hidden])');
-  await page.waitForSelector('#noteMenu', { state: 'hidden' });
   await page.uncheck('#tablePicker .tp-head');
   await page.check('#tablePicker .tp-headcol');
   assert.equal(await page.locator('#tablePicker .tp-cell.head').count(), 0);
@@ -2514,7 +2512,8 @@ async function runTablesUi(browser, part, step) {
   await page.waitForSelector('#tablePicker', { state: 'hidden' });
   assert.equal(await body(), 'Kopf\n\n<!-- tabelle: {"kopfspalte":true} -->\n|     |     |\n| --- | --- |\n|     |     |\n|     |     |\n', 'ohne Titelzeile, mit Titelspalte');
   assert.equal(await caretLine(), 5);
-  part('Menü «Notiz» → Tabelle einfügen…: Raster am Menü, Titelzeile aus und Titelspalte an, Ziehen bis zur Grösse');
+  assert.equal(await page.locator('#noteMenu button:has-text("Tabelle")').count(), 0, 'nicht im Menü «Notiz»');
+  part('Raster: Titelzeile aus und Titelspalte an, Ziehen bis zur Grösse; kein Eintrag im Menü «Notiz»');
 
   // ---------- Vorschau: Titelzeile oben, Rechtsklick ----------
   const rows = Array.from({ length: 40 }, (_, i) => `| Zeile ${i + 1} | ${i} |`).join('\n');
@@ -2640,7 +2639,7 @@ suite('Erweiterungs-Test', [
   { name: 'Querverweise: gestrichelte Linien, Schalter, eingeklappte Ziele, Vorschau, Export und Druck, gelöschtes Ziel', run: runLinks },
   { name: 'Entscheide und Personen: Reiter, Ansicht, Entscheiden mit Datum, Vorschau, Toolleiste, Vorschläge beim Tippen von @, Export und Druck, Blöcke in Listen', run: runDecisions },
   { name: 'Vorlagen: Ordner verbinden, speichern, aus Vorlage anlegen und einfügen, Erlaubnis, ohne Ordner, Datei hinzufügen', run: runTemplatesUi },
-  { name: 'Tabellen: Raster (Toolleiste und Menü «Notiz»), Tab und Enter, Titelzeile oben, Rechtsklick, Schnittstelle für Erweiterungen, Druck, Lesemodus', run: runTablesUi },
+  { name: 'Tabellen: Raster in der Toolleiste, Tab und Enter, Titelzeile oben, Rechtsklick, Schnittstelle für Erweiterungen, Druck, Lesemodus', run: runTablesUi },
   { name: 'Sprachen: Pseudo-Sprache durch alle Ansichten, Englisch, Browsersprache, Mehrzahl, Testpaket, Wechsel', run: runI18n },
   { name: 'WebMCP: Werkzeuge für den Agenten des Browsers, Aufrufe ändern Daten und Oberfläche, gespeichert, Lesemodus, ohne Schnittstelle nichts', run: runWebMcp },
 ], { browser: true });
