@@ -212,9 +212,11 @@
     });
   }
 
-  async function header(backend, version) {
+  /** Kopf der Übersicht: Titel, Datum, Mindmap-Bild und darunter die Abschnitte der Erweiterungen (sections: [{ title, markdown }],
+   *  etwa eine Legende, seit 2.11.0). */
+  async function header(backend, version, sections) {
     const title = await backend.getMapTitle();
-    return [
+    const out = [
       `# ${title}`,
       '',
       `*${t('Exportiert am {datum} mit NoNotes {version}', { datum: fmtDate(new Date().toISOString()), version: version || '' })}*`.trim(),
@@ -222,9 +224,14 @@
       '![Mindmap](mindmap.svg)',
       '',
     ];
+    for (const sec of sections || []) {
+      if (sec.title) out.push(`## ${sec.title}`, '');
+      out.push(String(sec.markdown).trim(), '');
+    }
+    return out;
   }
 
-  /** Erzeugt die Dateiliste. options: { mode: 'folder' | 'single', svg, png, version, archived } */
+  /** Erzeugt die Dateiliste. options: { mode: 'folder' | 'single', svg, png, version, archived, sections } */
   async function buildFiles(backend, options) {
     const mode = options.mode === 'single' ? 'single' : 'folder';
     const archived = !!options.archived;
@@ -252,7 +259,7 @@
     if (mode === 'folder') {
       placeFiles(nodes);
       const hrefFromIndex = n => n.file;
-      const index = await header(backend, options.version);
+      const index = await header(backend, options.version, options.sections);
       index.push('## Inhalt', '');
       index.push(...(nodes.length ? tocLines(nodes, hrefFromIndex) : [t('Noch keine Notizen.')]));
       index.push('', '## ' + t('Offene Fragen'), '', ...await openQuestionLines(backend, nodes, hrefFromIndex, archived), '');
@@ -276,7 +283,7 @@
       uniqueSlugs(nodes); // Anker in einer Datei: über alle Notizen eindeutig
       const anchorOf = n => `#${n.slug}`;
       const resolve = title => refTo(title, anchorOf);
-      const doc = await header(backend, options.version);
+      const doc = await header(backend, options.version, options.sections);
       doc.push('## Inhalt', '');
       doc.push(...(nodes.length ? tocLines(nodes, anchorOf) : [t('Noch keine Notizen.')]));
       doc.push('', '## ' + t('Offene Fragen'), '', ...await openQuestionLines(backend, nodes, anchorOf, archived), '');

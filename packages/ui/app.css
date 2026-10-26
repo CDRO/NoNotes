@@ -632,6 +632,17 @@ body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-
 /* Personen (@kürzel) in Fragen und Entscheiden */
 .md-person { display: inline-block; padding: 0 7px; border-radius: 999px; background: var(--hover); border: 1px solid var(--border); color: var(--accent-ink); font-size: .85em; font-weight: 600; line-height: 1.6; white-space: nowrap; }
 .md-person.optional { border-style: dashed; font-weight: 500; color: var(--muted); }
+.md-person.inherited { opacity: .6; font-weight: 500; } /* über die Hauptaufgabe (v2.11.0) */
+/* Aufgaben, Fragen und Entscheide in Tabellenfeldern (v2.11.0) */
+.md-cell-task input { margin: 0 6px 0 0; vertical-align: middle; }
+.md-cell-task input:not(:disabled) { cursor: pointer; accent-color: var(--accent); }
+.md-cell-task.done > .task-text { color: var(--muted); text-decoration: line-through; }
+.md-cell-q .md-mark { display: inline-block; min-width: 1.4em; font-weight: 700; color: var(--warn); }
+.md-cell-q.md-decision .md-mark { color: var(--accent-ink); }
+.md-cell-q.answered .md-mark { color: var(--ok); }
+.md-cell-q { font-weight: 600; }
+.md-cell-a { display: inline-block; margin-left: 1.4em; color: var(--text); }
+.md-cell-task .md-due, .md-cell-q .md-due { margin-left: 6px; }
 /* Vorschläge für @kürzel im Editor */
 .mention-popup { position: absolute; z-index: 20; min-width: 180px; max-width: 280px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, .15); padding: 4px; display: flex; flex-direction: column; }
 .mention-popup[hidden] { display: none; }

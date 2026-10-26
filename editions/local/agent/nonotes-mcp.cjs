@@ -24,8 +24,8 @@ const crypto = require('node:crypto');
 const readline = require('node:readline');
 
 const HERE = __dirname;
-const CORE_FILES = ['i18n', 'history', 'dates', 'questions', 'tasks', 'links', 'backend', 'merge', 'templates', 'db', 'backend-local', 'catalog', 'protocol'];
-const PACKAGE_OF = { i18n: 'core', history: 'core', dates: 'core', questions: 'core', tasks: 'core', links: 'core', backend: 'core', merge: 'core', templates: 'core', db: 'data', 'backend-local': 'store-local', catalog: 'agent', protocol: 'agent' };
+const CORE_FILES = ['i18n', 'history', 'dates', 'questions', 'tables', 'tasks', 'links', 'backend', 'merge', 'templates', 'db', 'backend-local', 'catalog', 'protocol'];
+const PACKAGE_OF = { i18n: 'core', history: 'core', dates: 'core', questions: 'core', tables: 'core', tasks: 'core', links: 'core', backend: 'core', merge: 'core', templates: 'core', db: 'data', 'backend-local': 'store-local', catalog: 'agent', protocol: 'agent' };
 const LOCK_WAIT_MS = 25;
 const LOCK_TIMEOUT_MS = 5000;
 const LOCK_STALE_MS = 30000;

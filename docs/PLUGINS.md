@@ -102,10 +102,14 @@ gilt für eine Erweiterung, deren `activate` oder deren Ereignisrückruf einen F
 | `ctx.language()` | Kennung der Sprache der Oberfläche, zum Beispiel `de` |
 | `ctx.on(ereignis, rückruf)` | Auf ein Ereignis hören; liefert eine Funktion, die das Hören beendet |
 | `ctx.openNote(id)` | Notiz im Editor öffnen (Promise) |
+| `ctx.readOnly()` | Seit 2.11.0. `true` im Lesemodus (alles nur lesen, etwa als Leserin im Dienst); dann ändert `ctx.backend` nichts |
 | `ctx.refresh()` | Nach Änderungen über `ctx.backend` die Oberfläche neu zeichnen (Promise) |
 | `ctx.ui.setStatus(text, art)` | Text in der Statuszeile; `art` ist `'saved'`, `'dirty'`, `'saving'` oder `'error'` |
 | `ctx.ui.addMenuItem({ label, title?, action })` | Eintrag im Menü **Datenbank** |
 | `ctx.ui.addToolbarButton({ label, title?, action })` | Knopf in der Toolleiste des Editors; `action(editor)` bekommt die Editor-Schnittstelle |
+| `ctx.ui.addMapButton({ label, title?, action })` | Seit 2.11.0. Knopf in der Leiste der Mindmap (vor dem Suchfeld); `action(button)`. Liefert den Knopf, etwa für `aria-pressed` |
+| `ctx.ui.addMapOverlay(element)` | Seit 2.11.0. Ein eigenes Element über der Mindmap (etwa eine Legende); Lage und Aussehen setzt die Erweiterung (`position: absolute` im Bereich der Mindmap; die CSS-Variable `--map-bar-bottom` nennt die Unterkante der Leiste, also `top: calc(var(--map-bar-bottom) + 8px)`). Liefert eine Funktion zum Entfernen |
+| `ctx.export.addMapSection(fn)` | Seit 2.11.0. Abschnitt direkt unter dem Mindmap-Bild im Markdown-Export (`index.md` bzw. die eine Datei) und im Druck mit Mindmap-Bild: `fn({ target: 'export' \| 'print' })` liefert (auch als Promise) `{ title, markdown }` oder nichts. Ein Fehler lässt nur diesen Abschnitt weg. Liefert eine Funktion zum Abmelden |
 | `ctx.ui.addContextMenuItem({ label, title?, write?, visible?, action? \| panel? })` | Seit 2.8.0. Eintrag im Kontextmenü eines Knotens der Mindmap (Rechtsklick), mit `action(target)` oder einem Untermenü `panel(target, { close })`; siehe unten |
 | `ctx.ui.addTableMenuItem({ label, title?, write?, visible?, action? \| panel? })` | Seit 2.10.0. Eintrag im Menü, das ein Rechtsklick auf eine Tabelle in der Vorschau öffnet; Felder wie oben, `target` beschreibt die Tabelle; siehe [Tabellen](#tabellen-seit-2100) |
 | `ctx.tables.format(fn)` | Seit 2.10.0. `fn(info)` liefert Klassen und Werte für Tabelle, Titelzeile, Spalten, Zeilen und Felder beim Zeichnen (Vorschau und Druck); liefert eine Funktion zum Abmelden |
@@ -256,6 +260,27 @@ ctx.tables.format(info => {
 Ein Beispiel mit Breite, Höhe, Farben und Fett ist die Erweiterung *Tabellen formatieren* (`table-format`) im Zweig `plugins`.
 Ältere Versionen haben die Namen nicht: `if (ctx.tables) …`.
 
+## Über und unter der Mindmap (seit 2.11.0)
+
+Eine Erweiterung kann der Mindmap etwas zur Seite stellen, etwa eine Legende:
+
+```js
+const box = document.createElement('aside');
+box.className = 'meine-legende';           // Lage über eigenes CSS, zum Beispiel position: absolute; top: 56px; right: 12px
+box.textContent = 'Rot: dringend';
+const remove = ctx.ui.addMapOverlay(box);
+const button = ctx.ui.addMapButton({ label: 'Legende', action: b => {
+  box.hidden = !box.hidden;
+  b.setAttribute('aria-pressed', String(!box.hidden));
+} });
+ctx.export.addMapSection(({ target }) => ({ title: 'Legende', markdown: '- **Rot:** dringend' }));
+```
+
+Knopf, Element und Abschnitt entfernt die App beim Ausschalten selbst. Was dauerhaft zur Datenbank gehören soll (und im Dienst für
+alle im Arbeitsbereich gilt), legt die Erweiterung mit `ctx.backend.setMeta('plugin:<kennung>:…', wert)` ab und liest es mit
+`getMeta`; im Lesemodus (`ctx.readOnly()`) nur lesen. Nach einem Wechsel der Datei oder des Bereichs (Ereignis `database:replaced`)
+neu lesen.
+
 ## Ereignisse
 
 | Ereignis | Wann | Daten |
@@ -333,6 +358,7 @@ anbieten will, wählt anhand von `ctx.language()` selbst aus.
   (`if (ctx.ui.addSomething) …`).
 - Ein Bruch käme frühestens mit `api: 2` in NoNotes 2.0; die App meldet dann eine ältere Erweiterung
   deutlich, statt sie still falsch zu behandeln.
+- Seit 2.11.0 dazugekommen (ohne Änderung an `api`): `ctx.readOnly`, `ctx.ui.addMapButton`, `ctx.ui.addMapOverlay`, `ctx.export.addMapSection`.
 - Seit 2.10.0 dazugekommen (ohne Änderung an `api`): `ctx.tables.format`, `ctx.tables.update` und `ctx.ui.addTableMenuItem`.
 - Seit 2.8.0 dazugekommen (ohne Änderung an `api`): `ctx.ui.addContextMenuItem` (Kontextmenü eines Knotens, mit Untermenü).
   Seit 2.8.1: `applied()` im Untermenü, die Mehrfachauswahl wird nach einer Aktion aufgehoben, `database:replaced` kommt vor

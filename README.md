@@ -455,10 +455,19 @@ Ein Termin darf am Zeilenende stehen: `- [ ] Offerte einholen @15.10.2026`, mit 
 ohne Uhrzeit der ganze Tag; ein heutiger Termin mit vergangener Uhrzeit ist überfällig.
 Dasselbe gilt für Fragen.
 
+- **Personen** (seit 2.11.0): `- [ ] Offerte einholen @anna (@ben) @15.10.2026` – `@anna` ist
+  verantwortlich, `(@ben)` beteiligt, wie bei Fragen und Entscheiden; mehrere sind gleichwertig.
+  Eine Unteraufgabe ohne eigene Person gehört den Personen ihrer Hauptaufgabe (in der Liste blass,
+  «Über die Hauptaufgabe»). Abhaken darf weiterhin jede Person, die schreiben darf. Im Dienst
+  bekommt eine neu genannte Person eine Mail, und jeden Morgen um 7 Uhr eine Übersicht ihrer
+  offenen Aufgaben (überfällig, heute, die nächsten 7 Tage) mit Links; abschaltbar im Konto.
 - Die Ansicht **Aufgaben** sammelt alle Aufgaben aller Notizen. Standardfilter ist *Offen*;
   *Alle* und *Erledigt* holen den Rest zurück. Sortierung nach Fälligkeit gruppiert in
-  Überfällig, Heute, Diese Woche, Später und Ohne Termin; alternativ nach Notiz. Dazu Suche
-  und Tag-Filter. Der Reiter zeigt die Zahl der offenen Aufgaben, rot wenn etwas überfällig ist.
+  Überfällig, Heute, Diese Woche, Später und Ohne Termin; alternativ nach Notiz oder nach Person
+  (eine Gruppe je Person, eine Aufgabe für zwei steht bei beiden, ohne Person am Schluss). Dazu
+  Suche, Tag-Filter und Filter nach Person (verantwortlich, beteiligt oder geerbt). Der Reiter
+  zeigt die Zahl der offenen Aufgaben, rot wenn etwas überfällig ist.
+- Aufgaben stehen auch in **Tabellenfeldern**: `| [ ] Offerte @anna |` (siehe Tabellen).
 - **Abhaken** geht an drei Orten: Kästchen in der Aufgabenliste, Kästchen in der Vorschau
   des Editors, oder direkt im Text. Alles schreibt in dieselbe Zeile der Notiz.
 - **Unteraufgaben:** Eine Aufgabe, die tiefer eingerückt direkt unter einer anderen steht,
@@ -532,8 +541,16 @@ Dasselbe gilt für Fragen.
     Farbe und Fett).
   - Das Format steht in einer Zeile `<!-- tabelle: {"kopfspalte":true,"hervorheben":true} -->`
     direkt über der Tabelle. Andere Markdown-Programme blenden sie aus, der Export behält sie.
-  - Ein Feld enthält eine Zeile Text mit Markdown (fett, kursiv, Links, `[[Verweise]]`, Code);
-    ein `|` im Feld schreibt sich `\|`. Aufgaben, Fragen und Entscheide in Feldern zählen nicht.
+  - Ein Feld enthält Text mit Markdown (fett, kursiv, Links, `[[Verweise]]`, Code); ein `|` im
+    Feld schreibt sich `\|`.
+  - **Mehrere Zeilen im Feld** (seit 2.11.0): `<br>` trennt sie; `Umschalt+Enter` im Feld setzt es.
+  - **Aufgaben, Fragen und Entscheide in Feldern** (seit 2.11.0): Ein Teil, der mit `[ ]` beginnt,
+    ist eine Aufgabe (mit Termin und Personen), mit `?` eine Frage, mit `?!` ein Entscheid. Die
+    Antwort folgt im selben Feld: `| ? Budget?<br>! 5000 |`, ein Entscheid `<br>!! 14.10.2026: Müller`.
+    Sie erscheinen in den Ansichten, im Index und bei den Agenten wie alle anderen; das Kästchen in
+    der Vorschau hakt genau diese Aufgabe ab, eine Antwort aus der Liste wird ins Feld geschrieben
+    und die Tabelle neu ausgerichtet. In einem Feld wirken die Knöpfe für Aufgabe, Frage, Entscheid
+    und Antwort auf den Teil, in dem der Cursor steht. Unteraufgaben gibt es in Feldern nicht.
 - Die **Toolleiste** über dem Text setzt alles per Klick: Überschrift (Auswahlliste), fett,
   kursiv, durchgestrichen, Code, Listen, Aufgabe, Zitat, Codeblock, Trennlinie, Tabelle, Link,
   Notiz-Verweis, Bild, Frage und Antwort. Die Knöpfe wirken auf den markierten Text oder die
@@ -585,7 +602,7 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | Termine | `packages/core/dates.js`: gemeinsame Logik für `@TT.MM.JJJJ` bzw. `@JJJJ-MM-TT`, Dringlichkeit, Anzeige |
 | Markdown | `packages/core/markdown.js`: eigener Renderer, escaped allen Text, erlaubt nur sichere Link-Schemata |
 | Toolleiste | `packages/core/editing.js`: reine Textfunktionen (umschliessen, Zeilenpräfixe, Überschriften, Links) |
-| Tabellen | `packages/core/tables.js`: Markdown-Tabellen lesen (`parseAt`, Format-Zeile `<!-- tabelle: … -->`) und schreiben (`format` richtet aus), Schritte des Editors (`move`, `enter`, `insert`) und des Rechtsklicks (`setMeta`, `toggleHeader`, Zeilen und Spalten) als reine Textfunktionen; `markdown.js` zeichnet sie (`thead` bleibt oben, `th scope="row"` für die Titelspalte, Angaben von Erweiterungen über `tableFormat`); Raster, Tasten und Rechtsklick in `packages/ui/app.js`; Schnittstelle `ctx.tables` und `ctx.ui.addTableMenuItem` ([docs/PLUGINS.md](docs/PLUGINS.md)) |
+| Tabellen | `packages/core/tables.js`: Markdown-Tabellen lesen (seit 2.11.0 auch Teile eines Felds, `cellParts`, `lineBreak`, `togglePrefix`; Aufgaben, Fragen und Entscheide in Feldern liest `tasks.js` bzw. `questions.js`) (`parseAt`, Format-Zeile `<!-- tabelle: … -->`) und schreiben (`format` richtet aus), Schritte des Editors (`move`, `enter`, `insert`) und des Rechtsklicks (`setMeta`, `toggleHeader`, Zeilen und Spalten) als reine Textfunktionen; `markdown.js` zeichnet sie (`thead` bleibt oben, `th scope="row"` für die Titelspalte, Angaben von Erweiterungen über `tableFormat`); Raster, Tasten und Rechtsklick in `packages/ui/app.js`; Schnittstelle `ctx.tables` und `ctx.ui.addTableMenuItem` ([docs/PLUGINS.md](docs/PLUGINS.md)) |
 | Export | `packages/core/export.js` baut die Dateien, `zip.js` ist ein kleiner ZIP-Writer; das Bild liefert `NoNotesMindmap.toSvgString`, PNG über ein Canvas |
 | Druck | `packages/ui/print.js` baut das Druckdokument in `#printArea`; `@media print` blendet den Rest der App aus |
 | Scroll-Sync | `packages/ui/scrollsync.js`: Spiegel des Textes misst Zeilenhöhen, Vorschau-Blöcke tragen `data-line`, lineare Interpolation dazwischen |

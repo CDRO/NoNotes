@@ -11,6 +11,8 @@
    In Listen (v2.6.0): "- ?!``` Titel" (auch "1.", "*", "+", in Unterlisten) öffnet denselben Block als Listenpunkt. Zum Block gehört
    alles bis zur Zeile "```", gleich wie eingerückt (nachsichtig; der Editor rückt auf den Text des Listenpunkts ein); die Antwort folgt
    nach "```", die Liste geht danach weiter.
+   In Tabellen (v2.11.0): ein Teil eines Felds (Teile trennt "<br>"), der mit "?" oder "?!" beginnt, ist ein Eintrag; die Teile direkt
+   danach, die mit "!" oder "!!" beginnen, sind seine Antwort ("| ?! Lieferant @anna<br>!! 14.10.2026: Müller |").
    "@kürzel" im Titel nennt, wer antworten oder entscheiden soll, "(@kürzel)" eine Person, die wahlweise dabei ist.
    Der Text bleibt die einzige Wahrheit; die Tabelle "questions" ist nur ein Index darüber. */
 (function (global) {
@@ -146,6 +148,38 @@
     return out.join('\n') || null;
   }
 
+  /** Einträge in den Feldern einer Tabellenzeile (Zeile L): je Feld die Teile "? …" / "?! …" mit den Antwort-Teilen danach.
+   *  cell: { index (Feld), part (Teil des Eintrags), end (erster Teil nach der Antwort, exklusiv) }. */
+  function cellEntries(line, cols) {
+    const tb = global.NoNotesTables;
+    if (!tb) return [];
+    const byCell = new Map();
+    for (const p of tb.cellParts(line, cols)) {
+      if (!byCell.has(p.cell)) byCell.set(p.cell, []);
+      byCell.get(p.cell).push(p);
+    }
+    const out = [];
+    for (const [cell, parts] of byCell) {
+      for (let k = 0; k < parts.length; k++) {
+        const unescape = t => t.replace(/\\\|/g, '|'); // "\|" im Feld ist ein "|"
+        const m = QUESTION_RE.exec(parts[k].text);
+        if (!m || FENCED_TEXT_RE.test(m[2])) continue;
+        const head = heading(m[1] ? 'decision' : 'question', unescape(m[2]));
+        if (!head.text) continue;
+        let j = k + 1;
+        const answers = [];
+        for (; j < parts.length; j++) {
+          const a = ANSWER_RE.exec(parts[j].text);
+          if (!a) break;
+          answers.push(unescape(a[1]));
+        }
+        out.push(Object.assign(head, answerOf(head.kind, answers), { cell: { index: cell, part: k, end: j } }));
+        k = j - 1;
+      }
+    }
+    return out;
+  }
+
   /** Mehrzeiliger Eintrag "?!``` Titel" … "```" an Zeile i, samt Unter-Einträgen und der Antwort nach dem Block; mit list auch als
    *  Listenpunkt ("- ?!``` Titel", dann list: true und die Einrückung des Texts im Listenpunkt für die Antwort). */
   function blockEntry(lines, i, list) {
@@ -250,10 +284,12 @@
         closed: b.block ? b.closed : true,
         details: b.details || null,
         list: !!b.list,
+        cell: b.cell || null,
         parent,
       });
       return result.length - 1;
     };
+    const tb = global.NoNotesTables;
     let fence = null;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -263,6 +299,15 @@
         const own = b.text ? push(b, i, null) : null;
         if (b.block) for (const c of b.children) push(c, c.lineIndex, own);
         i = b.end - 1;
+        continue;
+      }
+      const table = tb && tb.isRow(line) ? tb.parseAt(lines, i) : null;
+      if (table) {
+        for (let r = 0; r < table.rows.length; r++) {
+          const L = table.head + 2 + r;
+          for (const e of cellEntries(lines[L], table.cols)) push(Object.assign(e, { answerStart: L + 1, end: L + 1, indent: '' }), L, null);
+        }
+        i = table.end - 1;
         continue;
       }
       const f = FENCE_RE.exec(line);
@@ -275,19 +320,39 @@
    *  options.decided: Datum, wie es im Text stehen soll (zum Beispiel "14.10.2026"); fehlt es, bleibt das Datum aus dem
    *  Text, sonst gilt heute. Leerer Text entfernt die Antwort. */
   function writeAnswer(body, question, answerText, options) {
+    if (question.cell) return writeCellAnswer(body, question, answerText, options);
     const lines = (body || '').split('\n');
     const decision = question.kind === 'decision';
     const marker = (question.indent || '') + (decision ? '!! ' : '! '); // eingerückt wie der Eintrag (in Listen unter dessen Text)
     const answerLines = (answerText || '').split('\n').map(l => l.trim()).filter(Boolean).map(l => marker + l);
-    if (decision && answerLines.length) {
-      const wanted = options && typeof options.decided === 'string' ? splitDecided(options.decided) : { decided: null };
-      const raw = wanted.decided ? wanted.raw : question.decidedRaw || (global.NoNotesDates ? global.NoNotesDates.todayIso() : new Date().toISOString().slice(0, 10));
-      answerLines[0] = marker + raw + ': ' + answerLines[0].slice(marker.length);
-    }
+    if (decision && answerLines.length) answerLines[0] = marker + decidedText(question, options) + ': ' + answerLines[0].slice(marker.length);
     // Ein Block ohne "```" am Ende bekommt es vor der Antwort, sonst stünde sie im Block
     if (question.block && question.closed === false && answerLines.length) answerLines.unshift((question.indent || '') + '```');
     lines.splice(question.answerStart, question.answerEnd - question.answerStart, ...answerLines);
     return lines.join('\n');
+  }
+
+  /** Datum eines Entscheids, wie es im Text stehen soll: options.decided, sonst das aus dem Text, sonst heute. */
+  function decidedText(question, options) {
+    const wanted = options && typeof options.decided === 'string' ? splitDecided(options.decided) : { decided: null };
+    return wanted.decided ? wanted.raw : question.decidedRaw || (global.NoNotesDates ? global.NoNotesDates.todayIso() : new Date().toISOString().slice(0, 10));
+  }
+
+  /** Antwort eines Eintrags in einem Tabellenfeld: die Antwort-Teile nach dem Eintrag werden ersetzt ("<br>! …", bei einem Entscheid
+   *  "<br>!! Datum: …"), ein "|" in der Antwort wird zu "\|"; danach wird die Tabelle neu ausgerichtet. */
+  function writeCellAnswer(body, question, answerText, options) {
+    const tb = global.NoNotesTables;
+    const lines = (body || '').split('\n');
+    const line = lines[question.lineIndex];
+    const cell = tb && line != null ? tb.rowCells(line)[question.cell.index] : null;
+    if (!cell) return body;
+    const parts = tb.splitParts(cell.text).map(p => p.text);
+    const decision = question.kind === 'decision';
+    const rows = (answerText || '').split('\n').map(l => l.trim()).filter(Boolean).map(l => l.replace(/(^|[^\\])\|/g, '$1\\|'));
+    if (decision && rows.length) rows[0] = decidedText(question, options) + ': ' + rows[0];
+    const next = [...parts.slice(0, question.cell.part + 1), ...rows.map(r => (decision ? '!! ' : '! ') + r), ...parts.slice(question.cell.end)];
+    lines[question.lineIndex] = line.slice(0, cell.from) + next.join('<br>') + line.slice(cell.to);
+    return tb.realign(lines.join('\n'), question.lineIndex);
   }
 
   /** Findet im Text den Eintrag, der zu einer Indexzeile passt: zuerst über die gemerkte Zeile, sonst über den
@@ -353,5 +418,5 @@
     return offset;
   }
 
-  global.NoNotesQuestions = { parse, parseBlock, contentLines, nest, people, splitDecided, normalize, writeAnswer, locate, toggleLinePrefix, offsetOfLine, PERSON_RE };
+  global.NoNotesQuestions = { parse, parseBlock, cellEntries, contentLines, nest, people, splitDecided, normalize, writeAnswer, locate, toggleLinePrefix, offsetOfLine, PERSON_RE, QUESTION_RE, ANSWER_RE };
 })(window);

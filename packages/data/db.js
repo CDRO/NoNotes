@@ -3,10 +3,11 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 15;
+  const SCHEMA_VERSION = 16; // 16: Personen an Aufgaben (v2.11.0)
   // Regeln, nach denen die Indexe (Fragen, Aufgaben, Querverweise) aus den Texten entstehen. Steigt die Zahl ohne neues Schema
-  // (2: Blöcke in Listen, v2.6.0), füllt das Öffnen die Indexe neu; ältere Versionen öffnen die Datei weiter.
-  const INDEX_RULES = 2;
+  // (2: Blöcke in Listen, v2.6.0; 3: Aufgaben, Fragen und Entscheide in Tabellenfeldern, v2.11.0), füllt das Öffnen die Indexe
+  // neu; ältere Versionen öffnen die Datei weiter.
+  const INDEX_RULES = 3;
 
   // Verlauf pro Notiz: eine «Arbeitsphase» endet nach so langer Pause oder so langer Dauer; danach beginnt eine neue Fassung.
   // Aufbewahrt werden höchstens so viele Fassungen und Tage; meta history_max_versions / history_max_days / history_enabled ('0') ändern das.
@@ -137,6 +138,7 @@
       ['done_at', 'TEXT'],
       ['parent_id', 'INTEGER'],                 // Hauptaufgabe einer Unteraufgabe
       ['depth', 'INTEGER NOT NULL DEFAULT 0'],
+      ['people', 'TEXT'],                       // JSON [{ handle, optional, inherited? }] aus "@kürzel" und "(@kürzel)", geerbt von der Hauptaufgabe (Schema 16)
     ], indexes: ['CREATE INDEX IF NOT EXISTS idx_tasks_note ON tasks (note_id)'] },
     // Verlauf: pro Fassung ein Rückwärts-Patch zur nächstneueren (packages/core/history.js)
     { name: 'note_history', columns: [
@@ -680,20 +682,21 @@
       const idx = unused.findIndex(e => e.norm === t.norm);
       const done = t.done ? 1 : 0;
       const parentId = t.parent >= 0 ? ids[t.parent] : null;
+      const people = t.people && t.people.length ? JSON.stringify(t.people) : null;
       if (idx >= 0) {
         const e = unused.splice(idx, 1)[0];
         let doneAt = e.done_at;
         if (done && !e.done) doneAt = ts;
         if (!done) doneAt = null;
         if (e.text !== t.text || e.done !== done || e.due !== t.due || e.line_no !== t.lineIndex || e.done_at !== doneAt
-            || (e.parent_id == null ? null : e.parent_id) !== parentId || (e.depth || 0) !== t.depth) {
-          db.run('UPDATE tasks SET text = ?, done = ?, due = ?, line_no = ?, done_at = ?, parent_id = ?, depth = ? WHERE id = ?',
-            [t.text, done, t.due, t.lineIndex, doneAt, parentId, t.depth, e.id]);
+            || (e.parent_id == null ? null : e.parent_id) !== parentId || (e.depth || 0) !== t.depth || (e.people || null) !== people) {
+          db.run('UPDATE tasks SET text = ?, done = ?, due = ?, line_no = ?, done_at = ?, parent_id = ?, depth = ?, people = ? WHERE id = ?',
+            [t.text, done, t.due, t.lineIndex, doneAt, parentId, t.depth, people, e.id]);
         }
         ids.push(e.id);
       } else {
-        db.run('INSERT INTO tasks (note_id, text, norm, done, due, line_no, created_at, done_at, parent_id, depth) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [noteId, t.text, t.norm, done, t.due, t.lineIndex, ts, done ? ts : null, parentId, t.depth]);
+        db.run('INSERT INTO tasks (note_id, text, norm, done, due, line_no, created_at, done_at, parent_id, depth, people) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [noteId, t.text, t.norm, done, t.due, t.lineIndex, ts, done ? ts : null, parentId, t.depth, people]);
         ids.push(scalar(db, 'SELECT last_insert_rowid()'));
       }
     }
@@ -729,12 +732,15 @@
     return out;
   }
 
-  /** Aufgaben über alle lebenden Notizen. status: 'open' | 'done' | 'all'; sort: 'due' | 'note'. */
+  /** Aufgaben über alle lebenden Notizen. status: 'open' | 'done' | 'all'; sort: 'due' | 'note' | 'person' (nach der ersten
+   *  verantwortlichen Person, ohne Person am Schluss, darin nach Termin); person: nur Aufgaben, die diese Person nennen (auch
+   *  geerbt von der Hauptaufgabe). people je Zeile als Liste [{ handle, optional, inherited? }]. */
   function listTasks(db, options) {
     const status = (options && options.status) || 'open';
     const q = ((options && options.query) || '').trim().toLowerCase();
     const tag = options && options.tag ? String(options.tag).trim() : '';
-    const sort = options && options.sort === 'note' ? 'note' : 'due';
+    const person = options && options.person ? String(options.person).trim().replace(/^@/, '').toLowerCase() : '';
+    const sort = options && (options.sort === 'note' || options.sort === 'person') ? options.sort : 'due';
     const where = ['n.deleted_at IS NULL'];
     if (!(options && options.archived)) where.push('n.archived_at IS NULL'); // Archiv nur auf Wunsch (Export)
     const params = [];
@@ -749,15 +755,27 @@
       where.push("(nn_lower(t.text) LIKE ? ESCAPE '\\' OR nn_lower(n.title) LIKE ? ESCAPE '\\')");
       params.push(like, like);
     }
+    if (person) {
+      where.push("nn_lower(t.people) LIKE ? ESCAPE '\\'");
+      params.push('%"handle":"' + escapeLike(person) + '"%');
+    }
     const order = sort === 'note'
-      ? 't.done, n.updated_at DESC, n.id, t.line_no'
-      : 't.done, (t.due IS NULL), t.due, n.updated_at DESC, n.id, t.line_no';
+      ? 't.done, n.updated_at DESC, n.id, t.line_no, t.id'
+      : 't.done, (t.due IS NULL), t.due, n.updated_at DESC, n.id, t.line_no, t.id';
     const rows = selectAll(db,
-      `SELECT t.id, t.note_id, t.text, t.norm, t.done, t.due, t.line_no, t.created_at, t.done_at, t.parent_id, t.depth,
+      `SELECT t.id, t.note_id, t.text, t.norm, t.done, t.due, t.line_no, t.created_at, t.done_at, t.parent_id, t.depth, t.people,
               n.title AS note_title, n.updated_at AS note_updated_at
          FROM tasks t JOIN notes n ON n.id = t.note_id
         WHERE ${where.join(' AND ')}
         ORDER BY ${order}`, params);
+    for (const r of rows) r.people = peopleOf(r);
+    if (sort === 'person') {
+      // nach der ersten verantwortlichen Person (sonst der ersten genannten); ohne Person am Schluss; sonst bleibt die Reihenfolge
+      const key = r => { const p = r.people.find(x => !x.optional) || r.people[0]; return p ? p.handle.toLowerCase() : null; };
+      const order = rows.map((r, i) => ({ r, i, k: key(r) }));
+      order.sort((a, b) => (a.r.done - b.r.done) || ((a.k == null) - (b.k == null)) || (a.k && b.k ? a.k.localeCompare(b.k) : 0) || a.i - b.i);
+      return withSubtaskInfo(db, order.map(x => x.r));
+    }
     return withSubtaskInfo(db, rows);
   }
 
@@ -809,7 +827,8 @@
   }
 
   function getTask(db, id) {
-    return selectOne(db, 'SELECT * FROM tasks WHERE id = ?', [id]);
+    const row = selectOne(db, 'SELECT * FROM tasks WHERE id = ?', [id]);
+    return row ? Object.assign(row, { people: peopleOf(row) }) : row;
   }
 
   function locateTask(db, taskId) {
@@ -820,7 +839,7 @@
     if (!note) throw fail('NOTE_NOT_FOUND', 'Notiz nicht gefunden.');
     const t = T.locate(note.body, row);
     if (!t) throw fail('TASK_STALE', 'Die Aufgabe steht nicht mehr so im Text.');
-    return { note, line: t.lineIndex };
+    return { note, line: t.lineIndex, slot: t.cell ? t.slot : null };
   }
 
   /** Meldung für eine Aufgabe, die wegen offener Unteraufgaben nicht abgeschlossen werden kann. */
@@ -836,14 +855,14 @@
    *  Öffnen einer Unteraufgabe öffnet erledigte übergeordnete Aufgaben mit. */
   function setTaskDone(db, taskId, done) {
     const T = global.NoNotesTasks;
-    const { note, line } = locateTask(db, taskId);
+    const { note, line, slot } = locateTask(db, taskId);
     let body;
     if (done) {
-      const open = T.openSubtasks(note.body, line);
+      const open = T.openSubtasks(note.body, line, slot);
       if (open > 0) throw subtasksOpenError(open);
-      body = T.setDone(note.body, line, true);
+      body = T.setDone(note.body, line, true, slot);
     } else {
-      body = T.reopen(note.body, line);
+      body = T.reopen(note.body, line, slot);
     }
     updateNote(db, note.id, note.title, body);
     return note.id;
@@ -853,8 +872,8 @@
    *  Gibt { noteId, action: 'completed' | 'reopened' } zurück. */
   function toggleTaskTree(db, taskId) {
     const T = global.NoNotesTasks;
-    const { note, line } = locateTask(db, taskId);
-    const r = T.doubleClick(note.body, line);
+    const { note, line, slot } = locateTask(db, taskId);
+    const r = T.doubleClick(note.body, line, slot);
     updateNote(db, note.id, note.title, r.body);
     return { noteId: note.id, action: r.action };
   }
@@ -1067,11 +1086,16 @@
     return Object.assign(r, { people: peopleOf(r), details: r.details || null, sub: sub.decisions + sub.questions ? sub : null });
   }
 
-  /** Alle Kürzel, die Fragen und Entscheide lebender Notizen nennen (ohne @, jede Schreibweise einmal), alphabetisch. */
-  function listPeople(db) {
+  /** Alle Kürzel, die Fragen, Entscheide und Aufgaben lebender Notizen nennen (ohne @, jede Schreibweise einmal), alphabetisch.
+   *  options.of: 'questions' (Fragen und Entscheide) oder 'tasks' (Aufgaben, seit 2.11.0); ohne: alle. */
+  function listPeople(db, options) {
+    const of = options && options.of;
     const seen = new Map();
-    for (const r of selectAll(db, 'SELECT q.people FROM questions q JOIN notes n ON n.id = q.note_id WHERE n.deleted_at IS NULL AND n.archived_at IS NULL AND q.people IS NOT NULL')) {
-      for (const p of peopleOf(r)) if (p.handle && !seen.has(p.handle.toLowerCase())) seen.set(p.handle.toLowerCase(), p.handle);
+    const tables = of === 'questions' ? ['questions'] : of === 'tasks' ? ['tasks'] : ['questions', 'tasks'];
+    for (const table of tables) {
+      for (const r of selectAll(db, `SELECT x.people FROM ${table} x JOIN notes n ON n.id = x.note_id WHERE n.deleted_at IS NULL AND n.archived_at IS NULL AND x.people IS NOT NULL`)) {
+        for (const p of peopleOf(r)) if (p.handle && !seen.has(p.handle.toLowerCase())) seen.set(p.handle.toLowerCase(), p.handle);
+      }
     }
     return [...seen.values()].sort((a, b) => a.localeCompare(b));
   }

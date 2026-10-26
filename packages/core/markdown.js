@@ -304,6 +304,46 @@
    *  ctx.tableFormat(info) liefert Angaben von Erweiterungen (ein Objekt oder eine Liste davon): { table, header, columns: { c: … },
    *  rows: { r: … }, cells: { 'r,c': … } } mit r = 'h' für die Titelzeile. An einem Feld gelten Spalte, dann Zeile, dann Feld (das
    *  Spätere gewinnt); Klassen einer Zeile stehen am <tr>. */
+  /** Inhalt eines Felds (v2.11.0): Teile getrennt durch «<br>»; in Zeilen (nicht in der Titelzeile) wird «[ ] Text» zur Aufgabe
+   *  mit Kästchen (data-line und data-slot, wenn die Zeile im Text bekannt ist: line) und «? …» / «?! …» samt den Antwort-Teilen
+   *  «! …» / «!! …» danach zum Eintrag. Personen und Termine wie in Listen und Fragen. */
+  function cellContent(text, r, slots, ctx, line) {
+    const Tb = global.NoNotesTables, D = global.NoNotesDates, Q = global.NoNotesQuestions;
+    const parts = (Tb ? Tb.splitParts(text).map(p => p.text) : [text]).map(unescapePipe);
+    if (r === 'h') return parts.map(p => renderInline(p, ctx)).join('<br>');
+    const withPeople = Object.assign({}, ctx, { people: true });
+    const badge = (due, quiet) => (due && D ? `<span class="md-due due ${quiet ? 'none' : D.urgency(due)}">${escapeHtml(quiet ? D.formatDue(due) : D.dueLabel(due))}</span>` : '');
+    const out = [];
+    for (let k = 0; k < parts.length; k++) {
+      const p = parts[k];
+      const tm = /^\[( |x|X)\]\s+(.*)$/.exec(p);
+      const task = tm && D ? D.splitDue(tm[2]) : null;
+      if (task && task.text) {
+        const done = tm[1] !== ' ';
+        const slot = slots.n++;
+        const src = line != null ? ` data-line="${line}" data-slot="${slot}"` : '';
+        out.push(`<span class="md-cell-task task${done ? ' done' : ''}"${src}><input type="checkbox"${ctx.interactiveTasks && src ? '' : ' disabled'}${done ? ' checked' : ''} aria-label="${escapeHtml(done ? t('erledigt') : t('offen'))}"><span class="task-text">${renderInline(task.text, withPeople)}</span>${badge(task.due, done)}</span>`);
+        continue;
+      }
+      const qm = Q ? Q.QUESTION_RE.exec(p) : null;
+      const head = qm && !/^`{3}/.test(qm[2]) ? (D ? D.splitDue(qm[2]) : { text: qm[2].trim(), due: null }) : null;
+      if (head && head.text) {
+        let j = k + 1;
+        const answers = [];
+        for (; j < parts.length; j++) { const a = Q.ANSWER_RE.exec(parts[j]); if (!a) break; answers.push(a[1]); }
+        const answered = answers.some(a => a.trim());
+        const decision = !!qm[1];
+        const mark = answered ? '✓' : decision ? '?!' : '?';
+        out.push(`<span class="md-cell-q${decision ? ' md-decision' : ''} ${answered ? 'answered' : 'open'}"><span class="md-mark" aria-hidden="true">${mark}</span> ${renderInline(head.text, withPeople)}${badge(head.due, answered)}</span>`);
+        for (const a of answers) out.push(`<span class="md-cell-a">${renderInline(a, ctx)}</span>`);
+        k = j - 1;
+        continue;
+      }
+      out.push(renderInline(p, ctx));
+    }
+    return out.join('<br>');
+  }
+
   function tableHtml(tb, ctx, lineAttr, srcLine) {
     const meta = tb.meta || {};
     const headCol = meta.kopfspalte === true;
@@ -326,10 +366,11 @@
     const rowSpecs = r => pick(x => (r === 'h' ? x.header : x.rows && x.rows[r]));
     const classOnly = spec => ({ class: spec.class });
     const withoutClass = spec => { const o = Object.assign({}, spec); delete o.class; return o; };
+    const slots = { r: null, n: 0 }; // Aufgaben der Zeile in der Reihenfolge der Felder (wie tasks.js sie zählt)
     const cell = (tag, text, r, c, scope, inRow) => `<${tag}${scope ? ` scope="${scope}"` : ''} data-col="${c}"`
       + attrs('', [...pick(x => x.columns && x.columns[c]), ...inRow, ...pick(x => x.cells && x.cells[`${r},${c}`])], align(c))
-      + `>${renderInline(unescapePipe(text), ctx)}</${tag}>`;
-    const tr = (r, extra, cells) => { const specs = rowSpecs(r); return `<tr${extra}${attrs('', specs.map(classOnly))}>` + cells(specs.map(withoutClass)) + '</tr>'; };
+      + `>${cellContent(text, r, slots, ctx, srcLine == null ? null : tb.head + 2 + (r === 'h' ? 0 : r) + ctx.lineOffset)}</${tag}>`;
+    const tr = (r, extra, cells) => { const specs = rowSpecs(r); slots.r = r; slots.n = 0; return `<tr${extra}${attrs('', specs.map(classOnly))}>` + cells(specs.map(withoutClass)) + '</tr>'; };
     const cls = ['md-table', headCol ? 'md-table-col' : '', meta.hervorheben === true ? 'md-table-mark' : '', tb.header ? '' : 'md-table-nohead'].filter(Boolean).join(' ');
     let html = `<table${attrs(cls, pick(x => x.table))}${lineAttr}${srcLine != null ? ` data-src="${srcLine}"` : ''}>`;
     if (tb.header) html += '<thead>' + tr('h', '', inRow => tb.header.map((x, c) => cell('th', x, 'h', c, 'col', inRow)).join('')) + '</thead>';
@@ -485,7 +526,7 @@
           }
         }
       }
-      items.push({ indent: m[1].length, ordered: /\d/.test(m[2]), text: renderInline(text, ctx) + dueHtml, task, line: i });
+      items.push({ indent: m[1].length, ordered: /\d/.test(m[2]), text: renderInline(text, task != null ? Object.assign({}, ctx, { people: true }) : ctx) + dueHtml, task, line: i });
       i++;
     }
 

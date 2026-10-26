@@ -112,7 +112,7 @@
     conflictDialog: $('#conflictDialog'), conflictLead: $('#conflictLead'), conflictText: $('#conflictText'), conflictLegend: $('#conflictLegend'),
     conflictMineBtn: $('#conflictMineBtn'), conflictTheirsBtn: $('#conflictTheirsBtn'), conflictMarkersBtn: $('#conflictMarkersBtn'),
     viewTasksBtn: $('#viewTasksBtn'), tasksView: $('#tasksView'), tFilter: $('#tFilter'), tSort: $('#tSort'),
-    tSearch: $('#tSearch'), tTagFilter: $('#tTagFilter'), tPrintBtn: $('#tPrintBtn'), tCount: $('#tCount'),
+    tSearch: $('#tSearch'), tTagFilter: $('#tTagFilter'), tPersonFilter: $('#tPersonFilter'), tPrintBtn: $('#tPrintBtn'), tCount: $('#tCount'),
     tList: $('#tList'), tEmpty: $('#tEmpty'),
     taskPrintDialog: $('#taskPrintDialog'), taskPrintForm: $('#taskPrintForm'), taskPrintGoBtn: $('#taskPrintGoBtn'),
     taskScopeFiltered: $('#taskScopeFiltered'),
@@ -180,6 +180,7 @@
     pluginContextItems: [],     // Einträge der Erweiterungen im Kontextmenü eines Knotens (seit 2.8.0): { plugin, spec }
     pluginTableItems: [],       // Einträge der Erweiterungen im Kontextmenü einer Tabelle (seit 2.10.0): { entry, spec }
     tableFormatters: [],        // Format der Tabellen aus Erweiterungen (ctx.tables.format, seit 2.10.0): { entry, fn }
+    mapSections: [],            // Abschnitte unter der Mindmap in Export und Druck (ctx.export.addMapSection, seit 2.11.0): { entry, fn }
     contextSub: null,           // offenes Untermenü des Kontextmenüs: { anchor, el }
     contextUse: null,           // Kontextmenü eines Knotens mit Einträgen der Erweiterungen: { multi, applied }
     editorMode: 'edit',   // 'edit' | 'split' | 'preview'
@@ -196,6 +197,7 @@
     tSort: 'due',
     tQuery: '',
     tTag: '',
+    tPerson: '',          // Filter «an @kürzel» in den Aufgaben (seit 2.11.0)
     tSearchTimer: null,
     calHandle: null,          // gemerkte Kalenderdatei (.ics)
     scrollSync: null,         // synchrones Scrollen in der geteilten Ansicht
@@ -561,7 +563,7 @@
       let png = null;
       try { png = await Exporter.svgToPng(svg, 2); }
       catch (e) { console.warn('PNG', e); }
-      const files = await Exporter.buildFiles(B, { mode, svg, png, version: window.NONOTES_VERSION || 'dev', archived });
+      const files = await Exporter.buildFiles(B, { mode, svg, png, version: window.NONOTES_VERSION || 'dev', archived, sections: await mapSectionsFor('export') });
       const n = files.length;
       if (target === 'dir') {
         const dir = await window.showDirectoryPicker({ mode: 'readwrite' });
@@ -921,13 +923,17 @@
       on: (event, fn) => Plugins.on(id, event, fn),
       openNote: noteId => openNote(noteId),
       refresh: async () => { state.mapDirty = true; await renderAll(); },
+      readOnly: () => readOnly(),
       ui: Object.freeze({
         setStatus: (text, kind) => setStatus(String(text), ['saved', 'dirty', 'saving', 'error'].includes(kind) ? kind : ''),
         addMenuItem: item => addPluginMenuItem(entry, item),
         addToolbarButton: item => addPluginToolbarButton(entry, item),
         addContextMenuItem: item => addPluginContextItem(entry, item),
         addTableMenuItem: item => addPluginContextItem(entry, item, state.pluginTableItems, 'addTableMenuItem'),
+        addMapButton: item => addPluginMapButton(entry, item),
+        addMapOverlay: element => addPluginMapOverlay(entry, element),
       }),
+      export: Object.freeze({ addMapSection: fn => addMapSection(entry, fn) }),
       editor: pluginEditorApi(),
       tables: Object.freeze({
         format: fn => addTableFormatter(entry, fn),
@@ -964,6 +970,53 @@
     b.addEventListener('click', () => { closeMenu(); runPlugin(entry, () => item.action()); });
     el.pluginMenu.appendChild(b);
     el.pluginMenu.hidden = false;
+  }
+
+  /** Knopf in der Leiste der Mindmap (seit 2.11.0), vor dem Suchfeld; action(button). Liefert den Knopf (etwa für aria-pressed). */
+  function addPluginMapButton(entry, item) {
+    checkItem(item, 'addMapButton');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'map-plugin-btn';
+    b.dataset.plugin = entry.id;
+    b.textContent = item.label;
+    b.title = String(item.title || item.label);
+    b.addEventListener('click', () => runPlugin(entry, () => item.action(b)));
+    el.mapSearch.before(b);
+    return b;
+  }
+
+  /** Element über der Mindmap (seit 2.11.0), etwa eine Legende; die Erweiterung setzt Lage und Aussehen. Liefert eine Funktion,
+   *  die es wieder entfernt; beim Ausschalten entfernt es die App. */
+  function addPluginMapOverlay(entry, element) {
+    if (!(element instanceof HTMLElement)) throw new Error(t('{was} braucht ein Element', { was: 'addMapOverlay' }));
+    element.dataset.plugin = entry.id;
+    element.classList.add('map-overlay');
+    el.mapView.appendChild(element);
+    return () => element.remove();
+  }
+
+  /** Abschnitt unter dem Mindmap-Bild im Markdown-Export und im Druck (seit 2.11.0): fn({ target: 'export' | 'print' }) liefert
+   *  (auch als Promise) { title, markdown } oder nichts. Liefert eine Funktion zum Abmelden. */
+  function addMapSection(entry, fn) {
+    if (typeof fn !== 'function') throw new Error(t('{was} braucht eine Funktion', { was: 'export.addMapSection' }));
+    const item = { entry, fn };
+    state.mapSections.push(item);
+    return () => { state.mapSections = state.mapSections.filter(x => x !== item); };
+  }
+
+  /** Die Abschnitte der eingeschalteten Erweiterungen für Export oder Druck: [{ title, markdown }]. Fehler einer Erweiterung
+   *  lassen nur ihren Abschnitt weg. */
+  async function mapSectionsFor(target) {
+    const out = [];
+    for (const { entry, fn } of state.mapSections) {
+      if (entry.status !== 'active') continue;
+      try {
+        const r = await fn(Object.freeze({ target }));
+        if (r && typeof r.markdown === 'string' && r.markdown.trim()) out.push({ title: String(r.title || '').trim(), markdown: r.markdown });
+      } catch (e) { console.warn(`Erweiterung ${entry.id}`, e); } // i18n-ignore: Protokoll
+    }
+    return out;
   }
 
   function addPluginToolbarButton(entry, item) {
@@ -1076,6 +1129,8 @@
     for (const b of el.pluginMenu.querySelectorAll(`[data-plugin="${id}"]`)) b.remove();
     el.pluginMenu.hidden = !el.pluginMenu.querySelector('button');
     for (const b of el.mdToolbar.querySelectorAll(`.tb-plugin[data-plugin="${id}"]`)) b.remove();
+    for (const x of el.mapView.querySelectorAll(`.map-plugin-btn[data-plugin="${id}"], .map-overlay[data-plugin="${id}"]`)) x.remove();
+    state.mapSections = state.mapSections.filter(x => x.entry.id !== id);
     for (const off of state.pluginProviders.get(id) || []) off();
     state.pluginProviders.delete(id);
     state.pluginContextItems = state.pluginContextItems.filter(x => x.entry.id !== id);
@@ -1448,6 +1503,7 @@
       pageBreaks: el.printPageBreaks.checked,
       attachmentUrl: id => attachmentUrl(id),
       tableFormat: tableFormatFor(null),
+      mapSections: el.printIncludeMap.checked ? await mapSectionsFor('print') : [],
     });
     if (el.printDialog.open) el.printDialog.close();
     Printer.print(html);
@@ -1900,15 +1956,17 @@
   /** Kästchen in der Vorschau angeklickt: Zeile im Text umschalten. Abhaken geht erst, wenn alle
    *  Unteraufgaben erledigt sind; Öffnen einer Unteraufgabe öffnet erledigte Hauptaufgaben mit. */
   async function onPreviewChange(e) {
-    const input = e.target.closest('li.task[data-line] input[type="checkbox"]');
+    const input = e.target.closest('li.task[data-line] input[type="checkbox"], .md-cell-task[data-line] input[type="checkbox"]');
     if (!input || state.currentId == null || el.body.readOnly) return;
-    const line = Number(input.closest('li').dataset.line);
+    const holder = input.closest('[data-line]');
+    const line = Number(holder.dataset.line);
+    const slot = holder.dataset.slot != null ? Number(holder.dataset.slot) : null; // Aufgabe in einem Tabellenfeld (v2.11.0)
     if (input.checked) {
-      const open = T.openSubtasks(el.body.value, line);
+      const open = T.openSubtasks(el.body.value, line, slot);
       if (open > 0) { input.checked = false; hint(T.openMessage(open)); return; }
-      el.body.value = T.setDone(el.body.value, line, true);
+      el.body.value = T.setDone(el.body.value, line, true, slot);
     } else {
-      el.body.value = T.reopen(el.body.value, line);
+      el.body.value = T.reopen(el.body.value, line, slot);
     }
     await onEdit();
     await renderPreview();
@@ -2675,6 +2733,11 @@
     const text = el.body.value;
     const s = el.body.selectionStart || 0;
     const e = el.body.selectionEnd || s;
+    // In einem Tabellenfeld (v2.11.0): Aufgabe, Frage, Entscheid und Antwort wirken auf den Teil des Felds, nicht auf die Zeile
+    if (Tables && ['task', 'question', 'decision', 'answer'].includes(cmd) && !text.slice(s, e).includes('\n')) {
+      const cellEdit = Tables.togglePrefix(text, s, cmd);
+      if (cellEdit) { await applyEdit(cellEdit); return; }
+    }
     let r = null;
     switch (cmd) {
       case 'bold': r = E.wrap(text, s, e, '**', '**', 'fett'); break;
@@ -3174,8 +3237,11 @@
     await renderQuestions();
   }
 
-  /** Auswahl «an @kürzel»: alle Kürzel, die Fragen und Entscheide nennen; ohne Kürzel bleibt die Auswahl verborgen. */
-  function fillPersonFilter(people) {
+  /** Auswahl «an @kürzel»: alle Kürzel, die Fragen und Entscheide (bzw. Aufgaben) nennen; ohne Kürzel bleibt die Auswahl verborgen.
+   *  Liefert die gültige Wahl (eine Person, die es nicht mehr gibt, fällt weg). */
+  function fillPersonFilter(people, select, current) {
+    select = select || el.qPersonFilter;
+    current = current == null ? state.qPerson : current;
     const frag = document.createDocumentFragment();
     const all = document.createElement('option');
     all.value = '';
@@ -3187,10 +3253,11 @@
       o.textContent = '@' + handle;
       frag.appendChild(o);
     }
-    el.qPersonFilter.replaceChildren(frag);
-    state.qPerson = people.some(h => h.toLowerCase() === state.qPerson.toLowerCase()) ? state.qPerson : '';
-    el.qPersonFilter.value = state.qPerson;
-    el.qPersonFilter.hidden = people.length === 0;
+    select.replaceChildren(frag);
+    const value = people.some(h => h.toLowerCase() === current.toLowerCase()) ? current : '';
+    select.value = value;
+    select.hidden = people.length === 0;
+    return value;
   }
 
   async function renderQuestions() {
@@ -3206,12 +3273,12 @@
     const [rows, counts, people] = await Promise.all([
       B.listQuestions({ kind, status: state.qStatus, query: state.qQuery, tag: state.qTag, person: state.qPerson, sort: state.qSort }),
       B.countQuestions(today),
-      B.listPeople(),
+      B.listPeople({ of: 'questions' }),
     ]);
     const noteLink = await noteLinkResolver(rows.map(r => [r.text, r.details, r.answer].join('\n')));
     if (!isLatest()) return;
     const c = decision ? (counts.decisions || { open: 0, total: 0, overdue: 0 }) : counts;
-    fillPersonFilter(people);
+    state.qPerson = fillPersonFilter(people);
     el.qCount.textContent = t('{anzahl} von {gesamt} · {offen} offen', { anzahl: rows.length, gesamt: c.total, offen: c.open }) + (c.overdue ? ' · ' + t('{n} überfällig', { n: c.overdue }) : '');
 
     const groups = new Map();
@@ -3951,28 +4018,39 @@
     const isLatest = fresh('tasks');
     const resolve = await wikiResolver();
     const today = Dates.nowIso();
-    const rows = await B.listTasks({ status: state.tStatus, query: state.tQuery, tag: state.tTag, sort: state.tSort });
-    const counts = await B.countTasks(today);
+    const [rows, counts, people] = await Promise.all([
+      B.listTasks({ status: state.tStatus, query: state.tQuery, tag: state.tTag, person: state.tPerson, sort: state.tSort === 'person' ? 'due' : state.tSort }),
+      B.countTasks(today),
+      B.listPeople({ of: 'tasks' }),
+    ]);
     const noteLink = await noteLinkResolver(rows.map(r => r.text));
     if (!isLatest()) return;
+    state.tPerson = fillPersonFilter(people, el.tPersonFilter, state.tPerson);
     el.tCount.textContent = t('{anzahl} von {gesamt} · {offen} offen', { anzahl: rows.length, gesamt: counts.total, offen: counts.open }) + (counts.overdue ? ' · ' + t('{n} überfällig', { n: counts.overdue }) : '');
 
     const groups = new Map();
+    const add = (key, make, r) => { if (!groups.has(key)) groups.set(key, Object.assign(make(), { items: [] })); groups.get(key).items.push(r); };
     for (const r of rows) {
-      const key = state.tSort === 'note' ? `n${r.note_id}` : (r.done ? 'done' : T.urgency(r.due, today));
-      if (!groups.has(key)) {
-        groups.set(key, {
-          title: state.tSort === 'note' ? (r.note_title.trim() || t('Ohne Titel')) : Dates.urgencyLabel(key),
-          noteId: state.tSort === 'note' ? r.note_id : null,
-          cls: state.tSort === 'note' ? '' : `urgency-${key}`,
-          items: [],
-        });
+      if (state.tSort === 'person') {
+        // je genannte Person eine Gruppe (eine Aufgabe für zwei Personen steht bei beiden), ohne Person am Schluss
+        const handles = taskHandles(r);
+        if (!handles.length) add('~', () => ({ title: t('Ohne Person'), noteId: null, cls: 'person-none' }), r);
+        for (const h of handles) add('p' + h.toLowerCase(), () => ({ title: '@' + h, noteId: null, cls: 'person' }), r);
+        continue;
       }
-      groups.get(key).items.push(r);
+      const key = state.tSort === 'note' ? `n${r.note_id}` : (r.done ? 'done' : T.urgency(r.due, today));
+      add(key, () => ({
+        title: state.tSort === 'note' ? (r.note_title.trim() || t('Ohne Titel')) : Dates.urgencyLabel(key),
+        noteId: state.tSort === 'note' ? r.note_id : null,
+        cls: state.tSort === 'note' ? '' : `urgency-${key}`,
+      }), r);
     }
+    const ordered = state.tSort === 'person'
+      ? [...groups.entries()].sort((a, b) => (a[0] === '~') - (b[0] === '~') || a[0].localeCompare(b[0])).map(e => e[1])
+      : orderedGroups(groups, state.tSort !== 'note');
 
     const frag = document.createDocumentFragment();
-    for (const g of orderedGroups(groups, state.tSort !== 'note')) {
+    for (const g of ordered) {
       const section = document.createElement('section');
       section.className = 'q-group ' + g.cls;
       const h = document.createElement('h3');
@@ -3996,10 +4074,16 @@
     }
     el.tList.replaceChildren(frag);
     el.tEmpty.hidden = rows.length > 0;
-    el.tEmpty.textContent = state.tQuery || state.tTag ? t('Keine Treffer.')
+    el.tEmpty.textContent = state.tQuery || state.tTag || state.tPerson ? t('Keine Treffer.')
       : state.tStatus === 'open' ? t('Keine offenen Aufgaben. Eine Zeile „- [ ] Text“ wird zur Aufgabe, optional mit „@15.10.2026“ am Ende.')
       : state.tStatus === 'done' ? t('Noch keine erledigten Aufgaben.')
       : t('Noch keine Aufgaben. Eine Zeile „- [ ] Text“ wird zur Aufgabe.');
+  }
+
+  /** Kürzel, die eine Aufgabe nennt (auch geerbt), jede einmal, in der Reihenfolge des Texts. */
+  function taskHandles(r) {
+    const seen = new Set();
+    return (r.people || []).map(p => p.handle).filter(h => h && !seen.has(h.toLowerCase()) && seen.add(h.toLowerCase()));
   }
 
   function renderTaskItem(r, today, resolve, noteLink) {
@@ -4019,7 +4103,16 @@
     box.addEventListener('change', () => toggleTaskDone(r.id, box.checked));
     const text = document.createElement('div');
     text.className = 'q-text';
-    text.innerHTML = M.inline(r.text, { highlight: state.tQuery.trim() || null, resolveRef: resolve, noteLink });
+    text.innerHTML = M.inline(r.text, { highlight: state.tQuery.trim() || null, resolveRef: resolve, noteLink, people: true });
+    // Personen der Hauptaufgabe, wenn die Unteraufgabe selbst keine nennt (blass)
+    for (const p of (r.people || []).filter(x => x.inherited)) {
+      const chip = document.createElement('span');
+      chip.className = 'md-person inherited' + (p.optional ? ' optional' : '');
+      chip.dataset.handle = p.handle;
+      chip.textContent = '@' + p.handle;
+      chip.title = t('Über die Hauptaufgabe');
+      text.append(' ', chip);
+    }
     text.title = t('Doppelklick: Aufgabe samt Unteraufgaben abschliessen');
     text.addEventListener('dblclick', async e => {
       if (e.target.closest('a')) return;
@@ -4121,12 +4214,14 @@
   async function openTaskPrintDialog() {
     hideContextMenu();
     closeMenu();
-    const shown = (await B.listTasks({ status: state.tStatus, query: state.tQuery, tag: state.tTag })).length;
+    const shown = (await B.listTasks({ status: state.tStatus, query: state.tQuery, tag: state.tTag, person: state.tPerson })).length;
     const label = state.tStatus === 'open' ? t('offene Aufgaben') : state.tStatus === 'done' ? t('erledigte Aufgaben') : t('alle Aufgaben');
     el.taskScopeFiltered.textContent = t('Wie angezeigt: {filter} ({anzahl})', {
-      filter: joinParts(label, state.tTag ? t('Tag „{tag}“', { tag: state.tTag }) : '', state.tQuery.trim() ? t('Suche „{suche}“', { suche: state.tQuery.trim() }) : ''),
+      filter: joinParts(label, state.tTag ? t('Tag „{tag}“', { tag: state.tTag }) : '', state.tPerson ? t('an @{person}', { person: state.tPerson }) : '', state.tQuery.trim() ? t('Suche „{suche}“', { suche: state.tQuery.trim() }) : ''),
       anzahl: shown,
     });
+    const group = el.taskPrintForm.querySelector(`input[name="taskGroup"][value="${state.tSort}"]`);
+    if (group) group.checked = true; // gedruckt wird zuerst so, wie die Liste sortiert ist
     if (typeof el.taskPrintDialog.showModal === 'function') el.taskPrintDialog.showModal();
     else el.taskPrintDialog.setAttribute('open', '');
   }
@@ -4138,6 +4233,7 @@
       status: scope === 'filtered' ? state.tStatus : scope,
       tag: scope === 'filtered' ? state.tTag : '',
       query: scope === 'filtered' ? state.tQuery.trim() : '',
+      person: scope === 'filtered' ? state.tPerson : '',
       groupBy,
     });
     if (el.taskPrintDialog.open) el.taskPrintDialog.close();
@@ -4711,6 +4807,7 @@
     el.tSort.addEventListener('change', async () => { state.tSort = el.tSort.value; await renderTasks(); });
     el.tSearch.addEventListener('input', onTaskSearchInput);
     el.tTagFilter.addEventListener('change', async () => { state.tTag = el.tTagFilter.value; await renderTasks(); });
+    el.tPersonFilter.addEventListener('change', async () => { state.tPerson = el.tPersonFilter.value; await renderTasks(); });
     el.tPrintBtn.addEventListener('click', openTaskPrintDialog);
     el.taskPrintGoBtn.addEventListener('click', runTaskPrint);
     el.preview.addEventListener('change', onPreviewChange);
@@ -4772,10 +4869,12 @@
       if (state.wiki && handleWikiKey(e)) return; // offene Vorschläge für [[Verweise]]
       if (state.mention && handleMentionKey(e)) return; // offene Vorschlagsliste für @kürzel
       // Tabellen (v2.10.0): Tab und Umschalt+Tab springen von Feld zu Feld, Enter fügt eine Zeile an; die Striche werden ausgerichtet
-      if (Tables && !mod && !e.altKey && (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey))) {
+      // Umschalt+Enter in einem Feld setzt «<br>» (v2.11.0): eine neue Zeile im Feld statt einer, die die Tabelle beendet
+      if (Tables && !mod && !e.altKey && (e.key === 'Tab' || e.key === 'Enter')) {
         const s = el.body.selectionStart || 0;
         if (!el.body.value.slice(s, el.body.selectionEnd || s).includes('\n')) {
-          const r = e.key === 'Tab' ? Tables.move(el.body.value, s, e.shiftKey ? -1 : 1) : Tables.enter(el.body.value, s);
+          const r = e.key === 'Tab' ? Tables.move(el.body.value, s, e.shiftKey ? -1 : 1)
+            : e.shiftKey ? Tables.lineBreak(el.body.value, s) : Tables.enter(el.body.value, s);
           if (r) { e.preventDefault(); await applyEdit(r); return; }
         }
       }
@@ -4832,6 +4931,11 @@
     el.newBtn.addEventListener('click', newNote);
     el.mapNewBtn.addEventListener('click', () => newNoteInMap(selectionAsParent()));
     el.mapFitBtn.addEventListener('click', () => state.map.fit());
+    // Unterkante der Leiste als CSS-Variable --map-bar-bottom (seit 2.11.0): Elemente von Erweiterungen über der Mindmap setzen sich
+    // darunter, auch wenn die Leiste in zwei Zeilen umbricht
+    const mapBar = el.mapView.querySelector('.map-toolbar');
+    const setMapBar = () => el.mapView.style.setProperty('--map-bar-bottom', `${mapBar.offsetTop + mapBar.offsetHeight}px`);
+    if (mapBar) { setMapBar(); if (window.ResizeObserver) new ResizeObserver(setMapBar).observe(mapBar); }
     el.mapZoomInBtn.addEventListener('click', () => state.map.zoomIn());
     el.mapZoomOutBtn.addEventListener('click', () => state.map.zoomOut());
     el.mindmap.addEventListener('keydown', onMapKeydown);

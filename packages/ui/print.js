@@ -84,8 +84,9 @@
 
   /** HTML für den Druck von Notizen.
    *  options: { scope: 'current'|'subtree'|'selection'|'all', noteId, ids, withChildren, archived,
-   *             includeMap, includeToc, pageBreaks, attachmentUrl, tableFormat } (attachmentUrl: id → Promise der Anzeige-Adresse;
-   *             tableFormat: Format der Tabellen aus Erweiterungen, siehe packages/core/markdown.js) */
+   *             includeMap, includeToc, pageBreaks, attachmentUrl, tableFormat, mapSections } (attachmentUrl: id → Promise der
+   *             Anzeige-Adresse; tableFormat: Format der Tabellen aus Erweiterungen, siehe packages/core/markdown.js; mapSections:
+   *             [{ title, markdown }] der Erweiterungen unter dem Mindmap-Bild, seit 2.11.0) */
   async function buildNotesDocument(backend, options) {
     const list = await resolveNotes(backend, options);
     const mapTitle = await backend.getMapTitle();
@@ -100,6 +101,9 @@
     parts.push(`<header class="print-head"><h1>${esc(title)}</h1><p class="print-meta">${esc(mapTitle)} · ${esc(t('Gedruckt {datum}', { datum: fmtDate(new Date().toISOString()) }))} · ${esc(tn('{n} Notiz', '{n} Notizen', list.length))}</p></header>`);
     if (options.includeMap && list.length) {
       parts.push(`<figure class="print-map">${await mapSvgFor(backend, list, options.scope, options.archived)}</figure>`);
+      for (const sec of options.mapSections || []) {
+        parts.push(`<section class="print-map-section">${sec.title ? `<h2>${esc(sec.title)}</h2>` : ''}<div class="md">${global.NoNotesMarkdown.render(sec.markdown, { resolveRef, tableSrc: false })}</div></section>`);
+      }
     }
     if (options.includeToc && list.length > 1) {
       parts.push('<nav class="print-toc"><h2>' + esc(t('Inhalt')) + '</h2><ul>' + list.map(n =>
@@ -225,23 +229,27 @@
   }
 
   /** HTML für den Druck von Aufgaben als Checkliste.
-   *  options: { status: 'open'|'done'|'all', tag, query, groupBy: 'due'|'note' } */
+   *  options: { status: 'open'|'done'|'all', tag, query, person, groupBy: 'due'|'note'|'person' } (person und nach Person seit 2.11.0;
+   *  nach Person steht eine Aufgabe bei jeder Person, die sie nennt, auch geerbt von der Hauptaufgabe) */
   async function buildTasksDocument(backend, options) {
     const T = global.NoNotesTasks;
-    const rows = await backend.listTasks({ status: options.status || 'all', tag: options.tag || '', query: options.query || '', sort: options.groupBy === 'note' ? 'note' : 'due' });
+    const rows = await backend.listTasks({ status: options.status || 'all', tag: options.tag || '', query: options.query || '', person: options.person || '', sort: options.groupBy === 'note' ? 'note' : 'due' });
     const mapTitle = await backend.getMapTitle();
     const today = global.NoNotesDates.nowIso();
     const filterText = [
       options.status === 'open' ? t('offene Aufgaben') : options.status === 'done' ? t('erledigte Aufgaben') : t('alle Aufgaben'),
       options.tag ? t('Tag „{tag}“', { tag: options.tag }) : null,
+      options.person ? t('an @{person}', { person: options.person }) : null,
       options.query ? t('Suche „{suche}“', { suche: options.query }) : null,
     ].filter(Boolean).join(', ');
     const open = rows.filter(r => !r.done).length;
     const resolveRef = await titleResolver(backend);
     const item = r => {
       const u = r.done ? 'none' : T.urgency(r.due, today);
+      const inherited = (r.people || []).filter(p => p.inherited).map(p => '@' + p.handle);
       const meta = [
         r.due ? t('bis {datum}', { datum: T.formatDue(r.due) }) : null,
+        inherited.length ? t('über die Hauptaufgabe: {personen}', { personen: inherited.join(', ') }) : null,
         r.sub_total ? t('{erledigt}/{gesamt} Unteraufgaben', { erledigt: r.sub_done, gesamt: r.sub_total }) : null,
         options.groupBy === 'note' ? null : (r.parent_text ? t('Teil von „{aufgabe}“', { aufgabe: r.parent_text }) : null),
         options.groupBy === 'note' ? null : (r.note_title.trim() || t('Ohne Titel')),
@@ -249,20 +257,28 @@
       ].filter(Boolean).join(' · ');
       const indent = options.groupBy === 'note' && r.depth ? ` style="margin-left:${Math.min(r.depth, 4) * 16}pt"` : '';
       return `<div class="print-task ${r.done ? 'done' : 'open'}"${indent}><span class="print-box" aria-hidden="true"></span>` +
-        `<span class="print-task-text">${M().inline(r.text, { resolveRef })}</span>` +
+        `<span class="print-task-text">${M().inline(r.text, { resolveRef, people: true })}</span>` +
         (meta ? `<span class="print-task-meta${u === 'overdue' ? ' overdue' : ''}">${esc(meta)}</span>` : '') + '</div>';
     };
     const parts = [];
     parts.push(`<header class="print-head"><h1>${esc(t('Aufgaben'))}</h1><p class="print-meta">${esc(mapTitle)} · ${esc(filterText)} · ${esc(tn('{n} Aufgabe, davon {offen} offen', '{n} Aufgaben, davon {offen} offen', rows.length, { offen: open }))} · ${esc(t('Gedruckt {datum}', { datum: fmtDate(new Date().toISOString()) }))}</p></header>`);
     if (!rows.length) { parts.push(`<p class="print-meta">${esc(t('Keine Aufgaben in dieser Auswahl.'))}</p>`); return parts.join('\n'); }
     const groups = new Map();
+    const add = (key, title, r) => { if (!groups.has(key)) groups.set(key, { title, items: [] }); groups.get(key).items.push(r); };
     for (const r of rows) {
+      if (options.groupBy === 'person') {
+        const seen = new Set();
+        const handles = (r.people || []).map(p => p.handle).filter(h => !seen.has(h.toLowerCase()) && seen.add(h.toLowerCase()));
+        if (!handles.length) add('~', t('Ohne Person'), r);
+        for (const h of handles) add('p' + h.toLowerCase(), '@' + h, r);
+        continue;
+      }
       const key = options.groupBy === 'note' ? `n${r.note_id}` : (r.done ? 'done' : T.urgency(r.due, today));
-      const title = options.groupBy === 'note' ? (r.note_title.trim() || t('Ohne Titel')) : global.NoNotesDates.urgencyLabel(key);
-      if (!groups.has(key)) groups.set(key, { title, items: [] });
-      groups.get(key).items.push(r);
+      add(key, options.groupBy === 'note' ? (r.note_title.trim() || t('Ohne Titel')) : global.NoNotesDates.urgencyLabel(key), r);
     }
-    const ordered = options.groupBy === 'note' ? [...groups.entries()] : [...groups.entries()].sort(byUrgency);
+    const ordered = options.groupBy === 'note' ? [...groups.entries()]
+      : options.groupBy === 'person' ? [...groups.entries()].sort((a, b) => (a[0] === '~') - (b[0] === '~') || a[0].localeCompare(b[0]))
+      : [...groups.entries()].sort(byUrgency);
     for (const [, g] of ordered) {
       parts.push(`<section class="print-qgroup"><h2>${esc(g.title)}</h2>${g.items.map(item).join('')}</section>`);
     }

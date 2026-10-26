@@ -15,7 +15,7 @@ const DIST = path.join(ROOT, 'dist', 'NoNotes');
 const APP_URL = 'file://' + path.join(DIST, 'index.html');
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '15'; // muss zu packages/data/db.js passen
+const SCHEMA_VERSION = '16'; // muss zu packages/data/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 // ============================================================
@@ -2632,6 +2632,151 @@ async function runTablesUi(browser, part, step) {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+// ============================================================
+/* v2.11.0: Personen an Aufgaben in der Ansicht «Aufgaben» (Filter, nach Person, geerbt blass, Druck), Aufgaben in Tabellenfeldern
+   (Kästchen in der Vorschau, Umschalt+Enter, Knöpfe der Toolleiste im Feld) und die neuen Teile der Schnittstelle für Erweiterungen
+   (Knopf und Element über der Mindmap, Abschnitt unter dem Mindmap-Bild im Druck, readOnly). */
+async function runCellsPeopleUi(browser, part, step) {
+  const PLUGIN = `NoNotesPlugins.register({ id: 'karte-test', name: 'Karten-Test', api: 1, activate(ctx) {
+    window.__ctx = ctx; window.__clicks = 0;
+    window.__btn = ctx.ui.addMapButton({ label: 'Legende', title: 'Legende zeigen', action: b => { window.__clicks++; b.setAttribute('aria-pressed', 'true'); } });
+    const box = document.createElement('div'); box.className = 'kt-box'; box.textContent = 'Legende hier';
+    window.__removeBox = ctx.ui.addMapOverlay(box);
+    window.__sectionOff = ctx.export.addMapSection(({ target }) => ({ title: 'Legende', markdown: '- **Rot**: dringend (' + target + ')' }));
+    ctx.export.addMapSection(() => { throw new Error('kaputt'); });
+    ctx.export.addMapSection(() => null);
+    window.__bad = 0;
+    try { ctx.ui.addMapButton({ label: 'x' }); } catch (e) { window.__bad++; }
+    try { ctx.ui.addMapOverlay('kein Element'); } catch (e) { window.__bad++; }
+    try { ctx.export.addMapSection('keine Funktion'); } catch (e) { window.__bad++; }
+  } });`;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nonotes-cells-'));
+  const dir = path.join(tmp, 'NoNotes');
+  fs.cpSync(DIST, dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'plugins', 'karte-test.js'), PLUGIN);
+  fs.writeFileSync(path.join(dir, 'plugins', 'plugins.js'), "NoNotesPlugins.list(['karte-test.js']);\n");
+  const ctx = await browser.newContext({ viewport: { width: 1300, height: 820 }, locale: 'de-CH' });
+  await ctx.addInitScript(() => { window.__printed = []; window.print = () => { window.__printed.push(document.getElementById('printArea').innerHTML); }; });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  page.on('dialog', d => d.accept());
+  await page.goto('file://' + path.join(dir, 'index.html'));
+  await page.waitForSelector(READY, { timeout: 30000 });
+  assert.equal(await page.evaluate(() => window.__bad), 3, 'falsche Aufrufe werfen');
+  assert.equal(await page.evaluate(() => window.__ctx.readOnly()), false);
+
+  // ---------- Knopf und Element über der Mindmap ----------
+  const btn = page.locator('.map-toolbar .map-plugin-btn[data-plugin="karte-test"]');
+  assert.equal(await btn.innerText(), 'Legende');
+  assert.equal(await page.evaluate(() => document.querySelector('.map-plugin-btn').nextElementSibling.id), 'mapSearch', 'vor dem Suchfeld');
+  await btn.click();
+  assert.equal(await page.evaluate(() => window.__clicks), 1);
+  assert.equal(await btn.getAttribute('aria-pressed'), 'true', 'die Erweiterung bekommt den Knopf');
+  assert.equal(await page.locator('#mapView > .map-overlay.kt-box[data-plugin="karte-test"]').innerText(), 'Legende hier');
+  await page.evaluate(() => window.__removeBox());
+  assert.equal(await page.locator('.kt-box').count(), 0, 'entfernen');
+  part('Erweiterung: Knopf in der Leiste der Mindmap, Element über der Mindmap, readOnly, falsche Aufrufe werfen');
+
+  // ---------- Notizen ----------
+  const ids = await page.evaluate(async () => {
+    const B = __ctx.backend;
+    const a = await B.createNote(null);
+    await B.updateNote(a, 'Projekt', [
+      '- [ ] Offerte einholen @anna @15.11.2030',
+      '  - [ ] Preise vergleichen',
+      '- [ ] Vertrag prüfen @ben (@anna)',
+      '- [ ] Ohne Person',
+      '',
+      '| Thema | Aufgaben | Klärung |',
+      '|---|---|---|',
+      '| Lieferant | [ ] Liste @cem<br>[ ] Termin | ? Budget? |',
+    ].join('\n'), {});
+    await __ctx.refresh();
+    return { a };
+  });
+
+  // ---------- Ansicht «Aufgaben» ----------
+  await page.click('#viewTasksBtn');
+  await page.waitForSelector('#tList .t-item');
+  assert.equal(await page.locator('#tPersonFilter').isVisible(), true, 'Auswahl der Person sichtbar');
+  assert.deepEqual(await page.locator('#tPersonFilter option').allInnerTexts(), ['Alle Personen', '@anna', '@ben', '@cem']);
+  const inherited = page.locator('#tList .t-item:has-text("Preise vergleichen") .md-person.inherited');
+  assert.equal(await inherited.innerText(), '@anna', 'geerbte Person blass');
+  assert.equal(await inherited.getAttribute('title'), 'Über die Hauptaufgabe');
+  assert.equal(await page.locator('#tList .t-item:has-text("Offerte einholen") .md-person:not(.inherited)').innerText(), '@anna', 'eigene Person als Marke');
+  await page.selectOption('#tPersonFilter', 'anna');
+  await page.waitForFunction(() => document.querySelectorAll('#tList .t-item').length === 3);
+  assert.deepEqual((await page.locator('#tList .t-item .q-text').allInnerTexts()).map(x => x.split('@')[0].trim()).sort(), ['Offerte einholen', 'Preise vergleichen', 'Vertrag prüfen'], 'Filter: verantwortlich, beteiligt und geerbt');
+  await page.selectOption('#tPersonFilter', '');
+  await page.selectOption('#tSort', 'person');
+  await page.waitForFunction(() => [...document.querySelectorAll('#tList h3')].some(h => h.textContent.startsWith('@anna')));
+  assert.deepEqual((await page.locator('#tList h3').allInnerTexts()).map(h => h.split('\n')[0].replace(/\d+ Aufgaben?$/, '').trim()), ['@anna', '@ben', '@cem', 'Ohne Person']);
+  assert.deepEqual(await page.evaluate(() => [...[...document.querySelectorAll('#tList section')][0].querySelectorAll('.t-item .q-text')].map(x => x.textContent.split('@')[0].trim()).sort()),
+    ['Offerte einholen', 'Preise vergleichen', 'Vertrag prüfen'], 'bei @anna: verantwortlich, geerbt und beteiligt; eine Aufgabe für zwei steht bei beiden');
+  part('Aufgaben: Auswahl der Person, eigene und geerbte Personen (blass), Filter mit beteiligt und geerbt, nach Person mit einer Gruppe je Person');
+
+  // Druck nach Person
+  await page.click('#tPrintBtn');
+  await page.waitForSelector('#taskPrintDialog[open]');
+  assert.equal(await page.isChecked('#taskPrintForm input[name="taskGroup"][value="person"]'), true, 'wie die Liste sortiert');
+  await page.click('#taskPrintGoBtn');
+  await page.waitForFunction(() => window.__printed.length === 1);
+  const printed = await page.evaluate(() => window.__printed[0]);
+  assert.ok(/<h2>@anna<\/h2>.*Preise vergleichen.*über die Hauptaufgabe: @anna/s.test(printed), 'nach Person gedruckt, geerbte Person genannt');
+  assert.ok(printed.indexOf('<h2>Ohne Person</h2>') > printed.indexOf('<h2>@cem</h2>'));
+  part('Druck der Aufgaben nach Person, mit geerbten Personen');
+
+  // ---------- Tabellenfelder in der Vorschau und im Editor ----------
+  await page.evaluate(i => __ctx.openNote(i), ids.a);
+  await page.waitForSelector('#editorPane:not([hidden])');
+  await page.click('[data-mode="preview"]');
+  await page.waitForSelector('#preview .md-cell-task');
+  assert.equal(await page.locator('#preview .md-cell-task').count(), 2);
+  await page.locator('#preview .md-cell-task[data-slot="1"] input').check();
+  await page.waitForFunction(() => document.querySelector('#body').value.includes('[ ] Liste @cem<br>[x] Termin'));
+  await page.waitForFunction(SAVED, null, { timeout: 10000 });
+  const tasks = await page.evaluate(() => __ctx.backend.listTasks({ status: 'done' }));
+  assert.deepEqual(tasks.map(x => x.text), ['Termin'], 'im Index erledigt');
+  await page.click('[data-mode="edit"]');
+  await page.evaluate(() => { const b = document.querySelector('#body'); const i = b.value.indexOf('Budget?') + 7; b.focus(); b.setSelectionRange(i, i); });
+  await page.keyboard.press('Shift+Enter');
+  await page.keyboard.type('Wer zahlt?');
+  assert.ok((await page.inputValue('#body')).includes('? Budget?<br>Wer zahlt?'), 'Umschalt+Enter setzt <br>');
+  await page.click('#mdToolbar [data-cmd="question"]');
+  assert.ok((await page.inputValue('#body')).includes('? Budget?<br>? Wer zahlt?'), 'Frage-Knopf wirkt auf den Teil');
+  await page.click('#mdToolbar [data-cmd="answer"]');
+  assert.equal(new Set((await page.inputValue('#body')).split('\n').slice(5, 8).map(l => l.length)).size, 1, 'Tabelle nach dem Knopf ausgerichtet');
+  await page.keyboard.type('Die Firma');
+  const body = await page.inputValue('#body');
+  assert.ok(body.includes('? Budget?<br>? Wer zahlt?<br>! Die Firma'), body);
+  await page.waitForFunction(SAVED, null, { timeout: 10000 });
+  const qs = await page.evaluate(() => __ctx.backend.listQuestions({ status: 'all' }));
+  assert.deepEqual(qs.map(x => [x.text, x.answer]), [['Budget?', null], ['Wer zahlt?', 'Die Firma']]);
+  part('Tabellenfelder: Kästchen in der Vorschau trifft die richtige Aufgabe, Umschalt+Enter, Frage- und Antwort-Knopf im Feld, Index');
+
+  // ---------- Abschnitt unter dem Mindmap-Bild im Druck ----------
+  await page.keyboard.press('Control+p');
+  await page.waitForSelector('#printDialog[open]');
+  await page.check('#printIncludeMap');
+  await page.click('#printGoBtn');
+  await page.waitForFunction(() => window.__printed.length === 2);
+  const doc = await page.evaluate(() => window.__printed[1]);
+  assert.ok(/<figure class="print-map">.*<\/figure>\n<section class="print-map-section"><h2>Legende<\/h2><div class="md"><ul><li><strong>Rot<\/strong>: dringend \(print\)<\/li><\/ul><\/div><\/section>/s.test(doc), 'Abschnitt direkt unter dem Bild; Fehler einer Erweiterung schaden nicht');
+  await page.evaluate(() => window.__sectionOff());
+  await page.keyboard.press('Control+p');
+  await page.waitForSelector('#printDialog[open]');
+  await page.click('#printGoBtn');
+  await page.waitForFunction(() => window.__printed.length === 3);
+  assert.ok(!(await page.evaluate(() => window.__printed[2])).includes('print-map-section'), 'abgemeldet: kein Abschnitt');
+  part('Druck: Abschnitt der Erweiterung unter dem Mindmap-Bild, Fehler schaden nicht, abmelden');
+
+  assert.deepEqual(errors, []);
+  await ctx.close();
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 suite('Erweiterungs-Test', [
   { name: 'Erweiterungen: Lader, Dialog, Schnittstelle 1, Menü, Toolleiste, Ereignisse, Hilfe, Designs, Ein- und Ausschalten zur Laufzeit, Verzeichnis, Beispiele, Pseudo-Sprache', run: runPlugins },
   { name: 'Hauptfarbe: Palette, Auswahl, Datei, Export und Druck, hell und dunkel', run: runPalette },
@@ -2640,6 +2785,7 @@ suite('Erweiterungs-Test', [
   { name: 'Entscheide und Personen: Reiter, Ansicht, Entscheiden mit Datum, Vorschau, Toolleiste, Vorschläge beim Tippen von @, Export und Druck, Blöcke in Listen', run: runDecisions },
   { name: 'Vorlagen: Ordner verbinden, speichern, aus Vorlage anlegen und einfügen, Erlaubnis, ohne Ordner, Datei hinzufügen', run: runTemplatesUi },
   { name: 'Tabellen: Raster in der Toolleiste, Tab und Enter, Titelzeile oben, Rechtsklick, Schnittstelle für Erweiterungen, Druck, Lesemodus', run: runTablesUi },
+  { name: 'Personen an Aufgaben und Tabellenfelder: Aufgaben-Ansicht (Filter, nach Person, geerbt), Druck, Kästchen und Knöpfe im Feld, Knopf und Element über der Mindmap, Abschnitt im Druck', run: runCellsPeopleUi },
   { name: 'Sprachen: Pseudo-Sprache durch alle Ansichten, Englisch, Browsersprache, Mehrzahl, Testpaket, Wechsel', run: runI18n },
   { name: 'WebMCP: Werkzeuge für den Agenten des Browsers, Aufrufe ändern Daten und Oberfläche, gespeichert, Lesemodus, ohne Schnittstelle nichts', run: runWebMcp },
 ], { browser: true });

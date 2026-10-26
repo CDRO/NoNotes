@@ -14,31 +14,74 @@
   const ROW_RE = /^\s{0,3}\|/;
   const DELIM_RE = /^\s*:?-+:?\s*$/;
 
+  /** Felder einer Zeile mit ihrer Lage: [{ text, from, to }], text getrimmt und wie geschrieben, from/to die Lage dieses Texts
+   *  in der Zeile. «\|» trennt nicht; was nach dem letzten «|» nur Leerraum ist, ist kein Feld. */
+  function rowCells(line) {
+    const s = String(line);
+    let i = 0;
+    while (i < s.length && /\s/.test(s[i])) i++;
+    if (s[i] === '|') i++;
+    const cells = [];
+    const push = (a, b) => {
+      while (a < b && /\s/.test(s[a])) a++;
+      while (b > a && /\s/.test(s[b - 1])) b--;
+      cells.push({ text: s.slice(a, b), from: a, to: b });
+    };
+    let start = i;
+    for (; i < s.length; i++) {
+      if (s[i] === '\\' && s[i + 1] === '|') { i++; continue; }
+      if (s[i] === '|') { push(start, i); start = i + 1; }
+    }
+    if (s.slice(start).trim()) push(start, s.length);
+    return cells;
+  }
+
   /** Felder einer Zeile «| a | b |» → ['a', 'b'] (getrimmt, Text wie geschrieben); «\|» trennt nicht. */
   function splitRow(line) {
-    let s = String(line).trim();
-    if (s.startsWith('|')) s = s.slice(1);
-    const cells = [];
-    let cur = '', ended = false;
-    for (let i = 0; i < s.length; i++) {
-      const ch = s[i];
-      if (ch === '\\' && s[i + 1] === '|') { cur += '\\|'; i++; ended = false; continue; }
-      if (ch === '|') { cells.push(cur.trim()); cur = ''; ended = true; continue; }
-      cur += ch;
-      if (!/\s/.test(ch)) ended = false;
-    }
-    if (!ended || cur.trim()) cells.push(cur.trim());
-    return cells;
+    return rowCells(line).map(c => c.text);
+  }
+
+  // ---------- Teile eines Felds (v2.11.0): «<br>» trennt Zeilen in einem Feld ----------
+
+  const BR_RE = /<br\s*\/?>/gi;
+
+  /** Teile eines Feldtexts, getrennt durch «<br>»: [{ text, from, to }] (getrimmt, Lage im Feldtext). */
+  function splitParts(text) {
+    const s = String(text);
+    const out = [];
+    const push = (a, b) => {
+      while (a < b && /\s/.test(s[a])) a++;
+      while (b > a && /\s/.test(s[b - 1])) b--;
+      out.push({ text: s.slice(a, b), from: a, to: b });
+    };
+    let start = 0;
+    BR_RE.lastIndex = 0;
+    for (let m; (m = BR_RE.exec(s));) { push(start, m.index); start = m.index + m[0].length; }
+    push(start, s.length);
+    return out;
+  }
+
+  /** Alle Teile aller Felder einer Zeile: [{ cell, part, text, from }] mit from als Lage in der Zeile. Für Aufgaben, Fragen und
+   *  Entscheide in Feldern (tasks.js, questions.js); höchstens cols Felder, wenn angegeben. */
+  function cellParts(line, cols) {
+    const out = [];
+    rowCells(line).forEach((c, ci) => {
+      if (cols != null && ci >= cols) return;
+      splitParts(c.text).forEach((p, k) => out.push({ cell: ci, part: k, text: p.text, from: c.from + p.from }));
+    });
+    return out;
   }
 
   const isRow = line => ROW_RE.test(String(line || ''));
   const FENCE_RE = /^\s*(`{3,}|~{3,})(.*)$/;
   const BLOCK_OPEN_RE = /^\s*(?:(?:[-*+]|\d+[.)])\s+)?\?!?\s?```/;
 
-  /** Steht Zeile L in einem Codeblock («```»/«~~~»)? Dort ist «|» nur Text. Blöcke «?!``` …» bis «```» sind kein Code. */
-  function inCode(lines, L) {
+  /** Für jede Zeile: steht sie in einem Codeblock («```»/«~~~»)? Dort ist «|» nur Text. Blöcke «?!``` …» bis «```» sind kein Code. */
+  function codeMask(lines) {
+    const mask = new Array(lines.length);
     let fence = null, block = false;
-    for (let k = 0; k < L; k++) {
+    for (let k = 0; k < lines.length; k++) {
+      mask[k] = !!fence;
       const s = lines[k];
       const m = FENCE_RE.exec(s);
       if (fence) { if (m && m[1][0] === fence[0] && m[1].length >= fence.length && !m[2].trim()) fence = null; continue; }
@@ -46,7 +89,12 @@
       if (block && /^\s*```\s*$/.test(s)) { block = false; continue; }
       if (m) fence = m[1];
     }
-    return !!fence;
+    return mask;
+  }
+
+  /** Steht Zeile L in einem Codeblock? */
+  function inCode(lines, L) {
+    return !!codeMask(lines.slice(0, L + 1))[L];
   }
   function isDelimiter(line) {
     if (!isRow(line)) return false;
@@ -186,6 +234,14 @@
     return { lines, t, row, col };
   }
 
+  /** Richtet die Tabelle neu aus, in der Zeile lineIndex steht (nach einer Änderung an einem Feld); sonst bleibt der Text. */
+  function realign(text, lineIndex) {
+    const lines = linesOf(text);
+    const a = at(text, offsets(lines)[lineIndex] || 0);
+    if (!a) return text;
+    return [...lines.slice(0, a.t.start), ...format(a.t).lines, ...lines.slice(a.t.end)].join('\n');
+  }
+
   /** Ersetzt die Tabelle t in lines durch ihren neuen Stand und setzt die Auswahl ins Feld (r, c), ganz (select) oder an den Anfang. */
   function replace(lines, t, r, c, select) {
     const f = format(t);
@@ -245,6 +301,67 @@
     t.rows.splice(at0, 0, emptyRow(t));
     shift(t.meta, 'row', at0, 1);
     return replace(a.lines, t, at0, 0, false);
+  }
+
+  /** Feld und Stelle des Cursors in der Zeile der Tabelle: { a, r, c, offset } (offset im Feldtext) oder null (Trennzeile,
+   *  ausserhalb). */
+  function cellAt(text, pos) {
+    const a = at(text, pos);
+    if (!a || a.row === -2) return null;
+    const starts = offsets(a.lines);
+    const L = lineAt(starts, pos);
+    const col = pos - starts[L];
+    const cells = rowCells(a.lines[L]);
+    const c = Math.min(a.col, a.t.cols - 1);
+    const cell = cells[c] || { text: '', from: col, to: col };
+    const offset = Math.max(0, Math.min(cell.text.length, col - cell.from));
+    return { a, r: a.row, c, offset, text: cell.text };
+  }
+
+  /** Text des Felds (r, c) ersetzen, Tabelle ausrichten, Cursor an offset im neuen Feldtext. */
+  function withCell(at0, value, offset) {
+    const t = copy(at0.a.t);
+    if (at0.r < 0) { if (!t.header) return null; t.header[at0.c] = value; } else t.rows[at0.r][at0.c] = value;
+    const r = replace(at0.a.lines, t, at0.r, at0.c, false);
+    r.selStart += offset;
+    r.selEnd = r.selStart;
+    return r;
+  }
+
+  /** Umschalt+Enter in einem Feld: «<br>» an der Stelle des Cursors (eine neue Zeile im Feld). null ausserhalb einer Tabelle. */
+  function lineBreak(text, pos) {
+    const at0 = cellAt(text, pos);
+    if (!at0 || (at0.r < 0 && !at0.a.t.header)) return null;
+    return withCell(at0, at0.text.slice(0, at0.offset) + '<br>' + at0.text.slice(at0.offset), at0.offset + 4);
+  }
+
+  const PREFIXES = { task: /^\[[ xX]\]\s*/, decision: /^\?!\s?/, question: /^\?(?!!)\s?/, answer: /^!!?(?!\[)\s?/ };
+  const PREFIX_TEXT = { task: '[ ] ', decision: '?! ', question: '? ', answer: '! ' };
+
+  /** Knöpfe der Toolleiste in einem Feld (nicht in der Titelzeile): Aufgabe, Frage, Entscheid schalten das Zeichen am Anfang des Teils
+   *  um, in dem der Cursor steht (ein anderes wird ersetzt); Antwort hängt einen Teil «<br>! » an (bei einem Entscheid «!! »), steht der
+   *  Cursor schon in einer Antwort, fällt ihr Zeichen weg. null ausserhalb eines Felds. */
+  function togglePrefix(text, pos, kind) {
+    const at0 = cellAt(text, pos);
+    if (!at0 || at0.r < 0 || !PREFIX_TEXT[kind]) return null;
+    const parts = splitParts(at0.text);
+    let k = parts.findIndex(p => at0.offset <= p.to + 4);
+    if (k < 0) k = parts.length - 1;
+    const part = parts[k];
+    const value = at0.text;
+    const has = kind => PREFIXES[kind].exec(part.text);
+    if (kind === 'answer' && !has('answer')) {
+      const isDecision = parts.some(p => PREFIXES.decision.test(p.text));
+      const add = (value ? '<br>' : '') + (isDecision ? '!! ' : '! ');
+      return withCell(at0, value + add, value.length + add.length);
+    }
+    const own = has(kind);
+    const other = own ? null : ['task', 'decision', 'question', 'answer'].map(has).find(Boolean);
+    const cut = own ? own[0].length : other ? other[0].length : 0;
+    const insert = own ? '' : PREFIX_TEXT[kind];
+    const next = value.slice(0, part.from) + insert + part.text.slice(cut) + value.slice(part.to);
+    const caret = Math.max(part.from + insert.length, at0.offset - cut + insert.length);
+    return withCell(at0, next, Math.min(caret, next.length));
   }
 
   /** Neue Tabelle an Stelle der Markierung: cols Spalten, rows Zeilen insgesamt (mit Titelzeile ist die erste davon der Kopf).
@@ -359,7 +476,8 @@
   }
 
   global.NoNotesTables = {
-    META_RE, splitRow, isRow, isDelimiter, inCode, readMeta, parseAt, format, at, tableAtLine, shift, swapHeader,
+    META_RE, rowCells, splitRow, splitParts, cellParts, isRow, isDelimiter, codeMask, inCode, realign, readMeta, parseAt, format, at, tableAtLine, shift, swapHeader,
+    lineBreak, togglePrefix,
     move, enter, insert, setMeta, toggleHeader, insertRow, deleteRow, insertColumn, deleteColumn,
   };
 })(window);

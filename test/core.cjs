@@ -15,7 +15,7 @@ const DIST = path.join(ROOT, 'dist', 'NoNotes');
 const APP_URL = 'file://' + path.join(DIST, 'index.html');
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '15'; // muss zu packages/data/db.js passen
+const SCHEMA_VERSION = '16'; // muss zu packages/data/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 // ============================================================
@@ -1478,13 +1478,13 @@ async function runEntries(browser, part, step) {
 
   // Ältere Dateien: Merker index_rules füllt die Indexe einmal neu (ohne neues Schema)
   {
-    assert.equal(DB.getMeta(d, 'index_rules'), '2', 'neue Datei: heutige Regeln');
+    assert.equal(DB.getMeta(d, 'index_rules'), '3', 'neue Datei: heutige Regeln');
     const old = new SQL.Database(DB.exportBytes(d));
     old.run(`DELETE FROM questions WHERE note_id = ${ln}; DELETE FROM meta WHERE key = 'index_rules'`);
     const re = DB.open(SQL, old.export());
     old.close();
     assert.equal(DB.getMeta(re, 'schema_version'), SCHEMA_VERSION, 'Schema bleibt');
-    assert.equal(DB.getMeta(re, 'index_rules'), '2');
+    assert.equal(DB.getMeta(re, 'index_rules'), '3');
     assert.ok(json(DB.listQuestions(re, { kind: 'decision', status: 'all' })).some(r => r.text.startsWith('Welches')), 'Block in der Liste wieder im Index');
     const again = new SQL.Database(DB.exportBytes(re));
     again.run(`DELETE FROM questions WHERE note_id = ${ln}`);
@@ -1898,6 +1898,191 @@ async function runTables(browser, part, step) {
   part('Angaben von Erweiterungen: Tabelle, Kopf, Spalten, Zeilen, Felder (Reihenfolge), Format aus der Datei, Klassen und Werte geprüft, Fehler schaden nicht');
 }
 
+/* v2.11.0: Personen an Aufgaben (auch geerbt), Aufgaben, Fragen und Entscheide in Tabellenfeldern, Zeilenumbruch im Feld,
+   Index (Schema 16, Regeln 3), Abhaken nach slot, Antwort ins Feld, Vorschau, Agenten, Abschnitte unter der Mindmap im Export. */
+async function runCellsPeople(browser, part, step) {
+  const sandbox = { console };
+  sandbox.window = sandbox;
+  const context = vm.createContext(sandbox);
+  for (const f of ['packages/core/i18n.js', 'packages/core/history.js', 'packages/core/dates.js', 'packages/core/questions.js', 'packages/core/tables.js',
+    'packages/core/tasks.js', 'packages/core/links.js', 'packages/core/backend.js', 'packages/core/merge.js', 'packages/core/embeds.js', 'packages/core/markdown.js',
+    'packages/core/export.js', 'packages/data/db.js', 'packages/store-local/backend-local.js', 'packages/agent/catalog.js']) {
+    vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
+  }
+  const SQL = await initSqlJs();
+  const { NoNotesDB: DB, NoNotesQuestions: Q, NoNotesTasks: T, NoNotesTables: Tb, NoNotesMarkdown: M, NoNotesExport: X } = sandbox;
+  const json = v => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
+  const cols = (d, t) => d.exec(`PRAGMA table_info(${t})`)[0].values.map(r => r[1]);
+
+  // ---------- Personen an Aufgaben ----------
+  const LIST = [
+    '- [ ] Offerte einholen @anna (@ben) @15.11.2026', // 0
+    '  - [ ] Preise vergleichen',                      // 1: erbt anna und ben
+    '    - [ ] Tabelle machen',                        // 2: erbt (über 1) von 0
+    '  - [x] Lieferant fragen @cem',                   // 3: eigene Person
+    '- [ ] Ohne Person',                               // 4
+    '- [ ] Mail an anna@example.ch schicken',          // 5: keine Mailadresse als Person
+  ].join('\n');
+  const tp = json(T.parse(LIST));
+  assert.deepEqual(tp.map(x => [x.text, x.parent, x.people.map(p => (p.inherited ? '~' : '') + (p.optional ? '(' + p.handle + ')' : p.handle)).join(' ')]), [
+    ['Offerte einholen @anna (@ben)', -1, 'anna (ben)'],
+    ['Preise vergleichen', 0, '~anna ~(ben)'],
+    ['Tabelle machen', 1, '~anna ~(ben)'],
+    ['Lieferant fragen @cem', 0, 'cem'],
+    ['Ohne Person', -1, ''],
+    ['Mail an anna@example.ch schicken', -1, ''],
+  ]);
+  assert.equal(tp[0].due, '2026-11-15', 'Termin bleibt Termin, @anna ist eine Person');
+  part('Personen an Aufgaben: @ verantwortlich, (@) beteiligt, Unteraufgaben erben (über mehrere Ebenen), eigene Person geht vor, keine Mailadressen');
+
+  // ---------- Tabellenfelder ----------
+  const TABLE = [
+    'Plan',                                                                                  // 0
+    '',                                                                                      // 1
+    '| Thema | Aufgaben | Klärung |',                                                        // 2
+    '|---|---|---|',                                                                         // 3
+    '| Lieferant | [ ] Offerten @anna @20.11.2026<br>[x] Liste erstellt | ?! Wer liefert? @ben<br>!! 14.10.2026: Müller |', // 4
+    '| Budget | [ ] Antrag schreiben (@cem) | ? Reicht 5000?<br>? Wer zahlt? |',            // 5
+    '| Text | nur Text<br>zweite Zeile | |',                                                // 6
+    '',                                                                                      // 7
+    '```',                                                                                   // 8
+    '| [ ] im Code | ? im Code |',                                                           // 9
+    '|---|---|',                                                                             // 10
+    '| [ ] auch nicht | x |',                                                                // 11
+    '```',                                                                                   // 12
+    '- [ ] Danach @dora',                                                                    // 13
+  ].join('\n');
+  const ct = json(T.parse(TABLE));
+  assert.deepEqual(ct.map(x => [x.text, x.lineIndex, x.slot == null ? null : x.slot, x.done, x.due, x.people.map(p => p.handle).join(' ')]), [
+    ['Offerten @anna', 4, 0, false, '2026-11-20', 'anna'],
+    ['Liste erstellt', 4, 1, true, null, ''],
+    ['Antrag schreiben (@cem)', 5, 0, false, null, 'cem'],
+    ['Danach @dora', 13, null, false, null, 'dora'],
+  ], 'Aufgaben in Feldern mit slot, nicht in Code, danach geht es weiter');
+  const cq = json(Q.parse(TABLE));
+  assert.deepEqual(cq.map(x => [x.kind, x.text, x.lineIndex, x.answer, x.decided, x.people.map(p => p.handle).join(' '), x.cell && x.cell.index]), [
+    ['decision', 'Wer liefert? @ben', 4, 'Müller', '2026-10-14', 'ben', 2],
+    ['question', 'Reicht 5000?', 5, null, null, '', 2],
+    ['question', 'Wer zahlt?', 5, null, null, '', 2],
+  ], 'Fragen und Entscheide in Feldern, Antwort im selben Feld');
+  // abhaken nach slot, nur das richtige Kästchen
+  let b = T.setDone(TABLE, 4, true, 0);
+  assert.equal(b.split('\n')[4], '| Lieferant | [x] Offerten @anna @20.11.2026<br>[x] Liste erstellt | ?! Wer liefert? @ben<br>!! 14.10.2026: Müller |');
+  b = T.reopen(b, 4, 1);
+  assert.equal(b.split('\n')[4], '| Lieferant | [x] Offerten @anna @20.11.2026<br>[ ] Liste erstellt | ?! Wer liefert? @ben<br>!! 14.10.2026: Müller |');
+  assert.equal(T.openSubtasks(TABLE, 4, 0), 0, 'keine Unteraufgaben in Feldern');
+  assert.equal(T.doubleClick(TABLE, 5, 0).body.split('\n')[5], '| Budget | [x] Antrag schreiben (@cem) | ? Reicht 5000?<br>? Wer zahlt? |');
+  // Antwort ins Feld, Tabelle neu ausgerichtet
+  b = Q.writeAnswer(TABLE, cq[2], 'Die Firma | nicht wir');
+  assert.ok(b.split('\n')[5].includes('? Reicht 5000?<br>? Wer zahlt?<br>! Die Firma \\| nicht wir'), b.split('\n')[5]);
+  assert.equal(new Set(b.split('\n').slice(2, 7).map(l => l.length)).size, 1, 'alle Zeilen der Tabelle gleich lang (ausgerichtet)');
+  assert.equal(json(Q.parse(b)).find(x => x.text === 'Wer zahlt?').answer, 'Die Firma | nicht wir', '«\\|» als «|» im Index');
+  b = Q.writeAnswer(b, json(Q.parse(b)).find(x => x.text === 'Wer liefert? @ben'), 'Meier', { decided: '15.10.2026' });
+  assert.ok(b.includes('?! Wer liefert? @ben<br>!! 15.10.2026: Meier'), 'Entscheid ersetzt, mit Datum');
+  b = Q.writeAnswer(b, json(Q.parse(b)).find(x => x.text === 'Wer zahlt?'), '');
+  assert.ok(b.includes('? Reicht 5000?<br>? Wer zahlt? '), 'leere Antwort entfernt die Antwort-Teile');
+  part('Tabellenfelder: Aufgaben mit slot (nicht in Code), Fragen und Entscheide mit Antwort im Feld; abhaken trifft das richtige Kästchen; Antwort ins Feld mit «\\|», ausgerichtet');
+
+  // ---------- Editor ----------
+  let text = '| A | B |\n|---|---|\n| eins | zwei |';
+  let r = Tb.lineBreak(text, text.indexOf('eins') + 2);
+  assert.equal(r.text.split('\n')[2], '| ei<br>ns | zwei |', r.text);
+  assert.equal(r.text.slice(r.selStart, r.selStart + 2), 'ns', 'Cursor hinter «<br>»');
+  r = Tb.togglePrefix(text, text.indexOf('zwei') + 1, 'task');
+  assert.ok(r.text.includes('| [ ] zwei |'));
+  r = Tb.togglePrefix(r.text, r.selStart, 'question');
+  assert.ok(r.text.includes('| ? zwei |'), 'ein anderes Zeichen wird ersetzt');
+  r = Tb.togglePrefix(r.text, r.selStart, 'answer');
+  assert.ok(r.text.includes('| ? zwei<br>!  |'), 'Antwort hängt einen Teil an (der Cursor steht nach «! »)');
+  assert.equal(r.text.slice(r.selStart - 2, r.selStart), '! ');
+  r = Tb.togglePrefix(r.text, r.text.indexOf('? zwei') + 3, 'question');
+  assert.ok(/\| zwei<br>! +\|/.test(r.text), 'zweimal Frage: wieder Text');
+  assert.equal(Tb.togglePrefix(text, 3, 'task'), null, 'in der Titelzeile nicht');
+  assert.equal(Tb.togglePrefix('Text', 2, 'task'), null);
+  part('Editor: Umschalt+Enter setzt «<br>», Aufgabe, Frage, Entscheid und Antwort wirken auf den Teil des Felds');
+
+  // ---------- Vorschau ----------
+  let html = M.render(TABLE, { interactiveTasks: true, lineMap: true });
+  assert.ok(html.includes('<span class="md-cell-task task" data-line="4" data-slot="0"><input type="checkbox" aria-label="offen"><span class="task-text">Offerten <span class="md-person" data-handle="anna">@anna</span></span><span class="md-due due '), html);
+  assert.ok(html.includes('<span class="md-cell-task task done" data-line="4" data-slot="1"><input type="checkbox" checked aria-label="erledigt">'));
+  assert.ok(html.includes('<span class="md-cell-q md-decision answered"><span class="md-mark" aria-hidden="true">✓</span> Wer liefert? <span class="md-person" data-handle="ben">@ben</span></span><br><span class="md-cell-a">14.10.2026: Müller</span>'));
+  assert.ok(html.includes('<td data-col="1">nur Text<br>zweite Zeile</td>'), '<br> als Zeilenumbruch');
+  assert.ok(!html.includes('data-slot="0"><input type="checkbox" aria-label="offen"><span class="task-text">im Code'), 'Code bleibt Code');
+  html = M.render(TABLE, { interactiveTasks: true, tableSrc: false });
+  assert.ok(html.includes('<span class="md-cell-task task"><input type="checkbox" disabled aria-label="offen">'), 'ohne Quellzeile (Druck): Kästchen gesperrt, ohne data-line');
+  html = M.render(LIST, { interactiveTasks: true });
+  assert.ok(html.includes('Offerte einholen <span class="md-person" data-handle="anna">@anna</span> <span class="md-person optional" data-handle="ben" title="optional">@ben</span>'), 'Personen in Aufgaben als Marke');
+  assert.ok(M.render('| <b>x</b> |\n|---|\n| <br/>a<BR>b |', {}).includes('<td data-col="0"><br>a<br>b</td>'), 'nur <br> wird zum Umbruch, anderes HTML bleibt Text');
+  part('Vorschau: Kästchen mit Zeile und slot, Personen und Termine in Feldern, Entscheid mit Antwort, <br> als Umbruch, Druck ohne Quellzeile, Personen in Listen');
+
+  // ---------- Index (Schema 16, Regeln 3) ----------
+  const d = DB.open(SQL, null);
+  assert.equal(DB.getMeta(d, 'schema_version'), SCHEMA_VERSION);
+  assert.equal(DB.getMeta(d, 'index_rules'), '3');
+  assert.ok(cols(d, 'tasks').includes('people'), 'Spalte people in tasks');
+  const n1 = DB.createNote(d, null);
+  DB.updateNote(d, n1, 'Liste', LIST);
+  const n2 = DB.createNote(d, null);
+  DB.updateNote(d, n2, 'Tabelle', TABLE);
+  const anna = json(DB.listTasks(d, { status: 'all', person: '@Anna' }));
+  assert.deepEqual(anna.map(x => x.text).sort(), ['Offerte einholen @anna (@ben)', 'Offerten @anna', 'Preise vergleichen', 'Tabelle machen'].sort(), 'Filter: auch geerbt, ohne @, ohne Gross/klein');
+  assert.deepEqual(json(DB.listTasks(d, { status: 'all', person: 'ben' })).map(x => x.text).sort(), ['Offerte einholen @anna (@ben)', 'Preise vergleichen', 'Tabelle machen'].sort(), 'beteiligt zählt auch');
+  assert.deepEqual(json(DB.listTasks(d, { status: 'all', person: 'an' })), [], 'nur ganze Kürzel');
+  const one = anna.find(x => x.text === 'Preise vergleichen');
+  assert.deepEqual(one.people, [{ handle: 'anna', optional: false, inherited: true }, { handle: 'ben', optional: true, inherited: true }]);
+  const byPerson = json(DB.listTasks(d, { status: 'open', sort: 'person' })).map(x => x.text);
+  assert.deepEqual(byPerson.slice(0, 4).sort(), ['Offerte einholen @anna (@ben)', 'Offerten @anna', 'Preise vergleichen', 'Tabelle machen'].sort(), 'nach Person: zuerst anna');
+  assert.deepEqual(byPerson.slice(4, 6), ['Antrag schreiben (@cem)', 'Danach @dora'], 'dann cem und dora');
+  assert.deepEqual(byPerson.slice(6).sort(), ['Mail an anna@example.ch schicken', 'Ohne Person'], 'ohne Person am Schluss');
+  assert.deepEqual(json(DB.listPeople(d)), ['anna', 'ben', 'cem', 'dora']);
+  assert.deepEqual(json(DB.listPeople(d, { of: 'questions' })), ['ben']);
+  assert.deepEqual(json(DB.listPeople(d, { of: 'tasks' })), ['anna', 'ben', 'cem', 'dora']);
+  assert.deepEqual(json(DB.getTask(d, anna[0].id)).people.length > 0, true, 'getTask liefert people als Liste');
+  // abhaken über den Index: Aufgabe im Feld
+  const cellTask = json(DB.listTasks(d, { status: 'all' })).find(x => x.text === 'Liste erstellt');
+  DB.setTaskDone(d, cellTask.id, false);
+  assert.ok(DB.getNote(d, n2).body.split('\n')[4].includes('[ ] Liste erstellt'), 'reopen im Feld');
+  assert.ok(DB.getNote(d, n2).body.split('\n')[4].includes('[ ] Offerten'), 'das andere Kästchen bleibt');
+  DB.setTaskDone(d, cellTask.id, true);
+  assert.ok(DB.getNote(d, n2).body.split('\n')[4].includes('[x] Liste erstellt'));
+  // Antwort aus der Liste ins Feld
+  const q = json(DB.listQuestions(d, { status: 'open' })).find(x => x.text === 'Reicht 5000?');
+  DB.answerQuestion(d, q.id, 'Ja');
+  assert.ok(DB.getNote(d, n2).body.includes('? Reicht 5000?<br>! Ja<br>? Wer zahlt?'), DB.getNote(d, n2).body);
+  assert.equal(json(DB.getQuestion(d, q.id)).answer, 'Ja');
+  part('Index (Schema 16, Regeln 3): Personen an Aufgaben, Filter auch geerbt und ganze Kürzel, nach Person, Personen nach Art; Feld-Aufgabe abhaken, Antwort ins Feld');
+
+  // ---------- Ältere Dateien: Schema 15 wird angeglichen und neu indexiert ----------
+  const old = DB.open(SQL, null);
+  const on = DB.createNote(old, null);
+  DB.updateNote(old, on, 'Alt', LIST + '\n\n' + TABLE);
+  old.run("ALTER TABLE tasks DROP COLUMN people; DELETE FROM tasks; UPDATE meta SET value = '15' WHERE key = 'schema_version'; UPDATE meta SET value = '2' WHERE key = 'index_rules'");
+  const re = DB.open(SQL, old.export());
+  assert.equal(DB.getMeta(re, 'schema_version'), SCHEMA_VERSION);
+  assert.equal(DB.getMeta(re, 'index_rules'), '3');
+  assert.equal(json(DB.listTasks(re, { status: 'all', person: 'anna' })).length, 4, 'Personen und Feld-Aufgaben nach dem Öffnen im Index');
+  part('Ältere Dateien (Schema 15): Spalte people dazu, Indexe neu gefüllt');
+
+  // ---------- Agenten ----------
+  const backend = sandbox.NoNotesBackendLocal.create({ getDb: () => d, onChange: () => {} });
+  const cat = sandbox.NoNotesAgent.create(backend, { author: 'Agent' });
+  let res = await cat.call('list_tasks', { person: 'anna', status: 'all' });
+  assert.ok(!res.isError, res.content[0].text);
+  assert.match(res.content[0].text, /Preise vergleichen — assigned via parent task: @anna, @ben/);
+  assert.deepEqual(json(res.structuredContent).items.find(x => x.text === 'Offerten @anna').people, [{ handle: 'anna', optional: false, inherited: false }]);
+  res = await cat.call('list_people', {});
+  assert.match(res.content[0].text, /@anna, @ben, @cem, @dora/);
+  part('Agenten: list_tasks mit person und Personen (geerbt im Text), list_people mit Aufgaben');
+
+  // ---------- Export: Abschnitte unter der Mindmap ----------
+  const files = await X.buildFiles(backend, { mode: 'folder', version: 'test', sections: [{ title: 'Legende', markdown: '- Rot: dringend\n- Blau: wartet' }] });
+  const index = files.find(f => f.path === 'index.md').data;
+  assert.match(index, /!\[Mindmap\]\(mindmap\.svg\)\n\n## Legende\n\n- Rot: dringend\n- Blau: wartet\n\n## Inhalt/);
+  const single = await X.buildFiles(backend, { mode: 'single', version: 'test', sections: [{ title: '', markdown: 'Nur Text' }] });
+  assert.match(single.find(f => f.path.endsWith('.md')).data, /!\[Mindmap\]\(mindmap\.svg\)\n\nNur Text\n\n## Inhalt/);
+  part('Export: Abschnitte der Erweiterungen direkt unter dem Mindmap-Bild (Ordner und eine Datei)');
+}
+
 suite('Kern-Test', [
   { name: 'Zusammenführen: Myers-Vergleich, Dreiwege-Zusammenführung mit Zufallsdaten, Konflikte, Cursor', run: runMerge },
   { name: 'Datenbank: Standardschema, Angleichen alter Dateien (Schema 1, 11, 12, 13), Konflikterkennung, Autor im Verlauf, Querverweise, Entscheide und Personen', run: runDb },
@@ -1906,6 +2091,7 @@ suite('Kern-Test', [
   { name: 'Build: fremde Ausprägung, Verzeichnis der Erweiterungen, --plugins, klare Fehler', run: runBuild },
   { name: 'Videoadressen: YouTube, Vimeo, Dailymotion, Fälschungen, Karte im Markdown, maskierte Titel', run: runEmbeds },
   { name: 'Tabellen: Lesen, Einfügen, Tab und Enter, Rechtsklick-Schritte, Vorschau, Angaben von Erweiterungen', run: runTables },
+  { name: 'Personen an Aufgaben und Tabellenfelder: Parser, Editor, Vorschau, Index (Schema 16), Abhaken, Antwort ins Feld, Agenten, Export-Abschnitte', run: runCellsPeople },
   { name: 'Agenten: Werkzeugkatalog (Notizen, Fragen, Entscheide, Aufgaben, Verlauf, Archiv, Papierkorb, Lesemodus, Ressourcen) und MCP-Protokoll aller Fassungen', run: runAgent },
   { name: 'Programm für den eigenen Rechner: Einträge für Claude Code und andere, Datei, MCP über die Standardeingabe, Änderungen von aussen, zwei Prozesse mit Sperre, Lesemodus', run: runAgentProgram },
 ]);

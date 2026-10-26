@@ -24,7 +24,8 @@
     'Conventions inside the body: a line starting with "?" is a question, "?!" is a decision to take; answer lines start with "!" (questions) or "!!" (decisions), directly below.',
     'The same works in a list ("- ?! Buy the tool?" with the answer indented below) and over several lines: "?!``` Title" opens a block that a line "```" closes; the lines inside describe it, single-line "?!"/"?" lines inside are sub-decisions/sub-questions with their own answers, and the block\'s own answer follows right after "```". A block can also be a list item ("- ?!``` Title", its lines and closing "```" indented under the item\'s text).',
     'Tasks are Markdown checkboxes "- [ ] text"; indented checkboxes are subtasks. A due date is written at the end of a line as "@YYYY-MM-DD" or "@DD.MM.YYYY".',
-    '"@handle" names a person who should answer or decide; "(@handle)" marks an optional participant.',
+    '"@handle" names a person who should answer, decide or do a task; "(@handle)" marks an optional participant. A subtask without its own @handle belongs to the people of its parent task.',
+    'Markdown tables ("| a | b |" with a "|---|---|" line below the header) may hold these entries in cells: "[ ] text" is a task, "? text" a question and "?! text" a decision; "<br>" separates lines inside a cell, and an answer follows in the same cell as "<br>! answer" ("<br>!! date: decision"). Write "\\|" for a "|" inside a cell.',
     'Prefer the dedicated tools (answer_question, record_decision, complete_task, append_to_note) over rewriting a whole note; when you must rewrite, pass base_updated_at from get_note so concurrent edits are detected.',
   ].join(' ');
 
@@ -205,6 +206,7 @@
     return {
       id: r.id, note_id: r.note_id, note_title: r.note_title, text: r.text, done: !!r.done, due: r.due, depth: r.depth,
       parent_id: r.parent_id, parent_text: r.parent_text || null, subtasks_total: r.sub_total || 0, subtasks_open: r.sub_open || 0,
+      people: (r.people || []).map(p => ({ handle: p.handle, optional: !!p.optional, inherited: !!p.inherited })),
       created_at: r.created_at, done_at: r.done_at,
     };
   }
@@ -212,6 +214,8 @@
   function taskLine(r) {
     const parts = [`[t ${r.id}] (note ${r.note_id} ${quote(r.note_title)}) ${'  '.repeat(r.depth || 0)}${r.text}`];
     if (r.due) parts.push(`due ${r.due}`);
+    const inherited = (r.people || []).filter(p => p.inherited); // die eigenen @kürzel stehen schon im Text
+    if (inherited.length) parts.push(`assigned via parent task: ${inherited.map(p => '@' + p.handle).join(', ')}`);
     if (r.sub_total) parts.push(`${r.sub_open} of ${r.sub_total} subtasks open`);
     parts.push(r.done ? 'done' : 'open');
     return parts.join(' — ');
@@ -488,14 +492,15 @@
     },
     {
       name: 'list_tasks', title: 'List tasks', readOnly: true,
-      description: 'Tasks ("- [ ]" lines) across all notes: open by default, or done, or all; with due dates and subtask counts. Filter by text, tag or note; sort by due date (default) or by note. Each item has an id for complete_task.',
+      description: 'Tasks ("- [ ]" lines, and "[ ]" in table cells) across all notes: open by default, or done, or all; with due dates, subtask counts and assigned people ("@handle" responsible, "(@handle)" involved; a subtask without its own people belongs to those of its parent task). Filter by text, tag, note or person; sort by due date (default), by note or by person. Each item has an id for complete_task.',
       inputSchema: schema({
         status: { type: 'string', enum: ['open', 'done', 'all'], description: 'Default open.' },
         query: STR('Text to look for in the task or the note title.'), tag: STR('Only tasks in notes with this tag.'), note_id: ID('Only tasks in this note.'),
-        sort: { type: 'string', enum: ['due', 'note'], description: 'Default due.' }, include_archived: BOOL('Also tasks in archived notes.'), limit: LIMIT, offset: OFFSET,
+        person: STR('Only tasks assigned to this @handle (also via the parent task).'),
+        sort: { type: 'string', enum: ['due', 'note', 'person'], description: 'Default due.' }, include_archived: BOOL('Also tasks in archived notes.'), limit: LIMIT, offset: OFFSET,
       }),
       async run(B, input) {
-        let rows = await B.listTasks({ status: input.status || 'open', query: input.query || '', tag: input.tag || '', sort: input.sort || 'due', archived: !!input.include_archived });
+        let rows = await B.listTasks({ status: input.status || 'open', query: input.query || '', tag: input.tag || '', person: input.person || '', sort: input.sort || 'due', archived: !!input.include_archived });
         if (input.note_id) rows = rows.filter(r => r.note_id === input.note_id);
         const offset = input.offset || 0;
         const page = rows.slice(offset, offset + (input.limit || 100));
@@ -517,7 +522,7 @@
     },
     {
       name: 'list_people', title: 'List people', readOnly: true,
-      description: 'All @handles mentioned in questions and decisions of current notes.',
+      description: 'All @handles mentioned in questions, decisions and tasks of current notes.',
       inputSchema: schema({}),
       async run(B) { const handles = await B.listPeople(); return result(handles.length ? handles.map(h => '@' + h).join(', ') : 'No people mentioned.', { people: handles }); },
     },
