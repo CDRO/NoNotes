@@ -193,7 +193,9 @@
   function makeCtx(options) {
     options = options || {};
     return { text: makeText(options.highlight), resolveTitle: options.resolveTitle, resolveRef: options.resolveRef, noteLink: options.noteLink || null, resolveAttachment: options.resolveAttachment, interactiveTasks: !!options.interactiveTasks, lineMap: !!options.lineMap, embeds: !!options.embeds, embedLoad: options.embedLoad, people: !!options.people,
-      inBlock: !!options.inBlock, lineOffset: options.lineOffset || 0, options };
+      inBlock: !!options.inBlock, lineOffset: options.lineOffset || 0, options,
+      // Tabellen: Format der Erweiterungen (tableFormat) und die Quellzeile (data-src) nur dort, wo sie im Text stimmt
+      tableFormat: typeof options.tableFormat === 'function' ? options.tableFormat : null, tableSrc: options.tableSrc !== false && !options.inBlock };
   }
 
   /** Nur Zeilenformatierung (fett, Code, Links, [[Verweise]]), z. B. für Listeneinträge und den Druck. */
@@ -272,9 +274,68 @@
     }
     const subs = qb.block && qb.children.length ? subEntriesHtml(countChildren(qb.children), answered) : '';
     const title = qb.text ? renderInline(qb.text, Object.assign({}, ctx, { people: true })) : '';
-    const answerOptions = Object.assign({}, options, { lineMap: false, inBlock: false, lineOffset: 0, interactiveTasks: false });
+    const answerOptions = Object.assign({}, options, { lineMap: false, inBlock: false, lineOffset: 0, interactiveTasks: false, tableSrc: false });
     return `<div class="md-q${decision ? ' md-decision' : ''}${qb.block ? ' md-q-block' : ''} ${answered ? 'answered' : 'open'}"${lineAttr}><span class="md-mark" aria-hidden="true">${mark}</span><div class="md-q-body"><div class="md-q-text">${title}${dueHtml}${subs}</div>` +
       details + (answered ? `<div class="md-a">${decidedHtml}${render(qb.answer, answerOptions)}</div>` : '') + '</div></div>';
+  }
+
+  // ---------- Tabellen (v2.10.0) ----------
+
+  // Was Erweiterungen an einer Tabelle setzen dürfen (über tableFormat): Klassen und diese Eigenschaften, Werte ohne url() u. ä.
+  const TABLE_PROPS = new Set(['width', 'min-width', 'max-width', 'height', 'min-height', 'background', 'background-color', 'color',
+    'font-weight', 'font-style', 'text-decoration', 'text-align', 'vertical-align', 'white-space', 'border-color', 'padding']);
+  const TABLE_VALUE = /^[#\w\s.,%()+-]+$/;
+  const unescapePipe = s => String(s).replace(/\\\|/g, '|');
+
+  /** { class: 'a b', 'font-weight': 'bold', fontStyle: … } → { classes, css } mit nur erlaubten Angaben. */
+  function formatAttrs(spec) {
+    const classes = [], css = [];
+    if (!spec || typeof spec !== 'object') return { classes, css };
+    for (const [k, v] of Object.entries(spec)) {
+      if (k === 'class') { for (const c of String(v).split(/\s+/)) if (/^[a-z][a-z0-9_-]*$/i.test(c)) classes.push(c); continue; }
+      const prop = k.replace(/[A-Z]/g, m => '-' + m.toLowerCase());
+      const val = String(v == null ? '' : v).trim();
+      if (TABLE_PROPS.has(prop) && val && TABLE_VALUE.test(val) && !/url\s*\(|expression|javascript/i.test(val)) css.push(`${prop}: ${val}`);
+    }
+    return { classes, css };
+  }
+
+  /** Eine Tabelle als HTML. Titelzeile in <thead> (bleibt beim Scrollen oben, wiederholt sich im Druck), Titelspalte als <th scope="row">.
+   *  ctx.tableFormat(info) liefert Angaben von Erweiterungen (ein Objekt oder eine Liste davon): { table, header, columns: { c: … },
+   *  rows: { r: … }, cells: { 'r,c': … } } mit r = 'h' für die Titelzeile. An einem Feld gelten Spalte, dann Zeile, dann Feld (das
+   *  Spätere gewinnt); Klassen einer Zeile stehen am <tr>. */
+  function tableHtml(tb, ctx, lineAttr, srcLine) {
+    const meta = tb.meta || {};
+    const headCol = meta.kopfspalte === true;
+    let results = [];
+    if (ctx.tableFormat) {
+      const info = {
+        line: srcLine, meta: JSON.parse(JSON.stringify(meta)), header: !!tb.header, headerColumn: headCol, cols: tb.cols, rows: tb.rows.length,
+        cells: { header: tb.header ? tb.header.map(unescapePipe) : null, rows: tb.rows.map(r => r.map(unescapePipe)) },
+      };
+      try { const r = ctx.tableFormat(info); results = (Array.isArray(r) ? r : [r]).filter(x => x && typeof x === 'object'); } catch (e) { results = []; }
+    }
+    const pick = fn => results.map(r => { try { return fn(r); } catch (e) { return null; } }).filter(Boolean);
+    const attrs = (base, specs, firstCss) => {
+      const classes = base ? [base] : [], css = firstCss ? [firstCss] : [];
+      for (const spec of specs) { const a = formatAttrs(spec); classes.push(...a.classes); css.push(...a.css); }
+      return (classes.length ? ` class="${escapeHtml(classes.join(' '))}"` : '') + (css.length ? ` style="${escapeHtml(css.join('; '))}"` : '');
+    };
+    const align = c => (tb.align[c] ? `text-align: ${tb.align[c]}` : '');
+    // Klassen einer Zeile stehen am <tr>, ihre Werte an jedem Feld: sonst deckte der Hintergrund der Felder den der Zeile zu
+    const rowSpecs = r => pick(x => (r === 'h' ? x.header : x.rows && x.rows[r]));
+    const classOnly = spec => ({ class: spec.class });
+    const withoutClass = spec => { const o = Object.assign({}, spec); delete o.class; return o; };
+    const cell = (tag, text, r, c, scope, inRow) => `<${tag}${scope ? ` scope="${scope}"` : ''} data-col="${c}"`
+      + attrs('', [...pick(x => x.columns && x.columns[c]), ...inRow, ...pick(x => x.cells && x.cells[`${r},${c}`])], align(c))
+      + `>${renderInline(unescapePipe(text), ctx)}</${tag}>`;
+    const tr = (r, extra, cells) => { const specs = rowSpecs(r); return `<tr${extra}${attrs('', specs.map(classOnly))}>` + cells(specs.map(withoutClass)) + '</tr>'; };
+    const cls = ['md-table', headCol ? 'md-table-col' : '', meta.hervorheben === true ? 'md-table-mark' : '', tb.header ? '' : 'md-table-nohead'].filter(Boolean).join(' ');
+    let html = `<table${attrs(cls, pick(x => x.table))}${lineAttr}${srcLine != null ? ` data-src="${srcLine}"` : ''}>`;
+    if (tb.header) html += '<thead>' + tr('h', '', inRow => tb.header.map((x, c) => cell('th', x, 'h', c, 'col', inRow)).join('')) + '</thead>';
+    html += '<tbody>' + tb.rows.map((row, r) => tr(r, ` data-row="${r}"`,
+      inRow => row.map((x, c) => (headCol && c === 0 ? cell('th', x, r, c, 'row', inRow) : cell('td', x, r, c, '', inRow))).join(''))).join('') + '</tbody></table>';
+    return html;
   }
 
   function render(markdown, options) {
@@ -286,7 +347,7 @@
 
     // Mit lineMap tragen die Blöcke data-line (Quellzeile), für das synchrone Scrollen der geteilten Ansicht.
     const la = n => ctx.lineMap ? ` data-line="${n + ctx.lineOffset}"` : '';
-    const nested = Object.assign({}, options, { lineMap: false });
+    const nested = Object.assign({}, options, { lineMap: false, tableSrc: false });
     const paragraph = [];
     let paragraphStart = 0;
     const flushParagraph = () => {
@@ -343,6 +404,19 @@
         out.push(`<div class="md-a md-a-lone"${la(i)}>${renderInline(loneAnswer[1].trim(), ctx)}</div>`);
         i++;
         continue;
+      }
+
+      // Tabelle (v2.10.0, packages/core/tables.js): Zeilen mit «|», darunter die Trennzeile; «<!-- tabelle: {…} -->» direkt darüber
+      // trägt das Format
+      const Tb = global.NoNotesTables;
+      if (Tb && /^\s{0,3}(?:\||<!--)/.test(line)) {
+        const tb = Tb.readMeta(line) ? Tb.parseAt(lines, i + 1) : Tb.parseAt(lines, i);
+        if (tb && (tb.head === i || tb.metaLine === i)) {
+          flushParagraph();
+          out.push(tableHtml(tb, ctx, la(tb.start), ctx.tableSrc ? tb.start + ctx.lineOffset : null));
+          i = tb.end;
+          continue;
+        }
       }
 
       // Zitat

@@ -584,6 +584,28 @@ body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-
 .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { line-height: 1.3; margin: 1.1em 0 .4em; }
 .md h1 { font-size: 1.6em; } .md h2 { font-size: 1.35em; } .md h3 { font-size: 1.15em; } .md h4, .md h5, .md h6 { font-size: 1em; }
 .md p { margin: .5em 0; }
+/* Tabellen (v2.10.0): die Titelzeile bleibt beim Scrollen der Vorschau oben; Titelzeile und -spalte grau oder in der Hauptfarbe */
+.md table.md-table { border-collapse: separate; border-spacing: 0; margin: .7em 0; max-width: 100%; font-size: .95em; line-height: 1.45; border: 1px solid var(--border); border-radius: 6px; }
+.md-table th, .md-table td { padding: 5px 10px; text-align: left; vertical-align: top; overflow-wrap: anywhere; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.md-table tr > :last-child { border-right: 0; }
+.md-table tbody tr:last-child > * { border-bottom: 0; }
+.md-table th { font-weight: 600; background: var(--hover); }
+.md-table thead th { position: sticky; top: 0; z-index: 1; }
+.preview .md-table thead th { top: -14px; } /* bündig mit dem oberen Rand, nicht mit dem Innenabstand der Vorschau */
+.md-table thead th:first-child { border-top-left-radius: 6px; }
+.md-table thead th:last-child { border-top-right-radius: 6px; }
+.md-table.md-table-mark th { background: color-mix(in srgb, var(--accent) 16%, var(--panel)); }
+/* Einfügen: Raster bis 8 × 10, Ziehen oder Zeigen wählt die Grösse */
+.table-picker { position: fixed; z-index: 60; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 10px; display: flex; flex-direction: column; gap: 8px; user-select: none; }
+.table-picker[hidden] { display: none; }
+.tp-grid { display: grid; grid-template-columns: repeat(8, 20px); gap: 3px; outline: none; touch-action: none; }
+.tp-grid:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+.tp-cell { width: 20px; height: 20px; border: 1px solid var(--border); border-radius: 3px; background: var(--bg); }
+.tp-cell.on { background: color-mix(in srgb, var(--accent) 30%, var(--panel)); border-color: var(--accent); }
+.tp-cell.on.head { background: color-mix(in srgb, var(--accent) 55%, var(--panel)); }
+.tp-size { font-size: 13px; color: var(--muted); text-align: center; min-height: 1.2em; }
+.tp-opts { display: flex; gap: 12px; font-size: 13px; }
+.tp-opts label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
 .md ul, .md ol { margin: .4em 0; padding-left: 1.5em; }
 .md li.task { list-style: none; margin-left: -1.3em; }
 .md li.task input { margin-right: 6px; vertical-align: middle; }
@@ -742,6 +764,14 @@ body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-
   #printArea .md-person { border: 1px solid #999; background: #f3f3f3; color: inherit; }
   #printArea .md-a { background: #fff; border-left-color: #15803d; }
   #printArea a.md-wiki { border-bottom: 1px dashed #666; }
+  /* Tabellen: die Titelzeile steht auf jeder Seite oben, Zeilen werden nicht geteilt, Farben werden mitgedruckt */
+  #printArea .md-table { border-color: #999; font-size: 10pt; }
+  #printArea .md-table th, #printArea .md-table td { border-color: #999; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  #printArea .md-table th { background: #eee; }
+  #printArea .md-table.md-table-mark th { background: color-mix(in srgb, var(--accent) 18%, #fff); }
+  #printArea .md-table thead { display: table-header-group; }
+  #printArea .md-table thead th { position: static; }
+  #printArea .md-table tr { break-inside: avoid; }
   #printArea a.md-wiki.plain { border: 0; }
   #printArea mark { background: none; font-weight: 600; }
   /* Fragen und Antworten */

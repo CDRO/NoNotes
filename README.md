@@ -108,7 +108,8 @@ mit `Ctrl+P`. Der Dialog fragt den Umfang: nur diese Notiz, diese Notiz mit alle
 Unternotizen, die ausgewählten Notizen (wahlweise mit Unternotizen) oder alle Notizen.
 Dazu wählbar: Mindmap-Bild voranstellen (bei Teilmengen nur der gedruckte Ausschnitt),
 Inhaltsverzeichnis, jede Notiz auf einer neuen Seite. Gedruckt wird die gerenderte Ansicht
-mit Markdown, Bildern, Fragen und Antworten. Im Druckdialog des Browsers lässt sich
+mit Markdown, Bildern, Fragen und Antworten; geht eine Tabelle über mehrere Seiten, steht ihre
+Titelzeile auf jeder. Im Druckdialog des Browsers lässt sich
 «Als PDF speichern» wählen.
 
 In der Ansicht **Fragen** druckt **Drucken…** (oder `Ctrl+P`) ein Fragen-und-Antworten-Dokument:
@@ -511,8 +512,31 @@ Dasselbe gilt für Fragen.
   - Ein Titel, der selbst auf `#Zahl` endet, geht vor.
   - Gezählt werden die Notizen, die du im Bereich sehen kannst (im Dienst: die des Arbeitsbereichs).
   Adressen ohne `https://` wie `www.beispiel.ch` werden automatisch ergänzt.
+- **Tabellen** (seit 2.10.0) sind Markdown-Tabellen wie bei GitHub: `| Name | Wert |`, darunter
+  `|---|---|`, dann je Zeile `| … | … |`. `:---:` zentriert eine Spalte, `---:` richtet sie rechts aus.
+  - Einfügen: Der Knopf **Tabelle einfügen** in der Toolleiste oder *Notiz → Tabelle einfügen…*
+    öffnet ein Raster mit 8 × 10 Feldern. Die Grösse zeigst du mit der Maus, ziehst sie auf oder
+    wählst sie mit den Pfeiltasten; Klick, Loslassen oder `Enter` fügt ein. Darunter wählst du
+    **Titelzeile** (vorgegeben) und **Titelspalte**.
+  - Schreiben: In einer Tabelle springen `Tab` und `Umschalt+Tab` von Feld zu Feld und markieren
+    den Inhalt; hinter dem letzten Feld kommt eine neue Zeile dazu. `Enter` fügt eine Zeile unter
+    der aktuellen an; in einer leeren letzten Zeile endet die Tabelle mit einer Leerzeile. Die
+    senkrechten Striche werden dabei ausgerichtet (gleich viele Zeichen je Spalte; im Editor mit
+    seiner Proportionalschrift stehen sie nur ungefähr untereinander, in Programmen mit fester
+    Zeichenbreite genau).
+  - Titel: Die Titelzeile steht in der Vorschau beim Scrollen oben und im Druck auf jeder Seite.
+    Ist die erste Zeile leer, gibt es keine Titelzeile. Die Titelspalte ist die erste Spalte, fett
+    wie die Titelzeile. **Titel hervorheben** färbt beide im Ton der Hauptfarbe.
+  - Rechtsklick auf eine Tabelle in der Vorschau: Titelzeile, Titelspalte und Hervorheben ein- und
+    ausschalten, Zeilen darüber oder darunter, Spalten links oder rechts einfügen, Zeile oder Spalte
+    löschen; dazu Einträge von Erweiterungen (zum Beispiel *Tabellen formatieren* für Breite, Höhe,
+    Farbe und Fett).
+  - Das Format steht in einer Zeile `<!-- tabelle: {"kopfspalte":true,"hervorheben":true} -->`
+    direkt über der Tabelle. Andere Markdown-Programme blenden sie aus, der Export behält sie.
+  - Ein Feld enthält eine Zeile Text mit Markdown (fett, kursiv, Links, `[[Verweise]]`, Code);
+    ein `|` im Feld schreibt sich `\|`. Aufgaben, Fragen und Entscheide in Feldern zählen nicht.
 - Die **Toolleiste** über dem Text setzt alles per Klick: Überschrift (Auswahlliste), fett,
-  kursiv, durchgestrichen, Code, Listen, Aufgabe, Zitat, Codeblock, Trennlinie, Link,
+  kursiv, durchgestrichen, Code, Listen, Aufgabe, Zitat, Codeblock, Trennlinie, Tabelle, Link,
   Notiz-Verweis, Bild, Frage und Antwort. Die Knöpfe wirken auf den markierten Text oder die
   aktuellen Zeilen und lassen sich mit einem zweiten Klick wieder aufheben.
   Tastenkürzel: `Ctrl+B`, `Ctrl+I`, `Ctrl+K` für Link.
@@ -541,7 +565,7 @@ Dasselbe gilt für Fragen.
   Beim Export landen sie im Ordner `attachments/`.
 - Oberste Zeile ist der Titel, `Enter` springt in den Text.
 - Der Pfad über dem Titel zeigt, wo die Notiz im Baum hängt; die Einträge sind anklickbar.
-- Das Menü **Notiz ▾** rechts über dem Titel bündelt die Aktionen zur offenen Notiz: Unternotiz anlegen, Verlauf, Drucken, Archivieren, Löschen. Links davon steht der Pfad der Notiz; wird er zu lang, fallen mittlere Glieder zu «…» zusammen.
+- Das Menü **Notiz ▾** rechts über dem Titel bündelt die Aktionen zur offenen Notiz: Unternotiz anlegen, Vorlage oder Tabelle einfügen, Verlauf, Drucken, Archivieren, Löschen. Links davon steht der Pfad der Notiz; wird er zu lang, fallen mittlere Glieder zu «…» zusammen.
 - `Ctrl+S` speichert sofort (passiert sonst automatisch nach kurzer Pause).
 - Auf schmalen Fenstern wird zwischen Liste und Editor umgeschaltet (`Esc` oder «Zurück»).
 
@@ -562,6 +586,7 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | Termine | `packages/core/dates.js`: gemeinsame Logik für `@TT.MM.JJJJ` bzw. `@JJJJ-MM-TT`, Dringlichkeit, Anzeige |
 | Markdown | `packages/core/markdown.js`: eigener Renderer, escaped allen Text, erlaubt nur sichere Link-Schemata |
 | Toolleiste | `packages/core/editing.js`: reine Textfunktionen (umschliessen, Zeilenpräfixe, Überschriften, Links) |
+| Tabellen | `packages/core/tables.js`: Markdown-Tabellen lesen (`parseAt`, Format-Zeile `<!-- tabelle: … -->`) und schreiben (`format` richtet aus), Schritte des Editors (`move`, `enter`, `insert`) und des Rechtsklicks (`setMeta`, `toggleHeader`, Zeilen und Spalten) als reine Textfunktionen; `markdown.js` zeichnet sie (`thead` bleibt oben, `th scope="row"` für die Titelspalte, Angaben von Erweiterungen über `tableFormat`); Raster, Tasten und Rechtsklick in `packages/ui/app.js`; Schnittstelle `ctx.tables` und `ctx.ui.addTableMenuItem` ([docs/PLUGINS.md](docs/PLUGINS.md)) |
 | Export | `packages/core/export.js` baut die Dateien, `zip.js` ist ein kleiner ZIP-Writer; das Bild liefert `NoNotesMindmap.toSvgString`, PNG über ein Canvas |
 | Druck | `packages/ui/print.js` baut das Druckdokument in `#printArea`; `@media print` blendet den Rest der App aus |
 | Scroll-Sync | `packages/ui/scrollsync.js`: Spiegel des Textes misst Zeilenhöhen, Vorschau-Blöcke tragen `data-line`, lineare Interpolation dazwischen |
@@ -667,10 +692,10 @@ npm run build        # schreibt dist/NoNotes
 
 | Lauf | Prüft |
 | --- | --- |
-| `test/core.cjs` (ohne Browser) | Zusammenführen, Datenbankschicht (Standardschema, Angleichen alter Dateien, Konflikte, Autor, Querverweise, Entscheide), Build fremder Ausprägungen, Videoadressen |
+| `test/core.cjs` (ohne Browser) | Zusammenführen, Datenbankschicht (Standardschema, Angleichen alter Dateien, Konflikte, Autor, Querverweise, Entscheide), Build fremder Ausprägungen, Videoadressen, Tabellen |
 | `test/app.cjs` | das Gebaute wie ein Benutzer per `file://` in headless Chromium: Datei und Speicher, Mindmap, Fragen, Markdown, Tags, Suche, Papierkorb, Export, Drag & Drop, Anhänge, Drucken, Toolleiste, Hilfe, Aufgaben, Termine, Kalender, Listen, geteilte Ansicht, Unteraufgaben, Archiv, alte Dateien; der Vertrag der Backend-Schnittstelle |
 | `test/collab.cjs` | Verlauf pro Notiz, gleichzeitiges Schreiben, Änderungen von aussen (Datei, anderer Tab), Lesemodus |
-| `test/extend.cjs` | Erweiterungen und Designs, Hauptfarbe, Videos in der Vorschau, Querverweise, Entscheide und Personen, Sprachen (Pseudo-Sprache, Englisch, Testpaket) |
+| `test/extend.cjs` | Erweiterungen und Designs, Hauptfarbe, Videos in der Vorschau, Querverweise, Entscheide und Personen, Vorlagen, Tabellen, Sprachen (Pseudo-Sprache, Englisch, Testpaket) |
 
 Dazu kommen `tools/i18n.cjs lint` und `check` (Texte und Sprachpakete):
 

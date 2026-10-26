@@ -107,6 +107,9 @@ gilt für eine Erweiterung, deren `activate` oder deren Ereignisrückruf einen F
 | `ctx.ui.addMenuItem({ label, title?, action })` | Eintrag im Menü **Datenbank** |
 | `ctx.ui.addToolbarButton({ label, title?, action })` | Knopf in der Toolleiste des Editors; `action(editor)` bekommt die Editor-Schnittstelle |
 | `ctx.ui.addContextMenuItem({ label, title?, write?, visible?, action? \| panel? })` | Seit 2.8.0. Eintrag im Kontextmenü eines Knotens der Mindmap (Rechtsklick), mit `action(target)` oder einem Untermenü `panel(target, { close })`; siehe unten |
+| `ctx.ui.addTableMenuItem({ label, title?, write?, visible?, action? \| panel? })` | Seit 2.10.0. Eintrag im Menü, das ein Rechtsklick auf eine Tabelle in der Vorschau öffnet; Felder wie oben, `target` beschreibt die Tabelle; siehe [Tabellen](#tabellen-seit-2100) |
+| `ctx.tables.format(fn)` | Seit 2.10.0. `fn(info)` liefert Klassen und Werte für Tabelle, Titelzeile, Spalten, Zeilen und Felder beim Zeichnen (Vorschau und Druck); liefert eine Funktion zum Abmelden |
+| `ctx.tables.update(target, fn)` | Seit 2.10.0. Ändert das Format einer Tabelle in der offenen Notiz: `fn(meta)` ändert das Objekt; Promise mit `true`, wenn sich etwas geändert hat |
 | `ctx.editor.noteId()` | Kennung der offenen Notiz oder `null` |
 | `ctx.editor.isWritable()` | `true`, wenn eine Notiz offen und nicht schreibgeschützt ist |
 | `ctx.editor.selection()` | `{ start, end, text }` der Markierung im Text |
@@ -157,6 +160,101 @@ ctx.ui.addContextMenuItem({
 ```
 
 Ältere Versionen haben die Funktion nicht: `if (ctx.ui.addContextMenuItem) …`.
+
+## Tabellen (seit 2.10.0)
+
+Tabellen sind Markdown-Tabellen wie bei GitHub. Eine Zeile direkt darüber trägt ihr Format als JSON:
+
+```markdown
+<!-- tabelle: {"kopfspalte":true,"hervorheben":true,"table-format":{"cols":{"0":{"breite":"schmal"}}}} -->
+| Phase   | Start  | Ende   |
+| ------- | ------ | ------ |
+| Analyse | 01.11. | 15.11. |
+```
+
+Der Kern liest `kopfspalte` (erste Spalte als Titel) und `hervorheben` (Titel im Ton der Hauptfarbe). **Eine Erweiterung
+legt ihre Angaben unter ihrer Kennung ab** (`meta[ctx.id]`) und lässt fremde Schlüssel stehen. So bleibt das Format beim
+Ausschalten der Erweiterung im Text erhalten, und andere Markdown-Programme blenden die Zeile aus.
+
+**Angaben je Zeile, Spalte und Feld** gehören in `meta[ctx.id].rows`, `.cols` und `.cells`, als Objekte mit den Schlüsseln
+`"2"` (Zeile oder Spalte ab 0), `"h"` (Titelzeile) und `"2,1"` (Zeile, Spalte). Die App verschiebt diese Schlüssel, wenn
+Zeilen oder Spalten eingefügt oder gelöscht werden (Rechtsklick, `Enter` im Text) und wenn die Titelzeile aus- oder
+angeschaltet wird; gelöschte fallen weg. Was die Werte bedeuten, bestimmt die Erweiterung. Angaben an anderer Stelle bleiben
+unverändert, auch wenn sich die Tabelle ändert.
+
+**Zeichnen.** `ctx.tables.format(fn)` meldet eine Funktion an, die für jede Tabelle in Vorschau und Druck aufgerufen wird.
+`fn(info)` bekommt:
+
+| Feld | Bedeutung |
+| --- | --- |
+| `meta` | Das Format (Kopie), zum Beispiel `{ kopfspalte: true, 'table-format': { … } }` |
+| `header`, `headerColumn` | Gibt es eine Titelzeile, ist die erste Spalte Titel? |
+| `cols`, `rows` | Zahl der Spalten und der Zeilen (ohne Titelzeile) |
+| `cells` | `{ header: […] \| null, rows: [[…], …] }`, der Text der Felder |
+| `line` | Erste Zeile der Tabelle im Text der offenen Notiz (die Format-Zeile, ohne sie die Titelzeile); `null` in Zitaten, Blöcken und im Druck |
+| `noteId` | Nur im Druck: die Notiz, zu der die Tabelle gehört (die Vorschau zeigt immer die offene) |
+
+`fn` liefert `null`, ein Objekt oder eine Liste von Objekten der Form
+
+```js
+{
+  table:   { class: 'tf-voll', width: '100%' },
+  header:  { class: 'tf-kopf' },                       // die Titelzeile
+  columns: { 0: { width: '30%' }, 2: { textAlign: 'right' } },
+  rows:    { 0: { height: '3em' } },                   // Zeilen ab 0, ohne Titelzeile
+  cells:   { '1,2': { class: 'tf-gelb', fontWeight: 'bold' }, 'h,1': { color: 'red' } },   // 'h,c' = Titelzeile
+}
+```
+
+Jeder Eintrag ist `{ class?, <Eigenschaft>: Wert }`. Klassen müssen wie `tf-gelb` aussehen (Buchstabe, dann Buchstaben, Ziffern,
+`-`, `_`). Erlaubt sind nur diese Eigenschaften (auch in der Schreibweise `fontWeight`): `width`, `min-width`, `max-width`,
+`height`, `min-height`, `background`, `background-color`, `color`, `font-weight`, `font-style`, `text-decoration`,
+`text-align`, `vertical-align`, `white-space`, `border-color`, `padding`. Werte bestehen aus Buchstaben, Ziffern, `#`, `.`, `,`,
+`%`, `(`, `)`, `+`, `-` und Leerzeichen; `url(…)`, `expression` und `javascript` fallen weg, ebenso alles andere. Am Feld
+gelten Spalte, dann Zeile, dann Feld (das Spätere gewinnt); die Klassen einer Zeile stehen am `<tr>`, ihre Werte an jedem Feld.
+Wirft `fn`, zeichnet die App die Tabelle ohne die Angaben dieser Erweiterung.
+
+Farben gehören am besten in Klassen mit einem eigenen Stylesheet, mit einer Variante für die dunkle Einstellung in
+`@media screen and (prefers-color-scheme: dark) { … }` (mit `screen`, damit der Druck die hellen Farben behält). Die Vorschau zeichnet `table.md-table`, die Titelzeile in `thead`, Felder der
+Titelspalte als `th scope="row"`; `.md-table-mark` heisst «hervorgehoben». Der Druck nutzt dieselben Klassen in `#printArea`.
+
+**Rechtsklick.** `ctx.ui.addTableMenuItem(spec)` setzt einen Eintrag in das Menü einer Tabelle (Felder wie beim
+[Kontextmenü eines Knotens](#kontextmenü-eines-knotens-seit-280); nach einem Strich unter den Einträgen der App). Das Menü
+gibt es nur für Tabellen in der offenen, beschreibbaren Notiz, nicht in Zitaten und Blöcken. `target` ist eingefroren:
+
+| Feld | Bedeutung |
+| --- | --- |
+| `noteId`, `line` | Notiz und erste Zeile der Tabelle im Text. Sie bleibt, wenn die Format-Zeile dazukommt oder wegfällt; dasselbe `target` taugt darum für mehrere `update` nacheinander (etwa in einem offenen Untermenü) |
+| `row`, `col` | Angeklicktes Feld: Zeile ab 0 (`-1` = Titelzeile), Spalte ab 0 |
+| `rows`, `cols` | Zahl der Zeilen (ohne Titelzeile) und Spalten |
+| `header`, `headerColumn` | Titelzeile, Titelspalte |
+| `meta` | Das Format (Kopie) |
+
+**Format schreiben.** `ctx.tables.update(target, fn)` ruft `fn(meta)` mit einer Kopie des Formats auf; `fn` ändert sie (oder
+liefert ein neues Objekt). Leere Angaben (`null`, `false`) fallen weg, ohne Angaben verschwindet die Zeile. Die App schreibt
+die Zeile neu, richtet die Tabelle aus, speichert wie bei jeder Eingabe und zeichnet die Vorschau gleich neu. Das Promise
+liefert `false`, wenn die Notiz nicht mehr offen oder schreibgeschützt ist oder in der Zeile keine Tabelle mehr steht.
+
+```js
+ctx.ui.addTableMenuItem({
+  label: 'Spalte schmal',
+  visible: t => t.cols > 1,
+  action: t => ctx.tables.update(t, meta => {
+    const mine = meta[ctx.id] || (meta[ctx.id] = {});
+    mine.cols = Object.assign({}, mine.cols, { [t.col]: '6em' });
+  }),
+});
+ctx.tables.format(info => {
+  const mine = info.meta[ctx.id];
+  if (!mine || !mine.cols) return null;
+  const columns = {};
+  for (const [c, w] of Object.entries(mine.cols)) columns[c] = { width: w };
+  return { columns };
+});
+```
+
+Ein Beispiel mit Breite, Höhe, Farben und Fett ist die Erweiterung *Tabellen formatieren* (`table-format`) im Zweig `plugins`.
+Ältere Versionen haben die Namen nicht: `if (ctx.tables) …`.
 
 ## Ereignisse
 
@@ -235,6 +333,7 @@ anbieten will, wählt anhand von `ctx.language()` selbst aus.
   (`if (ctx.ui.addSomething) …`).
 - Ein Bruch käme frühestens mit `api: 2` in NoNotes 2.0; die App meldet dann eine ältere Erweiterung
   deutlich, statt sie still falsch zu behandeln.
+- Seit 2.10.0 dazugekommen (ohne Änderung an `api`): `ctx.tables.format`, `ctx.tables.update` und `ctx.ui.addTableMenuItem`.
 - Seit 2.8.0 dazugekommen (ohne Änderung an `api`): `ctx.ui.addContextMenuItem` (Kontextmenü eines Knotens, mit Untermenü).
   Seit 2.8.1: `applied()` im Untermenü, die Mehrfachauswahl wird nach einer Aktion aufgehoben, `database:replaced` kommt vor
   dem Neuzeichnen (vorher danach; wer auf die neue Mindmap angewiesen ist, hört auf `mindmap:rendered`).

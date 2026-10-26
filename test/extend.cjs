@@ -207,13 +207,14 @@ async function runPlugins(browser, part, step) {
       const c = window.__ctx;
       return {
         top: Object.keys(c), ui: Object.keys(c.ui), editor: Object.keys(c.editor), api: c.api,
-        frozen: Object.isFrozen(c) && Object.isFrozen(c.ui) && Object.isFrozen(c.editor),
+        frozen: Object.isFrozen(c) && Object.isFrozen(c.ui) && Object.isFrozen(c.editor) && Object.isFrozen(c.tables), tables: Object.keys(c.tables),
         events: NoNotesPlugins.EVENTS, themeVars: NoNotesPlugins.THEME_VARS,
         backend: NoNotesBackend.METHODS.every(m => typeof c.backend[m] === 'function'),
       };
     });
-    for (const k of ['id', 'api', 'appVersion', 'backend', 'language', 'on', 'openNote', 'refresh', 'ui', 'editor']) assert.ok(surface.top.includes(k), `ctx.${k}`);
-    for (const k of ['setStatus', 'addMenuItem', 'addToolbarButton']) assert.ok(surface.ui.includes(k), `ctx.ui.${k}`);
+    for (const k of ['id', 'api', 'appVersion', 'backend', 'language', 'on', 'openNote', 'refresh', 'ui', 'editor', 'people', 'tables']) assert.ok(surface.top.includes(k), `ctx.${k}`);
+    for (const k of ['setStatus', 'addMenuItem', 'addToolbarButton', 'addContextMenuItem', 'addTableMenuItem']) assert.ok(surface.ui.includes(k), `ctx.ui.${k}`);
+    assert.deepEqual(surface.tables, ['format', 'update'], 'ctx.tables (seit 2.10.0)');
     for (const k of ['noteId', 'isWritable', 'selection', 'replaceSelection']) assert.ok(surface.editor.includes(k), `ctx.editor.${k}`);
     for (const k of ['ready', 'database:replaced', 'note:open', 'note:close', 'note:saved', 'mindmap:rendered', 'mindmap:select']) assert.ok(surface.events.includes(k), `Ereignis ${k}`);
     for (const k of ['bg', 'panel', 'text', 'muted', 'border', 'hover', 'danger', 'ok', 'warn', 'radius', 'shadow']) assert.ok(surface.themeVars.includes(k), `Theme-Variable ${k}`);
@@ -2371,6 +2372,267 @@ async function runWebMcp(browser, part, step) {
   part('Lesemodus meldet nur lesende Werkzeuge; ohne Schnittstelle im Browser passiert nichts');
 }
 
+// ============================================================
+/* Tabellen (v2.10.0): Raster in der Toolleiste und im Menü «Notiz», Tab und Enter im Text, Titelzeile oben beim Scrollen,
+   Rechtsklick in der Vorschau, Schnittstelle für Erweiterungen (ctx.tables, ctx.ui.addTableMenuItem), Druck, Lesemodus. */
+async function runTablesUi(browser, part, step) {
+  const PLUGIN = `NoNotesPlugins.register({ id: 'tab-test', name: 'Tabellen-Test', api: 1, activate(ctx) {
+    window.__ctx = ctx; window.__tt = []; window.__ttInfo = [];
+    window.__ttOff = ctx.tables.format(info => {
+      window.__ttInfo.push(info);
+      const m = info.meta['tab-test'];
+      return m ? { columns: { 0: { class: 'tt-schmal', width: m.breite } }, rows: { 0: { height: '44px' } }, cells: { '0,1': { background: '#ffeeaa', fontWeight: 'bold' } } } : null;
+    });
+    ctx.ui.addTableMenuItem({ label: 'Breite 30%', title: 'Erste Spalte schmal', action: t => {
+      window.__tt.push({ t: JSON.parse(JSON.stringify(t)), frozen: Object.isFrozen(t) && Object.isFrozen(t.meta) });
+      ctx.tables.update(t, m => { m['tab-test'] = { breite: '30%' }; }).then(ok => { window.__ttOk = ok; });
+    } });
+    ctx.ui.addTableMenuItem({ label: 'Nur im Kopf', write: false, visible: t => t.row === -1, action() {} });
+    ctx.ui.addTableMenuItem({ label: 'Feld', panel(t, api) { const b = document.createElement('button'); b.className = 'tt-panel'; b.textContent = 'Zeile ' + t.row; b.onclick = () => api.close(); return b; } });
+    window.__ttBad = 0;
+    for (const bad of [{}, { label: 'x' }, { label: '', action() {} }, { label: 'x', action: 1 }]) { try { ctx.ui.addTableMenuItem(bad); } catch (e) { window.__ttBad++; } }
+    try { ctx.tables.format('keine Funktion'); } catch (e) { window.__ttBad += 10; }
+  } });`;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nonotes-tables-'));
+  const dir = path.join(tmp, 'NoNotes');
+  fs.cpSync(DIST, dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'plugins', 'tab-test.js'), PLUGIN);
+  fs.writeFileSync(path.join(dir, 'plugins', 'plugins.js'), "NoNotesPlugins.list(['tab-test.js']);\n");
+  const ctx = await browser.newContext({ viewport: { width: 1300, height: 800 }, locale: 'de-CH' });
+  await ctx.addInitScript(() => {
+    window.__printed = [];
+    window.print = () => { window.__printed.push(document.getElementById('printArea').innerHTML); };
+    let edition;
+    Object.defineProperty(window, 'NoNotesEdition', {
+      configurable: true,
+      get: () => edition,
+      set: v => {
+        edition = v;
+        const make = v.createShell;
+        v.createShell = host => { const shell = make(host); if (localStorage.getItem('__readonly') === '1') Object.defineProperty(shell, 'readOnly', { get: () => true }); return shell; };
+      },
+    });
+  });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  await page.goto('file://' + path.join(dir, 'index.html'));
+  await page.waitForSelector(READY, { timeout: 30000 });
+  assert.equal(await page.evaluate(() => window.__ttBad), 14, 'falsche Einträge und format ohne Funktion werfen');
+
+  const id = await page.evaluate(async () => {
+    const B = __ctx.backend;
+    const id = await B.createNote(null);
+    await B.updateNote(id, 'Plan', 'Einleitung', {});
+    await __ctx.refresh();
+    await __ctx.openNote(id);
+    return id;
+  });
+  await page.waitForSelector('#editorPane:not([hidden])');
+  const body = () => page.inputValue('#body');
+  const selected = () => page.evaluate(() => { const b = document.querySelector('#body'); return b.value.slice(b.selectionStart, b.selectionEnd); });
+  const caretLine = () => page.evaluate(() => { const b = document.querySelector('#body'); return b.value.slice(0, b.selectionStart).split('\n').length - 1; });
+  const cell = (c, r) => page.locator(`#tablePicker .tp-cell[data-c="${c}"][data-r="${r}"]`);
+
+  // ---------- Raster in der Toolleiste ----------
+  await page.click('#body');
+  await page.keyboard.press('Control+End');
+  await page.click('#mdToolbar [data-cmd="table"]');
+  await page.waitForSelector('#tablePicker:not([hidden])');
+  assert.equal(await page.locator('#tablePicker .tp-cell').count(), 80, '8 Spalten × 10 Zeilen');
+  assert.equal(await page.locator('#tablePicker .tp-size').innerText(), 'Grösse wählen');
+  assert.equal(await page.getAttribute('#mdToolbar [data-cmd="table"]', 'aria-expanded'), 'true');
+  await cell(3, 4).hover();
+  assert.equal(await page.locator('#tablePicker .tp-size').innerText(), '3 × 4');
+  assert.equal(await page.locator('#tablePicker .tp-cell.on').count(), 12);
+  assert.equal(await page.locator('#tablePicker .tp-cell.head').count(), 3, 'erste Zeile als Titel markiert');
+  await page.keyboard.press('ArrowRight'); // Tastatur: Fokus liegt im Raster
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await page.locator('#tablePicker .tp-size').innerText(), '4 × 3');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('#tablePicker', { state: 'hidden' });
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'body', 'Esc: zurück in den Text');
+  assert.equal(await body(), 'Einleitung', 'nichts eingefügt');
+  await page.click('#mdToolbar [data-cmd="table"]');
+  await cell(3, 3).click();
+  await page.waitForSelector('#tablePicker', { state: 'hidden' });
+  assert.equal(await body(), 'Einleitung\n\n| Spalte 1 | Spalte 2 | Spalte 3 |\n| -------- | -------- | -------- |\n|          |          |          |\n|          |          |          |\n');
+  assert.equal(await selected(), 'Spalte 1');
+  part('Raster in der Toolleiste: 8 × 10, Grösse beim Zeigen und mit Pfeiltasten, Esc ohne Einfügen, Klick fügt mit Titelzeile ein');
+
+  // ---------- Tab und Enter ----------
+  await page.keyboard.type('Name');
+  await page.keyboard.press('Tab');
+  assert.equal(await selected(), 'Spalte 2');
+  await page.keyboard.type('Wert');
+  await page.keyboard.press('Tab');
+  await page.keyboard.type('Einheit');
+  await page.keyboard.press('Tab');
+  await page.keyboard.type('Bodensee');
+  await page.keyboard.press('Tab');
+  await page.keyboard.type('536');
+  await page.keyboard.press('Shift+Tab');
+  assert.equal(await selected(), 'Bodensee', 'Umschalt+Tab zurück');
+  await page.keyboard.press('Enter');
+  assert.equal(await caretLine(), 5, 'Enter: neue Zeile darunter');
+  await page.keyboard.type('Zürichsee');
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Tab');
+  assert.equal(await caretLine(), 7, 'Tab hinter dem letzten Feld: neue Zeile');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('Danach');
+  assert.equal(await body(), 'Einleitung\n\n| Name      | Wert | Einheit |\n| --------- | ---- | ------- |\n| Bodensee  | 536  |         |\n| Zürichsee |      |         |\n|           |      |         |\n\nDanach',
+    'ausgerichtet; Enter in der leeren letzten Zeile beendet die Tabelle, mit Leerzeile davor');
+  const outside = await page.evaluate(() => { const b = document.querySelector('#body'); return NoNotesEditing.indentLines(b.value, b.selectionStart, b.selectionEnd, 1); });
+  await page.keyboard.press('Tab');
+  assert.equal(await body(), outside ? outside.text : 'Einleitung\n\n| Name      | Wert | Einheit |\n| --------- | ---- | ------- |\n| Bodensee  | 536  |         |\n| Zürichsee |      |         |\n|           |      |         |\n\nDanach', 'Tab ausserhalb einer Tabelle wie bisher');
+  part('Tab und Umschalt+Tab von Feld zu Feld mit Ausrichten, Enter fügt eine Zeile an, Tab am Ende eine neue, Enter in der leeren letzten Zeile beendet');
+
+  // ---------- Menü «Notiz» und Ziehen im Raster ----------
+  await page.fill('#body', 'Kopf');
+  await page.click('#body');
+  await page.keyboard.press('Control+End');
+  await page.click('#noteMenuBtn');
+  await page.click('#tableMenuBtn');
+  await page.waitForSelector('#tablePicker:not([hidden])');
+  await page.waitForSelector('#noteMenu', { state: 'hidden' });
+  await page.uncheck('#tablePicker .tp-head');
+  await page.check('#tablePicker .tp-headcol');
+  assert.equal(await page.locator('#tablePicker .tp-cell.head').count(), 0);
+  const box = async (c, r) => { const b = await cell(c, r).boundingBox(); return [b.x + b.width / 2, b.y + b.height / 2]; };
+  await page.mouse.move(...await box(1, 1));
+  await page.mouse.down();
+  await page.mouse.move(...await box(2, 1), { steps: 3 });
+  await page.mouse.move(...await box(2, 2), { steps: 3 });
+  assert.equal(await page.locator('#tablePicker .tp-size').innerText(), '2 × 2', 'Ziehen zeigt die Grösse');
+  await page.mouse.up();
+  await page.waitForSelector('#tablePicker', { state: 'hidden' });
+  assert.equal(await body(), 'Kopf\n\n<!-- tabelle: {"kopfspalte":true} -->\n|     |     |\n| --- | --- |\n|     |     |\n|     |     |\n', 'ohne Titelzeile, mit Titelspalte');
+  assert.equal(await caretLine(), 5);
+  part('Menü «Notiz» → Tabelle einfügen…: Raster am Menü, Titelzeile aus und Titelspalte an, Ziehen bis zur Grösse');
+
+  // ---------- Vorschau: Titelzeile oben, Rechtsklick ----------
+  const rows = Array.from({ length: 40 }, (_, i) => `| Zeile ${i + 1} | ${i} |`).join('\n');
+  await page.fill('#body', `Oben\n\n| Name | Wert |\n|---|--:|\n${rows}\n\nUnten`);
+  await page.click('[data-mode="preview"]');
+  await page.waitForSelector('#preview table.md-table');
+  assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#preview thead th')).position), 'sticky');
+  await page.evaluate(() => { document.querySelector('#preview').scrollTop = 600; });
+  await page.waitForTimeout(100);
+  const stuck = await page.evaluate(() => {
+    const p = document.querySelector('#preview').getBoundingClientRect(), th = document.querySelector('#preview thead th').getBoundingClientRect();
+    return { delta: Math.round(th.top - p.top), visible: th.bottom > p.top };
+  });
+  assert.ok(stuck.visible && stuck.delta >= 0 && stuck.delta <= 2, `Titelzeile steht oben: ${JSON.stringify(stuck)}`);
+  assert.equal(await page.getAttribute('#preview td[data-col="1"] >> nth=0', 'style'), 'text-align: right');
+
+  const menuItems = () => page.evaluate(() => [...document.querySelectorAll('#contextMenu button')].map(b => b.textContent.trim() + (b.classList.contains('checked') ? ' ✓' : '')));
+  const rightClick = async sel => { await page.locator(sel).click({ button: 'right' }); await page.waitForSelector('#contextMenu:not([hidden])'); };
+  await rightClick('#preview tbody tr[data-row="2"] td[data-col="1"]');
+  assert.deepEqual(await menuItems(), ['Titelzeile ✓', 'Titelspalte', 'Titel hervorheben', 'Zeile darüber einfügen', 'Zeile darunter einfügen', 'Zeile löschen',
+    'Spalte links einfügen', 'Spalte rechts einfügen', 'Spalte löschen', 'Breite 30%', 'Feld▸']);
+  await page.click('#contextMenu button:has-text("Titelspalte")');
+  await page.waitForSelector('#contextMenu', { state: 'hidden' });
+  // gleich noch einmal: die Vorschau ist schon neu gezeichnet
+  await rightClick('#preview tbody tr[data-row="2"] td[data-col="1"]');
+  assert.ok((await menuItems()).includes('Titelspalte ✓'));
+  await page.click('#contextMenu button:has-text("Titel hervorheben")');
+  await page.waitForSelector('#preview table.md-table.md-table-col.md-table-mark');
+  assert.ok((await body()).startsWith('Oben\n\n<!-- tabelle: {"kopfspalte":true,"hervorheben":true} -->\n| Name     | Wert |\n| -------- | ---: |\n| Zeile 1  | 0    |'), await body());
+  assert.equal(await page.locator('#preview tbody th[scope="row"]').count(), 40);
+  await rightClick('#preview tbody tr[data-row="0"] td[data-col="1"]');
+  await page.click('#contextMenu button:has-text("Zeile darüber einfügen")');
+  await rightClick('#preview tbody tr[data-row="1"] td[data-col="1"]');
+  await page.click('#contextMenu button:has-text("Spalte rechts einfügen")');
+  await page.waitForFunction(() => document.querySelectorAll('#preview thead th').length === 3);
+  assert.equal(await page.locator('#preview thead th >> nth=2').innerText(), 'Spalte 3');
+  await rightClick('#preview tbody tr[data-row="0"] th');
+  await page.click('#contextMenu button:has-text("Zeile löschen")');
+  await rightClick('#preview thead th >> nth=2');
+  assert.ok((await menuItems()).includes('Nur im Kopf') && !(await menuItems()).includes('Zeile löschen'), 'im Kopf: kein Zeile löschen, dafür der Eintrag nur für den Kopf');
+  await page.click('#contextMenu button:has-text("Spalte löschen")');
+  await page.waitForFunction(() => document.querySelectorAll('#preview thead th').length === 2);
+  assert.ok((await body()).startsWith('Oben\n\n<!-- tabelle: {"kopfspalte":true,"hervorheben":true} -->\n| Name     | Wert |\n| -------- | ---: |\n| Zeile 1  | 0    |\n| Zeile 2  | 1    |'), 'leere Zeile wieder weg, Spalte wieder weg: ' + (await body()).slice(0, 200));
+  await page.waitForFunction(SAVED, null, { timeout: 10000 });
+  assert.ok((await page.evaluate(i => __ctx.backend.getNote(i), id)).body.includes('"hervorheben":true'), 'gespeichert');
+  part('Vorschau: Titelzeile bleibt beim Scrollen oben, Rechtsklick (Titelspalte, Hervorheben, Zeilen und Spalten) ändert den Text und gleich die Vorschau');
+
+  // ---------- Erweiterung ----------
+  const before = await page.evaluate(() => window.__ttInfo.length);
+  assert.ok(before > 0);
+  assert.deepEqual(await page.evaluate(() => { const x = window.__ttInfo[window.__ttInfo.length - 1]; return { line: x.line, header: x.header, headerColumn: x.headerColumn, cols: x.cols, rows: x.rows, h: x.cells.header, meta: x.meta }; }),
+    { line: 2, header: true, headerColumn: true, cols: 2, rows: 40, h: ['Name', 'Wert'], meta: { kopfspalte: true, hervorheben: true } });
+  await rightClick('#preview tbody tr[data-row="0"] td[data-col="1"]');
+  await page.click('#contextMenu button:has-text("Breite 30%")');
+  await page.waitForFunction(() => window.__ttOk === true);
+  const got = await page.evaluate(() => window.__tt[0]);
+  assert.equal(got.frozen, true, 'Ziel eingefroren');
+  assert.deepEqual(got.t, { noteId: id, line: 2, row: 0, col: 1, cols: 2, rows: 40, header: true, headerColumn: true, meta: { kopfspalte: true, hervorheben: true } });
+  assert.ok((await body()).includes('<!-- tabelle: {"kopfspalte":true,"hervorheben":true,"tab-test":{"breite":"30%"}} -->'));
+  await page.waitForSelector('#preview tbody tr[data-row="0"] th.tt-schmal');
+  assert.equal(await page.getAttribute('#preview tbody tr[data-row="0"] th', 'style'), 'width: 30%; height: 44px');
+  assert.equal(await page.getAttribute('#preview tbody tr[data-row="0"] td', 'style'), 'text-align: right; height: 44px; background: #ffeeaa; font-weight: bold');
+  await rightClick('#preview tbody tr[data-row="3"] td');
+  await page.hover('#contextMenu button:has-text("Feld")');
+  assert.equal(await page.locator('.context-sub .tt-panel').innerText(), 'Zeile 3', 'Feld der Erweiterung im Untermenü');
+  await page.click('.context-sub .tt-panel');
+  await page.waitForSelector('#contextMenu', { state: 'hidden' });
+  assert.equal(await page.evaluate(i => __ctx.tables.update({ noteId: i + 999, line: 2 }, m => { m.x = 1; }), id), false, 'fremde Notiz: nichts');
+  assert.equal(await page.evaluate(i => __ctx.tables.update({ noteId: i, line: 0 }, m => { m.x = 1; }), id), false, 'keine Tabelle in der Zeile: nichts');
+  part('Erweiterung: format bekommt Format, Grösse und Inhalt; Eintrag im Rechtsklick mit eingefrorenem Ziel, update schreibt unter der Kennung, Spalte, Zeile und Feld in der Vorschau');
+
+  // ---------- Druck ----------
+  await page.keyboard.press('Control+p');
+  await page.waitForSelector('#printDialog[open]');
+  await page.click('#printGoBtn');
+  await page.waitForFunction(() => window.__printed.length === 1);
+  const printed = await page.evaluate(() => window.__printed[0]);
+  assert.ok(printed.includes('<table class="md-table md-table-col md-table-mark"') && printed.includes('<thead>'), 'Tabelle mit Titelzeile im Druck');
+  assert.ok(!printed.includes('data-src'), 'im Druck keine Quellzeilen');
+  assert.ok(printed.includes('class="tt-schmal" style="width: 30%; height: 44px"'), 'Angaben der Erweiterung auch im Druck');
+  assert.equal(await page.evaluate(() => { const x = window.__ttInfo[window.__ttInfo.length - 1]; return x.noteId; }), id, 'im Druck mit noteId');
+  await page.emulateMedia({ media: 'print' });
+  const printCss = await page.evaluate(html => {
+    const area = document.getElementById('printArea');
+    area.innerHTML = html;
+    const cs = sel => getComputedStyle(area.querySelector(sel));
+    const out = { thead: cs('.md-table thead').display, th: cs('.md-table thead th').position, tr: cs('.md-table tbody tr').breakInside, adjust: cs('.md-table thead th').printColorAdjust };
+    area.innerHTML = '';
+    return out;
+  }, printed);
+  await page.emulateMedia({ media: 'screen' });
+  assert.deepEqual(printCss, { thead: 'table-header-group', th: 'static', tr: 'avoid', adjust: 'exact' }, 'Titelzeile auf jeder Druckseite, Zeilen nicht zerteilt, Farben gedruckt');
+  part('Druck: Tabelle mit Titelzeile (auf jeder Seite), Angaben der Erweiterung, keine Quellzeilen');
+
+  // ---------- Ausschalten, Lesemodus ----------
+  await page.evaluate(() => window.__ttOff());
+  await page.click('[data-mode="edit"]');
+  await page.click('[data-mode="preview"]');
+  await page.waitForFunction(() => !document.querySelector('#preview .tt-schmal'));
+  await page.evaluate(() => localStorage.setItem('__readonly', '1'));
+  await page.reload();
+  await page.waitForSelector(READY, { timeout: 30000 });
+  await page.evaluate(i => __ctx.openNote(i), id);
+  await page.waitForSelector('#editorPane:not([hidden])');
+  await page.click('[data-mode="preview"]');
+  await page.waitForSelector('#preview table.md-table');
+  assert.equal(await page.locator('#mdToolbar [data-cmd="table"]').isVisible() && await page.locator('#mdToolbar [data-cmd="table"]').isEnabled(), false, 'kein Einfügen im Lesemodus');
+  await page.locator('#preview tbody td >> nth=0').click({ button: 'right' });
+  await page.waitForTimeout(200);
+  assert.ok(await page.locator('#contextMenu').isHidden(), 'kein Tabellenmenü im Lesemodus');
+  await page.evaluate(() => localStorage.removeItem('__readonly'));
+  part('format() gibt ein Abmelden zurück; Lesemodus: kein Einfügen, kein Tabellenmenü');
+
+  assert.deepEqual(errors, []);
+  await ctx.close();
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 suite('Erweiterungs-Test', [
   { name: 'Erweiterungen: Lader, Dialog, Schnittstelle 1, Menü, Toolleiste, Ereignisse, Hilfe, Designs, Ein- und Ausschalten zur Laufzeit, Verzeichnis, Beispiele, Pseudo-Sprache', run: runPlugins },
   { name: 'Hauptfarbe: Palette, Auswahl, Datei, Export und Druck, hell und dunkel', run: runPalette },
@@ -2378,6 +2640,7 @@ suite('Erweiterungs-Test', [
   { name: 'Querverweise: gestrichelte Linien, Schalter, eingeklappte Ziele, Vorschau, Export und Druck, gelöschtes Ziel', run: runLinks },
   { name: 'Entscheide und Personen: Reiter, Ansicht, Entscheiden mit Datum, Vorschau, Toolleiste, Vorschläge beim Tippen von @, Export und Druck, Blöcke in Listen', run: runDecisions },
   { name: 'Vorlagen: Ordner verbinden, speichern, aus Vorlage anlegen und einfügen, Erlaubnis, ohne Ordner, Datei hinzufügen', run: runTemplatesUi },
+  { name: 'Tabellen: Raster (Toolleiste und Menü «Notiz»), Tab und Enter, Titelzeile oben, Rechtsklick, Schnittstelle für Erweiterungen, Druck, Lesemodus', run: runTablesUi },
   { name: 'Sprachen: Pseudo-Sprache durch alle Ansichten, Englisch, Browsersprache, Mehrzahl, Testpaket, Wechsel', run: runI18n },
   { name: 'WebMCP: Werkzeuge für den Agenten des Browsers, Aufrufe ändern Daten und Oberfläche, gespeichert, Lesemodus, ohne Schnittstelle nichts', run: runWebMcp },
 ], { browser: true });

@@ -22,6 +22,7 @@
   const Cal = window.NoNotesCalendar;
   const Merge = window.NoNotesMerge;
   const Routes = window.NoNotesRoutes;
+  const Tables = window.NoNotesTables;
   const joinParts = (...parts) => parts.filter(Boolean).join(', ');
   const errorText = e => Backend.errorText(e);
   const THEME_KEY = 'nonotes.theme';   // Zwischenspeicher des Designs; massgebend ist meta 'theme' der Datenbank
@@ -91,7 +92,7 @@
     exportBtn: $('#exportBtn'), exportDialog: $('#exportDialog'), exportForm: $('#exportForm'),
     exportDirBtn: $('#exportDirBtn'), exportZipBtn: $('#exportZipBtn'), exportHint: $('#exportHint'),
     attachBtn: $('#attachBtn'), attachInput: $('#attachInput'), attachments: $('#attachments'),
-    mapPrintBtn: $('#mapPrintBtn'), qPrintBtn: $('#qPrintBtn'), printBtn: $('#printBtn'), copyLinkBtn: $('#copyLinkBtn'),
+    mapPrintBtn: $('#mapPrintBtn'), qPrintBtn: $('#qPrintBtn'), printBtn: $('#printBtn'), copyLinkBtn: $('#copyLinkBtn'), tableMenuBtn: $('#tableMenuBtn'),
     multiBar: $('#multiBar'), multiCount: $('#multiCount'), multiPrintBtn: $('#multiPrintBtn'), multiClearBtn: $('#multiClearBtn'),
     printDialog: $('#printDialog'), printForm: $('#printForm'), printGoBtn: $('#printGoBtn'),
     printScopeCurrent: $('#printScopeCurrent'), printScopeSubtree: $('#printScopeSubtree'),
@@ -177,6 +178,8 @@
     wikiData: null,       // Notizen für die Vorschläge, einmal je Öffnen der Liste geladen (Promise)
     pluginProviders: new Map(), // Lieferanten für @kürzel je Erweiterung (zum Abmelden beim Ausschalten)
     pluginContextItems: [],     // Einträge der Erweiterungen im Kontextmenü eines Knotens (seit 2.8.0): { plugin, spec }
+    pluginTableItems: [],       // Einträge der Erweiterungen im Kontextmenü einer Tabelle (seit 2.10.0): { entry, spec }
+    tableFormatters: [],        // Format der Tabellen aus Erweiterungen (ctx.tables.format, seit 2.10.0): { entry, fn }
     contextSub: null,           // offenes Untermenü des Kontextmenüs: { anchor, el }
     contextUse: null,           // Kontextmenü eines Knotens mit Einträgen der Erweiterungen: { multi, applied }
     editorMode: 'edit',   // 'edit' | 'split' | 'preview'
@@ -923,8 +926,13 @@
         addMenuItem: item => addPluginMenuItem(entry, item),
         addToolbarButton: item => addPluginToolbarButton(entry, item),
         addContextMenuItem: item => addPluginContextItem(entry, item),
+        addTableMenuItem: item => addPluginContextItem(entry, item, state.pluginTableItems, 'addTableMenuItem'),
       }),
       editor: pluginEditorApi(),
+      tables: Object.freeze({
+        format: fn => addTableFormatter(entry, fn),
+        update: (target, fn) => updateTableMeta(entry, target, fn),
+      }),
       people: Object.freeze({ provide: fn => providePeople(id, fn) }),
     });
   }
@@ -976,19 +984,54 @@
    *  action?(target) oder panel?(target, { close }) }; genau eines von action und panel. target: { id, ids } (ids: die
    *  ausgewählten Notizen, wenn der Knoten zur Mehrfachauswahl gehört, sonst nur er; ohne archivierte). panel liefert den
    *  Inhalt eines Untermenüs (ein Element), das die App neben dem Menü zeigt. write (Vorgabe true): fehlt im Lesemodus. */
-  function addPluginContextItem(entry, spec) {
+  function addPluginContextItem(entry, spec, list, what) {
     const ok = spec && typeof spec.label === 'string' && spec.label.trim()
       && (typeof spec.action === 'function') !== (typeof spec.panel === 'function')
       && (spec.visible == null || typeof spec.visible === 'function');
-    if (!ok) throw new Error(t('addContextMenuItem braucht label (Text) und entweder action oder panel (Funktion)'));
-    state.pluginContextItems.push({ entry, spec });
+    if (!ok) throw new Error(t('{was} braucht label (Text) und entweder action oder panel (Funktion)', { was: what || 'addContextMenuItem' }));
+    (list || state.pluginContextItems).push({ entry, spec });
+  }
+
+  /** Format für Tabellen (seit 2.10.0): fn(table) liefert { table, header, columns, rows, cells } mit Klassen und erlaubten
+   *  CSS-Angaben (packages/core/markdown.js). Liefert eine Funktion zum Abmelden; beim Ausschalten wird abgemeldet. */
+  function addTableFormatter(entry, fn) {
+    if (typeof fn !== 'function') throw new Error(t('tables.format braucht eine Funktion'));
+    const item = { entry, fn };
+    state.tableFormatters.push(item);
+    schedulePreview(); // eine offene Vorschau zeigt die Tabellen gleich mit (und nach dem Abmelden ohne) die Angaben
+    return () => { state.tableFormatters = state.tableFormatters.filter(x => x !== item); schedulePreview(); };
+  }
+
+  /** Für M.render: ruft alle eingeschalteten Formatierer mit { noteId, line, meta, header, headerColumn, cols, rows, cells } auf. */
+  function tableFormatFor(noteId) {
+    const list = state.tableFormatters.filter(f => f.entry.status === 'active');
+    if (!list.length) return undefined;
+    return info => {
+      const arg = Object.freeze(Object.assign({ noteId }, info));
+      const out = [];
+      for (const f of list) {
+        try { const r = f.fn(arg); if (r && typeof r === 'object') out.push(r); } catch (e) { console.warn(`Erweiterung ${f.entry.id}`, e); } // i18n-ignore: Protokoll
+      }
+      return out;
+    };
+  }
+
+  /** Format einer Tabelle der offenen Notiz ändern (ctx.tables.update): fn(meta) ändert das Objekt oder liefert ein neues.
+   *  target: { noteId, line } wie im Kontextmenü. Liefert true, wenn sich der Text geändert hat. */
+  async function updateTableMeta(entry, target, fn) {
+    if (!target || typeof fn !== 'function' || target.noteId !== state.currentId || el.body.readOnly) return false;
+    let r = null;
+    try { r = Tables.setMeta(el.body.value, Number(target.line), fn, el.body.selectionStart || 0); } catch (e) { runPlugin(entry, () => { throw e; }); return false; }
+    if (!r || r.text === el.body.value) return false;
+    await applyTableEdit(r);
+    return true;
   }
 
   /** Die Einträge der Erweiterungen für einen Knoten, für showContextMenu. use: { multi, applied } dieses Menüs; wurde mit
    *  einem Eintrag etwas getan (action, close() oder applied() im Untermenü), wird die Mehrfachauswahl danach aufgehoben. */
-  function pluginContextEntries(target, use) {
+  function pluginContextEntries(target, use, list) {
     const out = [];
-    for (const { entry, spec } of state.pluginContextItems) {
+    for (const { entry, spec } of list || state.pluginContextItems) {
       if (entry.status !== 'active') continue;
       if (spec.visible) {
         let show = false;
@@ -1036,6 +1079,10 @@
     for (const off of state.pluginProviders.get(id) || []) off();
     state.pluginProviders.delete(id);
     state.pluginContextItems = state.pluginContextItems.filter(x => x.entry.id !== id);
+    state.pluginTableItems = state.pluginTableItems.filter(x => x.entry.id !== id);
+    const formatters = state.tableFormatters.length;
+    state.tableFormatters = state.tableFormatters.filter(x => x.entry.id !== id);
+    if (state.tableFormatters.length !== formatters) schedulePreview();
   }
 
   /** Schaltet eine Datei aus plugins/ ein (lädt sie bei Bedarf) oder aus. Gemerkt wird nur, was sich gültig gemeldet hat. */
@@ -1400,6 +1447,7 @@
       includeToc: el.printIncludeToc.checked,
       pageBreaks: el.printPageBreaks.checked,
       attachmentUrl: id => attachmentUrl(id),
+      tableFormat: tableFormatFor(null),
     });
     if (el.printDialog.open) el.printDialog.close();
     Printer.print(html);
@@ -1807,6 +1855,7 @@
     el.preview.innerHTML = M.render(text, {
       highlight: state.query.trim() || null,
       resolveRef,
+      tableFormat: tableFormatFor(state.currentId),
       noteLink,
       resolveAttachment: id => state.attachmentUrls.get(id) || null,
       interactiveTasks: !el.body.readOnly,
@@ -2613,8 +2662,16 @@
     await onEdit();
   }
 
+  /** Änderung an einer Tabelle aus der Vorschau: gleich neu zeichnen, sonst träfe ein rascher zweiter Rechtsklick die alten Zeilen. */
+  async function applyTableEdit(result) {
+    const saved = applyEdit(result);
+    if (state.editorMode !== 'edit') { clearTimeout(state.previewTimer); await renderPreview(); }
+    await saved;
+  }
+
   async function runCommand(cmd) {
     if (state.currentId == null || el.body.readOnly) return;
+    if (cmd === 'table') { openTablePicker(el.mdToolbar.querySelector('[data-cmd="table"]')); return; }
     const text = el.body.value;
     const s = el.body.selectionStart || 0;
     const e = el.body.selectionEnd || s;
@@ -3696,6 +3753,178 @@
     await applyEdit({ text: text.slice(0, ctx.start) + ins + text.slice(ctx.end + (ctx.close ? 2 : 0)), selStart: caret, selEnd: caret });
   }
 
+  // ---------- Tabellen (v2.10.0): einfügen per Raster, Kontextmenü in der Vorschau ----------
+
+  const PICK_COLS = 8, PICK_ROWS = 10;
+  const tableLabel = n => t('Spalte {n}', { n });
+  let picker = null;
+
+  /** Das Raster zum Einfügen (einmal gebaut): Zeigen oder Ziehen wählt Spalten × Zeilen, Loslassen oder Klick fügt ein; Pfeiltasten
+   *  ändern die Grösse, Enter fügt ein, Esc schliesst. Darunter «Titelzeile» (die erste Zeile ist der Kopf) und «Titelspalte». */
+  function tablePicker() {
+    if (picker) return picker;
+    const box = document.createElement('div');
+    box.className = 'table-picker';
+    box.id = 'tablePicker';
+    box.hidden = true;
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', t('Tabelle einfügen'));
+    const grid = document.createElement('div');
+    grid.className = 'tp-grid';
+    grid.tabIndex = 0;
+    grid.setAttribute('role', 'grid');
+    grid.setAttribute('aria-label', t('Grösse der Tabelle: Pfeiltasten, Enter fügt ein'));
+    const cells = [];
+    for (let r = 0; r < PICK_ROWS; r++) {
+      for (let c = 0; c < PICK_COLS; c++) {
+        const d = document.createElement('div');
+        d.className = 'tp-cell';
+        d.dataset.c = String(c + 1);
+        d.dataset.r = String(r + 1);
+        cells.push(d);
+        grid.appendChild(d);
+      }
+    }
+    const size = document.createElement('div');
+    size.className = 'tp-size';
+    const opts = document.createElement('div');
+    opts.className = 'tp-opts';
+    const check = (text, on) => {
+      const l = document.createElement('label');
+      const i = document.createElement('input');
+      i.type = 'checkbox';
+      i.checked = on;
+      l.append(i, text);
+      opts.appendChild(l);
+      return i;
+    };
+    const head = check(t('Titelzeile'), true);
+    const headCol = check(t('Titelspalte'), false);
+    head.className = 'tp-head';
+    headCol.className = 'tp-headcol';
+    box.append(grid, size, opts);
+    document.body.appendChild(box);
+
+    const p = { box, grid, cols: 0, rows: 0, drag: false, sel: null, anchor: null };
+    const paint = () => {
+      for (const d of cells) {
+        const c = Number(d.dataset.c), r = Number(d.dataset.r);
+        const on = c <= p.cols && r <= p.rows;
+        d.classList.toggle('on', on);
+        d.classList.toggle('head', on && r === 1 && head.checked);
+      }
+      size.textContent = p.cols ? t('{spalten} × {zeilen}', { spalten: p.cols, zeilen: p.rows }) : t('Grösse wählen');
+    };
+    p.set = (c, r) => { p.cols = Math.max(1, Math.min(PICK_COLS, c)); p.rows = Math.max(1, Math.min(PICK_ROWS, r)); paint(); };
+    p.paint = paint;
+    const cellAt = (x, y) => { const d = document.elementFromPoint(x, y); return d && d.classList && d.classList.contains('tp-cell') && grid.contains(d) ? d : null; };
+    const insertNow = async () => {
+      if (!p.cols) return;
+      const r = Tables.insert(el.body.value, p.sel.s, p.sel.e, p.cols, p.rows, { header: head.checked, headerColumn: headCol.checked, label: tableLabel });
+      closeTablePicker();
+      await applyEdit(r);
+    };
+    grid.addEventListener('pointermove', e => { const d = cellAt(e.clientX, e.clientY); if (d) p.set(Number(d.dataset.c), Number(d.dataset.r)); });
+    grid.addEventListener('pointerdown', e => {
+      const d = cellAt(e.clientX, e.clientY);
+      if (!d) return;
+      e.preventDefault();
+      p.drag = true;
+      p.set(Number(d.dataset.c), Number(d.dataset.r));
+      try { grid.setPointerCapture(e.pointerId); } catch (err) { /* egal */ }
+    });
+    grid.addEventListener('pointerup', async e => {
+      if (!p.drag) return;
+      p.drag = false;
+      const d = cellAt(e.clientX, e.clientY);
+      if (d) p.set(Number(d.dataset.c), Number(d.dataset.r));
+      await insertNow();
+    });
+    grid.addEventListener('keydown', async e => {
+      const step = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] }[e.key];
+      if (step) { e.preventDefault(); p.set((p.cols || 1) + step[0], (p.rows || 1) + step[1]); }
+      else if (e.key === 'Enter') { e.preventDefault(); await insertNow(); }
+    });
+    box.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeTablePicker(true); } });
+    head.addEventListener('change', paint);
+    document.addEventListener('pointerdown', e => {
+      if (!box.hidden && !box.contains(e.target) && !(p.anchor && p.anchor.contains(e.target))) closeTablePicker();
+    }, true);
+    picker = p;
+    return p;
+  }
+
+  /** Öffnet das Raster unter (oder über) anchor; eingefügt wird an der Markierung im Text, wie sie beim Öffnen war. */
+  function openTablePicker(anchor) {
+    if (!Tables || state.currentId == null || el.body.readOnly) return;
+    const p = tablePicker();
+    if (!p.box.hidden) { closeTablePicker(true); return; }
+    p.sel = { s: el.body.selectionStart || 0, e: el.body.selectionEnd || 0 };
+    p.anchor = anchor || null;
+    p.cols = 0;
+    p.rows = 0;
+    p.drag = false;
+    p.paint();
+    p.box.hidden = false;
+    const a = anchor ? anchor.getBoundingClientRect() : el.body.getBoundingClientRect();
+    const w = p.box.offsetWidth, h = p.box.offsetHeight;
+    p.box.style.left = `${Math.max(8, Math.min(a.left, window.innerWidth - w - 8))}px`;
+    p.box.style.top = `${a.bottom + 6 + h <= window.innerHeight - 8 ? a.bottom + 6 : Math.max(8, a.top - h - 6)}px`;
+    if (anchor) anchor.setAttribute('aria-expanded', 'true');
+    p.grid.focus();
+  }
+
+  function closeTablePicker(backToText) {
+    if (!picker || picker.box.hidden) return;
+    picker.box.hidden = true;
+    if (picker.anchor) picker.anchor.setAttribute('aria-expanded', 'false');
+    if (backToText && isEditorOpen()) el.body.focus();
+  }
+
+  /** Was eine Zelle der Vorschau meint: { noteId, line (Kopfzeile im Text), row (-1 Titelzeile), col, cols, rows, header,
+   *  headerColumn, meta } (eingefroren, meta als Kopie), oder null, wenn die Tabelle nicht mehr so im Text steht. */
+  function tableTarget(cellEl) {
+    const table = cellEl.closest('table.md-table[data-src]');
+    if (!table || !Tables) return null;
+    const line = Number(table.dataset.src);
+    const found = Tables.tableAtLine(el.body.value, line);
+    if (!found) return null;
+    const tb = found.t;
+    const tr = cellEl.parentElement;
+    return Object.freeze({
+      noteId: state.currentId, line, row: tr.closest('thead') ? -1 : Number(tr.dataset.row), col: Number(cellEl.dataset.col),
+      cols: tb.cols, rows: tb.rows.length, header: !!tb.header, headerColumn: tb.meta.kopfspalte === true,
+      meta: Object.freeze(JSON.parse(JSON.stringify(tb.meta))),
+    });
+  }
+
+  /** Rechtsklick auf eine Tabelle in der Vorschau: Titelzeile, Titelspalte, Hervorheben; Zeilen und Spalten; Einträge der Erweiterungen. */
+  function onPreviewContextMenu(e) {
+    const cellEl = e.target.closest('table.md-table[data-src] th, table.md-table[data-src] td');
+    if (!cellEl || state.currentId == null || el.body.readOnly || readOnly()) return;
+    const tg = tableTarget(cellEl);
+    if (!tg) return;
+    e.preventDefault();
+    const caret = () => el.body.selectionStart || 0;
+    const run = fn => async () => { const r = fn(el.body.value); if (r && r.text !== el.body.value) await applyTableEdit(r); };
+    const items = [
+      { write: true, label: t('Titelzeile'), checked: tg.header, title: t('Erste Zeile als Titel, bleibt beim Scrollen oben und steht im Druck auf jeder Seite'), action: run(text => Tables.toggleHeader(text, tg.line, tableLabel, caret())) },
+      { write: true, label: t('Titelspalte'), checked: tg.headerColumn, title: t('Erste Spalte als Titel'), action: run(text => Tables.setMeta(text, tg.line, m => { m.kopfspalte = !tg.headerColumn; }, caret())) },
+      { write: true, label: t('Titel hervorheben'), checked: tg.meta.hervorheben === true, title: t('Titelzeile und Titelspalte im Ton der Hauptfarbe'), action: run(text => Tables.setMeta(text, tg.line, m => { m.hervorheben = tg.meta.hervorheben !== true; }, caret())) },
+      'sep',
+    ];
+    if (tg.row >= 0) items.push({ write: true, label: t('Zeile darüber einfügen'), action: run(text => Tables.insertRow(text, tg.line, tg.row, 'above')) });
+    items.push({ write: true, label: t('Zeile darunter einfügen'), action: run(text => Tables.insertRow(text, tg.line, tg.row, 'below')) });
+    if (tg.row >= 0) items.push({ write: true, label: t('Zeile löschen'), action: run(text => Tables.deleteRow(text, tg.line, tg.row, caret())) });
+    items.push('sep',
+      { write: true, label: t('Spalte links einfügen'), action: run(text => Tables.insertColumn(text, tg.line, tg.col, 'left', tg.header ? tableLabel : null)) },
+      { write: true, label: t('Spalte rechts einfügen'), action: run(text => Tables.insertColumn(text, tg.line, tg.col, 'right', tg.header ? tableLabel : null)) });
+    if (tg.cols > 1) items.push({ write: true, label: t('Spalte löschen'), action: run(text => Tables.deleteColumn(text, tg.line, tg.col, caret())) });
+    const fromPlugins = pluginContextEntries(tg, { multi: false, applied: false }, state.pluginTableItems);
+    if (fromPlugins.length) items.push('sep', ...fromPlugins);
+    showContextMenu(items, e.clientX, e.clientY);
+  }
+
   // ---------- Aufgaben-Ansicht ----------
 
   async function setTaskFilter(status) {
@@ -4542,6 +4771,14 @@
       if (e.isComposing || el.body.readOnly) return;
       if (state.wiki && handleWikiKey(e)) return; // offene Vorschläge für [[Verweise]]
       if (state.mention && handleMentionKey(e)) return; // offene Vorschlagsliste für @kürzel
+      // Tabellen (v2.10.0): Tab und Umschalt+Tab springen von Feld zu Feld, Enter fügt eine Zeile an; die Striche werden ausgerichtet
+      if (Tables && !mod && !e.altKey && (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey))) {
+        const s = el.body.selectionStart || 0;
+        if (!el.body.value.slice(s, el.body.selectionEnd || s).includes('\n')) {
+          const r = e.key === 'Tab' ? Tables.move(el.body.value, s, e.shiftKey ? -1 : 1) : Tables.enter(el.body.value, s);
+          if (r) { e.preventDefault(); await applyEdit(r); return; }
+        }
+      }
       // Listen, Aufgaben, Zitate und Antworten weiterführen; Shift+Enter bleibt die normale neue Zeile.
       if (e.key === 'Enter' && !mod && !e.shiftKey && !e.altKey) {
         const r = E.continueLine(el.body.value, el.body.selectionStart || 0, el.body.selectionEnd || 0);
@@ -4669,6 +4906,8 @@
     el.attachBtn.addEventListener('click', () => { el.attachInput.value = ''; el.attachInput.click(); });
     el.printBtn.addEventListener('click', () => openPrintDialog({ noteId: state.currentId }));
     el.copyLinkBtn.addEventListener('click', () => copyNoteLink(state.currentId));
+    el.tableMenuBtn.addEventListener('click', () => { closeNoteMenu(); openTablePicker(el.noteMenuBtn); });
+    el.preview.addEventListener('contextmenu', onPreviewContextMenu);
     el.mapPrintBtn.addEventListener('click', () => openPrintDialog({}));
     el.multiPrintBtn.addEventListener('click', () => openPrintDialog({ scope: 'selection' }));
     el.multiClearBtn.addEventListener('click', clearMulti);
@@ -4727,7 +4966,7 @@
       if (!el.contextMenu.hidden && !e.target.closest('.context-menu')) hideContextMenu();
     });
     document.addEventListener('contextmenu', e => {
-      if (!e.target.closest('#mindmap')) hideContextMenu();
+      if (!e.target.closest('#mindmap') && !e.target.closest('#preview table.md-table')) hideContextMenu(); // Tabellen: eigenes Menü
     });
     window.addEventListener('resize', async () => { hideContextMenu(); if (state.rename) await cancelRename(); });
     window.addEventListener('blur', hideContextMenu);

@@ -1685,6 +1685,219 @@ async function runTemplates(browser, part, step) {
   part('Agenten: list_templates und create_note_from_template (Titel, Platzhalter, Unternotizen, Fehler), nur lesen im Lesemodus, ohne Vorlagen nichts');
 }
 
+async function runTables(browser, part, step) {
+  globalThis.window = globalThis;
+  for (const f of ['i18n.js', 'dates.js', 'questions.js', 'embeds.js', 'tables.js', 'markdown.js']) require(path.join(__dirname, '..', 'packages', 'core', f));
+  const Tb = globalThis.NoNotesTables;
+  const M = globalThis.NoNotesMarkdown;
+  const sel = r => r.text.slice(r.selStart, r.selEnd);
+  const caretLine = r => r.text.slice(0, r.selStart).split('\n').length - 1;
+  const json = v => JSON.parse(JSON.stringify(v));
+
+  // ---------- Lesen ----------
+  assert.deepEqual(Tb.splitRow('| a | b \\| c |'), ['a', 'b \\| c'], '«\\|» trennt nicht');
+  assert.deepEqual(Tb.splitRow('|a|b'), ['a', 'b'], 'ohne Strich am Ende');
+  assert.deepEqual(Tb.splitRow('| a |  |'), ['a', ''], 'leeres letztes Feld');
+  assert.ok(Tb.isDelimiter('|:---|---:| :-: |') && Tb.isDelimiter('|---|') && !Tb.isDelimiter('| a |') && !Tb.isDelimiter('---'));
+  assert.deepEqual(Tb.readMeta('<!-- tabelle: {"kopfspalte":true} -->'), { kopfspalte: true });
+  assert.deepEqual(Tb.readMeta('  <!-- Table: {"x":1} -->'), { x: 1 }, 'englisch und gross geschrieben');
+  assert.equal(Tb.readMeta('<!-- tabelle: {kaputt} -->'), null);
+  assert.equal(Tb.readMeta('<!-- tabelle: [1] -->'), null);
+  let lines = ['Text', '<!-- tabelle: {"hervorheben":true} -->', '| A | B | C |', '|:--|:-:|--:|', '| 1 | 2 | 3 | 4 |', '| x |', 'danach'];
+  let t = Tb.parseAt(lines, 2);
+  assert.deepEqual({ start: t.start, head: t.head, end: t.end, metaLine: t.metaLine, meta: t.meta, align: t.align, rows: t.rows, cols: t.cols, header: t.header },
+    { start: 1, head: 2, end: 6, metaLine: 1, meta: { hervorheben: true }, align: ['left', 'center', 'right'], rows: [['1', '2', '3'], ['x', '', '']], cols: 3, header: ['A', 'B', 'C'] },
+    'Format darüber, Ausrichtung, Zeilen auf die Spaltenzahl gebracht, Ende vor der ersten Zeile ohne «|»');
+  assert.equal(Tb.parseAt(['|   |   |', '|---|---|', '| 1 | 2 |'], 0).header, null, 'leere Kopfzeile: keine Titelzeile');
+  assert.equal(Tb.parseAt(['| a | b |', '|---|'], 0), null, 'Trennzeile mit anderer Spaltenzahl');
+  assert.equal(Tb.parseAt(['| a | b |', 'kein Strich'], 0), null);
+  part('Lesen: Felder mit «\\|», Trennzeile mit Ausrichtung, Format-Zeile (deutsch und englisch), leere Kopfzeile, Zeilen auf die Spaltenzahl');
+
+  // ---------- Einfügen und Tab/Enter ----------
+  let r = Tb.insert('Text', 4, 4, 3, 3, { header: true });
+  assert.equal(r.text, 'Text\n\n| Spalte 1 | Spalte 2 | Spalte 3 |\n| -------- | -------- | -------- |\n|          |          |          |\n|          |          |          |\n');
+  assert.equal(sel(r), 'Spalte 1', 'erster Titel markiert');
+  r = Tb.insert('vorher\n\nnachher', 7, 7, 2, 2, { header: false, headerColumn: true, label: n => 'Col ' + n });
+  assert.equal(r.text, 'vorher\n\n<!-- tabelle: {"kopfspalte":true} -->\n|     |     |\n| --- | --- |\n|     |     |\n|     |     |\n\nnachher', 'ohne Titelzeile: leerer Kopf, Titelspalte im Format');
+  assert.equal(r.selStart, r.selEnd);
+  assert.equal(caretLine(r), 5, 'Cursor im ersten Feld');
+  r = Tb.insert('', 0, 0, 1, 1, { header: true, label: n => 'Col ' + n });
+  assert.equal(r.text, '| Col 1 |\n| ----- |\n', 'eine Zeile mit Titel: nur der Kopf');
+  assert.equal(Tb.insert('', 0, 0, 99, 99, {}).text.split('\n')[0].split('|').length - 2, 20, 'höchstens 20 Spalten');
+
+  let text = 'Liste:\n\n| Name | Wert |\n|---|---|\n| a | 1 |\n';
+  let pos = text.indexOf('Name') + 2;
+  r = Tb.move(text, pos, 1);
+  assert.equal(r.text, 'Liste:\n\n| Name | Wert |\n| ---- | ---- |\n| a    | 1    |\n', 'Tab richtet die Striche aus');
+  assert.equal(sel(r), 'Wert');
+  r = Tb.move(r.text, r.selStart, 1);
+  assert.equal(sel(r), 'a', 'über die Trennzeile in die erste Zeile');
+  r = Tb.move(r.text, r.selStart, -1);
+  assert.equal(sel(r), 'Wert', 'Umschalt+Tab zurück');
+  r = Tb.move(r.text, r.text.indexOf('1    |'), 1);
+  assert.equal(r.text, 'Liste:\n\n| Name | Wert |\n| ---- | ---- |\n| a    | 1    |\n|      |      |\n', 'hinter dem letzten Feld eine neue Zeile');
+  assert.equal(caretLine(r), 5);
+  r = Tb.move(r.text, r.text.indexOf('| Name') + 2, -1);
+  assert.equal(sel(r), 'Name', 'vor dem ersten Feld bleibt der Cursor im ersten');
+  // Breite nach dem Tippen: längerer Inhalt verbreitert die Spalte
+  text = '| Name | Wert |\n| ---- | ---- |\n| Bodensee | 1 |';
+  r = Tb.move(text, text.indexOf('Bodensee') + 8, 1);
+  assert.equal(r.text, '| Name     | Wert |\n| -------- | ---- |\n| Bodensee | 1    |');
+  assert.equal(sel(r), '1');
+  // ohne Titelzeile wird der leere Kopf übersprungen
+  text = '|     |     |\n| --- | --- |\n| a   | b   |';
+  r = Tb.move(text, text.indexOf('b') + 1, -1);
+  assert.equal(sel(r), 'a');
+  r = Tb.move(r.text, r.selStart, -1);
+  assert.equal(sel(r), 'a', 'nicht in den leeren Kopf');
+  assert.equal(Tb.move('kein | Tisch', 3, 1), null, 'ausserhalb einer Tabelle nichts');
+
+  text = '| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\nText';
+  r = Tb.enter(text, text.indexOf('2'));
+  assert.equal(r.text, '| A   | B   |\n| --- | --- |\n| 1   | 2   |\n|     |     |\n| 3   | 4   |\nText', 'Enter: neue Zeile darunter');
+  assert.equal(caretLine(r), 3);
+  r = Tb.enter(text, 2);
+  assert.equal(r.text.split('\n')[2], '|     |     |', 'Enter im Kopf: neue erste Zeile');
+  text = '| A | B |\n|---|---|\n| 1 | 2 |\n|   |   |\nText';
+  r = Tb.enter(text, text.indexOf('|   |   |') + 2);
+  assert.equal(r.text, '| A   | B   |\n| --- | --- |\n| 1   | 2   |\n\n\n\nText', 'Enter in der leeren letzten Zeile: Tabelle endet, Leerzeilen um die Zeile des Cursors');
+  assert.equal(caretLine(r), 4);
+  text = '| A | B |\n|---|---|\n| 1 | 2 |\n|   |   |\n\n\n\n\nText';
+  r = Tb.enter(text, text.indexOf('|   |   |') + 2);
+  assert.equal(r.text, '| A   | B   |\n| --- | --- |\n| 1   | 2   |\n\n\n\n\nText', 'vorhandene Leerzeilen genügen');
+  assert.equal(caretLine(r), 4);
+  for (const end of ['', '\n', '\n\n']) {
+    text = '| A | B |\n|---|---|\n| 1 | 2 |\n|   |   |' + end;
+    r = Tb.enter(text, text.indexOf('|   |   |') + 2);
+    assert.equal(r.text, '| A   | B   |\n| --- | --- |\n| 1   | 2   |\n\n', `am Ende des Texts (${JSON.stringify(end)}): eine Leerzeile, dann der Cursor`);
+    assert.equal(r.selStart, r.text.length);
+  }
+  part('Einfügen (mit und ohne Titelzeile, Titelspalte, Grenzen) und Editor: Tab und Umschalt+Tab mit Ausrichten, neue Zeile am Ende, Enter fügt an oder beendet');
+
+  // ---------- Codeblöcke, Entscheidblöcke, mehrere Tabellen ----------
+  text = '```\n| a | b |\n|---|---|\n| 1 | 2 |\n```';
+  assert.equal(Tb.at(text, text.indexOf('1')), null, 'im Codeblock nur Text');
+  assert.equal(Tb.move(text, text.indexOf('1'), 1), null);
+  text = '~~~~md\n```\n| a | b |\n~~~~\n| a | b |\n|---|---|\n| 1 | 2 |';
+  assert.ok(Tb.at(text, text.lastIndexOf('1')), 'nach dem Codeblock wieder eine Tabelle (Zaun mit ~~~~, darin ```)');
+  text = '?!``` Varianten\n| a | b |\n|---|---|\n| 1 | 2 |\n```';
+  assert.equal(Tb.at(text, text.indexOf('1')).row, 0, 'im Entscheidblock gilt die Tabelle');
+  text = '| a |\n|---|\n| 1 |\n| b |\n|---|\n| 2 |';
+  const a2 = Tb.at(text, text.lastIndexOf('2'));
+  assert.equal(a2, null, 'eine zweite Trennzeile beendet die erste Tabelle; ohne Kopf darüber keine zweite');
+  text = '| a |\n|---|\n| 1 |\n\n| b |\n|---|\n| 2 |';
+  assert.equal(Tb.at(text, text.lastIndexOf('2')).t.head, 4, 'zwei Tabellen mit Leerzeile');
+  part('Codeblöcke (``` und ~~~) sind keine Tabellen, Entscheidblöcke schon; mehrere Tabellen hintereinander');
+
+  // ---------- Schritte am Kopf ----------
+  text = 'Intro\n| A | B |\n|---|--:|\n| 1 | 2 |\nEnde';
+  r = Tb.setMeta(text, 1, m => { m.kopfspalte = true; }, text.length);
+  assert.equal(r.text, 'Intro\n<!-- tabelle: {"kopfspalte":true} -->\n| A   | B   |\n| --- | --: |\n| 1   | 2   |\nEnde', 'Format-Zeile entsteht, Ausrichtung bleibt');
+  assert.equal(r.selStart, r.text.length, 'Cursor hinter der Tabelle wandert mit');
+  r = Tb.setMeta(r.text, 2, m => { m.hervorheben = true; m.plugin = { breite: { 0: 'schmal' } }; });
+  assert.deepEqual(Tb.readMeta(r.text.split('\n')[1]), { kopfspalte: true, hervorheben: true, plugin: { breite: { 0: 'schmal' } } });
+  r = Tb.setMeta(r.text, 2, m => ({ kopfspalte: false, hervorheben: null }));
+  assert.equal(r.text, 'Intro\n| A   | B   |\n| --- | --: |\n| 1   | 2   |\nEnde', 'leeres Format: die Zeile verschwindet');
+  assert.equal(Tb.setMeta(r.text, 0, m => { m.x = 1; }), null, 'keine Tabelle in dieser Zeile');
+  r = Tb.toggleHeader(r.text, 1, null);
+  assert.equal(r.text, 'Intro\n|     |     |\n| --- | --: |\n| A   | B   |\n| 1   | 2   |\nEnde', 'Titelzeile aus: der Kopf wird zur ersten Zeile');
+  r = Tb.toggleHeader(r.text, 1, null);
+  assert.equal(r.text.split('\n')[1], '| A   | B   |', 'und wieder ein');
+  r = Tb.toggleHeader('|   |   |\n|---|---|', 0, n => 'Col ' + n);
+  assert.equal(r.text, '| Col 1 | Col 2 |\n| ----- | ----- |', 'ohne Zeilen: Spaltentitel');
+  text = '| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |';
+  r = Tb.insertRow(text, 0, 0, 'above');
+  assert.deepEqual(r.text.split('\n').slice(2).map(l => Tb.splitRow(l)), [['', ''], ['1', '2'], ['3', '4']]);
+  assert.equal(caretLine(r), 2);
+  r = Tb.insertRow(text, 0, 1, 'below');
+  assert.deepEqual(r.text.split('\n').slice(2).map(l => Tb.splitRow(l)), [['1', '2'], ['3', '4'], ['', '']]);
+  r = Tb.insertRow(text, 0, -1, 'below');
+  assert.deepEqual(Tb.splitRow(r.text.split('\n')[2]), ['', ''], 'unter dem Kopf: erste Zeile');
+  r = Tb.deleteRow(text, 0, 0);
+  assert.deepEqual(r.text.split('\n').slice(2).map(l => Tb.splitRow(l)), [['3', '4']]);
+  r = Tb.insertColumn(text, 0, 0, 'right', n => 'Spalte ' + n);
+  assert.deepEqual(Tb.splitRow(r.text.split('\n')[0]), ['A', 'Spalte 2', 'B']);
+  assert.equal(sel(r), '', 'Cursor am Anfang des neuen Titels');
+  assert.equal(r.text.slice(r.selStart, r.selStart + 8), 'Spalte 2');
+  r = Tb.insertColumn('|   |   |\n|---|---|\n| 1 | 2 |', 0, 0, 'left', n => 'X');
+  assert.deepEqual(Tb.splitRow(r.text.split('\n')[2]), ['', '1', '2'], 'ohne Titelzeile bleibt der Kopf leer');
+  assert.equal(r.text.split('\n')[0].replace(/[|\s]/g, ''), '');
+  r = Tb.deleteColumn(text, 0, 1);
+  assert.equal(r.text, '| A   |\n| --- |\n| 1   |\n| 3   |');
+  assert.equal(Tb.deleteColumn(r.text, 0, 0).text, r.text, 'die letzte Spalte bleibt');
+  r = Tb.setMeta('x\n<!-- tabelle: {"a":1} -->\n| A |\n|---|', 1, m => { m.b = 2; });
+  assert.equal(r.text, 'x\n<!-- tabelle: {"a":1,"b":2} -->\n| A   |\n| --- |', 'über die Format-Zeile angesprochen');
+  assert.ok(Tb.tableAtLine(r.text, 1) && Tb.tableAtLine(r.text, 2), 'Format-Zeile oder Kopf');
+
+  // Angaben der Erweiterungen je Zeile, Spalte und Feld wandern mit
+  const fm = { kopfspalte: true, 'tab-x': { rows: { h: 'H', 0: 'A', 1: 'B', 2: 'C' }, cols: { 0: 'x', 1: 'y' }, cells: { 'h,1': 'hc', '0,0': 'a0', '1,1': 'b1', '2,0': 'c0', frei: 1 }, other: 5 }, 'tab-y': 'kein Objekt' };
+  text = `<!-- tabelle: ${JSON.stringify(fm)} -->\n| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |`;
+  const metaOf = res => Tb.readMeta(res.text.split('\n')[0]);
+  const mine = res => { const m = metaOf(res); assert.equal(m.kopfspalte, true); assert.equal(m['tab-y'], 'kein Objekt'); assert.equal(m['tab-x'].other, 5); return m['tab-x']; };
+  let x = mine(Tb.insertRow(text, 0, 0, 'below'));
+  assert.deepEqual([x.rows, x.cells], [{ h: 'H', 0: 'A', 2: 'B', 3: 'C' }, { 'h,1': 'hc', '0,0': 'a0', '2,1': 'b1', '3,0': 'c0', frei: 1 }], 'Zeile eingefügt');
+  x = mine(Tb.deleteRow(text, 0, 1));
+  assert.deepEqual([x.rows, x.cells], [{ h: 'H', 0: 'A', 1: 'C' }, { 'h,1': 'hc', '0,0': 'a0', '1,0': 'c0', frei: 1 }], 'Zeile gelöscht: ihre Angaben fallen weg');
+  x = mine(Tb.insertColumn(text, 0, 0, 'left', null));
+  assert.deepEqual([x.cols, x.cells, x.rows.h], [{ 1: 'x', 2: 'y' }, { 'h,2': 'hc', '0,1': 'a0', '1,2': 'b1', '2,1': 'c0', frei: 1 }, 'H'], 'Spalte eingefügt');
+  x = mine(Tb.deleteColumn(text, 0, 0));
+  assert.deepEqual([x.cols, x.cells], [{ 0: 'y' }, { 'h,0': 'hc', '1,0': 'b1', frei: 1 }], 'Spalte gelöscht');
+  r = Tb.toggleHeader(text, 0, null);
+  x = mine(r);
+  assert.deepEqual([x.rows, x.cells], [{ 0: 'H', 1: 'A', 2: 'B', 3: 'C' }, { '0,1': 'hc', '1,0': 'a0', '2,1': 'b1', '3,0': 'c0', frei: 1 }], 'Titelzeile aus: «h» wird Zeile 0');
+  x = mine(Tb.toggleHeader(r.text, 0, null));
+  assert.deepEqual([x.rows, x.cells], [fm['tab-x'].rows, fm['tab-x'].cells], 'und wieder an: wie vorher');
+  x = mine(Tb.enter(text, text.indexOf('| 1 |') + 2));
+  assert.deepEqual(x.rows, { h: 'H', 0: 'A', 2: 'B', 3: 'C' }, 'Enter fügt eine Zeile ein');
+  r = Tb.enter(text + '\n|   |   |', text.length + 3);
+  assert.deepEqual(mine(r).rows, fm['tab-x'].rows, 'Enter in der leeren letzten Zeile: die übrigen bleiben');
+  part('Rechtsklick-Schritte: Format setzen und entfernen (Cursor wandert mit), Titelzeile aus und ein, Zeilen und Spalten einfügen und löschen; Angaben der Erweiterungen wandern mit');
+
+  // ---------- Vorschau ----------
+  text = 'Vorher\n\n<!-- tabelle: {"kopfspalte":true,"hervorheben":true} -->\n| Name | Wert \\| Einheit | Mitte |\n|---|--:|:-:|\n| **a** | 1 | x |\n| b | [[Ziel]] | y |\n\nNachher';
+  let html = M.render(text, { lineMap: true });
+  assert.ok(html.includes('<table class="md-table md-table-col md-table-mark" data-line="2" data-src="2">'), 'data-src: erste Zeile der Tabelle (die Format-Zeile)');
+  assert.ok(html.includes('<thead><tr><th scope="col" data-col="0">Name</th><th scope="col" data-col="1" style="text-align: right">Wert | Einheit</th>'), 'Kopf mit Ausrichtung, «\\|» als Strich');
+  assert.ok(html.includes('<tr data-row="0"><th scope="row" data-col="0"><strong>a</strong></th><td data-col="1" style="text-align: right">1</td><td data-col="2" style="text-align: center">x</td></tr>'), 'Titelspalte als th, Markdown in Feldern');
+  assert.ok(!html.includes('tabelle:'), 'Format-Zeile unsichtbar');
+  assert.match(html, /<p data-line="0">Vorher<\/p>\n<table/);
+  assert.match(html, /<\/table>\n<p data-line="8">Nachher<\/p>/);
+  html = M.render('|   |   |\n|---|---|\n| 1 | 2 |', {});
+  assert.ok(html.includes('class="md-table md-table-nohead"') && !html.includes('<thead>'), 'ohne Titelzeile kein thead');
+  assert.ok(html.includes('data-src="0"'));
+  assert.ok(!M.render('```\n| a |\n|---|\n```', {}).includes('<table'), 'im Code keine Tabelle');
+  assert.ok(!M.render('> | a |\n> |---|\n> | 1 |', {}).includes('data-src'), 'im Zitat ohne Quellzeile (kein Rechtsklick)');
+  assert.ok(M.render('> | a |\n> |---|\n> | 1 |', {}).includes('<table class="md-table"'), 'aber als Tabelle');
+  assert.ok(!M.render('?!``` T\n| a |\n|---|\n| 1 |\n```', {}).includes('data-src'), 'im Block ohne Quellzeile');
+  assert.ok(!M.render('| a |\n|---|', { tableSrc: false }).includes('data-src'), 'tableSrc: false (Druck)');
+  assert.ok(M.render('<!-- tabelle: {"x":1} -->\nkein Tisch', {}).includes('&lt;!-- tabelle'), 'Format-Zeile ohne Tabelle bleibt Text');
+  assert.ok(M.render('Text\n| a |\n|---|\n| 1 |', {}).includes('<p>Text</p>\n<table'), 'Tabelle direkt nach einem Absatz');
+  part('Vorschau: Titelzeile als thead, Titelspalte als th, Hervorheben, Ausrichtung, Markdown und «\\|» in Feldern, Quellzeile nur oben, Code, Zitat, Block');
+
+  // ---------- Angaben von Erweiterungen ----------
+  const seen = [];
+  html = M.render('<!-- tabelle: {"tf":{"b":{"0":"20%"}}} -->\n| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |', {
+    tableFormat: info => {
+      seen.push(info);
+      return [
+        { table: { class: 'tf-x', width: '100%' }, header: { class: 'tf-h', background: '#eef' }, columns: { 0: { width: info.meta.tf.b[0], class: 'tf-c0' } },
+          rows: { 1: { height: '40px', class: 'tf-r1', background: '#ffe' } }, cells: { '1,1': { background: '#fdd', fontWeight: 'bold' }, 'h,1': { color: 'red' } } },
+        { columns: { 1: { background: 'url(javascript:alert(1))', color: 'expression(alert(1))', onclick: 'x', 'text-align': 'center' } }, cells: { '0,0': { class: 'ok bad"class <x>' } } },
+        null, 'Unsinn',
+      ];
+    },
+  });
+  assert.deepEqual(json(seen), [{ line: 0, meta: { tf: { b: { 0: '20%' } } }, header: true, headerColumn: false, cols: 2, rows: 2, cells: { header: ['A', 'B'], rows: [['1', '2'], ['3', '4']] } }]);
+  assert.ok(html.includes('<table class="md-table tf-x" style="width: 100%" data-src="0">'), html);
+  assert.ok(html.includes('<thead><tr class="tf-h"><th scope="col" data-col="0" class="tf-c0" style="width: 20%; background: #eef">A</th><th scope="col" data-col="1" style="text-align: center; background: #eef; color: red">B</th></tr></thead>'), 'Kopf: Klasse am tr, Werte an jedem Feld');
+  assert.ok(html.includes('<tr data-row="1" class="tf-r1"><td data-col="0" class="tf-c0" style="width: 20%; height: 40px; background: #ffe">3</td><td data-col="1" style="text-align: center; height: 40px; background: #ffe; background: #fdd; font-weight: bold">4</td></tr>'), 'Spalte, Zeile, Feld in dieser Reihenfolge');
+  assert.ok(html.includes('<td data-col="0" class="tf-c0 ok" style="width: 20%">1</td>'), 'nur gültige Klassennamen');
+  assert.ok(!/javascript|expression|onclick|url\(/.test(html), 'gefährliche Werte und Eigenschaften fallen weg');
+  html = M.render('| A |\n|---|\n| 1 |', { tableFormat: () => { throw new Error('kaputt'); } });
+  assert.ok(html.includes('<table class="md-table" data-src="0">'), 'Fehler der Erweiterung: Tabelle ohne Angaben');
+  part('Angaben von Erweiterungen: Tabelle, Kopf, Spalten, Zeilen, Felder (Reihenfolge), Format aus der Datei, Klassen und Werte geprüft, Fehler schaden nicht');
+}
+
 suite('Kern-Test', [
   { name: 'Zusammenführen: Myers-Vergleich, Dreiwege-Zusammenführung mit Zufallsdaten, Konflikte, Cursor', run: runMerge },
   { name: 'Datenbank: Standardschema, Angleichen alter Dateien (Schema 1, 11, 12, 13), Konflikterkennung, Autor im Verlauf, Querverweise, Entscheide und Personen', run: runDb },
@@ -1692,6 +1905,7 @@ suite('Kern-Test', [
   { name: 'Vorlagen: Platzhalter in mehreren Sprachen, aus Notizen, Dateiformat, Anlegen und Einfügen, Agenten', run: runTemplates },
   { name: 'Build: fremde Ausprägung, Verzeichnis der Erweiterungen, --plugins, klare Fehler', run: runBuild },
   { name: 'Videoadressen: YouTube, Vimeo, Dailymotion, Fälschungen, Karte im Markdown, maskierte Titel', run: runEmbeds },
+  { name: 'Tabellen: Lesen, Einfügen, Tab und Enter, Rechtsklick-Schritte, Vorschau, Angaben von Erweiterungen', run: runTables },
   { name: 'Agenten: Werkzeugkatalog (Notizen, Fragen, Entscheide, Aufgaben, Verlauf, Archiv, Papierkorb, Lesemodus, Ressourcen) und MCP-Protokoll aller Fassungen', run: runAgent },
   { name: 'Programm für den eigenen Rechner: Einträge für Claude Code und andere, Datei, MCP über die Standardeingabe, Änderungen von aussen, zwei Prozesse mit Sperre, Lesemodus', run: runAgentProgram },
 ]);

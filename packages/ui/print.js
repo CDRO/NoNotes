@@ -84,7 +84,8 @@
 
   /** HTML für den Druck von Notizen.
    *  options: { scope: 'current'|'subtree'|'selection'|'all', noteId, ids, withChildren, archived,
-   *             includeMap, includeToc, pageBreaks, attachmentUrl } (attachmentUrl: id → Promise der Anzeige-Adresse) */
+   *             includeMap, includeToc, pageBreaks, attachmentUrl, tableFormat } (attachmentUrl: id → Promise der Anzeige-Adresse;
+   *             tableFormat: Format der Tabellen aus Erweiterungen, siehe packages/core/markdown.js) */
   async function buildNotesDocument(backend, options) {
     const list = await resolveNotes(backend, options);
     const mapTitle = await backend.getMapTitle();
@@ -124,6 +125,8 @@
       let body = M().render(note.body, {
         resolveRef,
         resolveAttachment: id => urls.get(id) || null,
+        tableFormat: options.tableFormat ? info => options.tableFormat(Object.assign({ noteId: n.id }, info)) : undefined,
+        tableSrc: false,
       });
       body = body.replace(/href="#" class="md-wiki" data-title="([^"]*)" data-note-id="(\d+)"/g, (m, wikiTitle, id) =>
         included.has(Number(id)) ? `href="#print-note-${id}" class="md-wiki" data-title="${wikiTitle}" data-note-id="${id}"` : `class="md-wiki plain" data-title="${wikiTitle}" data-note-id="${id}"`);
