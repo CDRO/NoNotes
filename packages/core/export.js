@@ -312,11 +312,12 @@
     return P.light(await backend.getMeta('accent'));
   }
 
-  /** options.archived (Archiv mitzeichnen), options.sides (Seiten der Hauptäste ohne gespeicherte Seite, wie auf dem Schirm). */
+  /** options.archived (Archiv mitzeichnen), options.sides (Seiten der Hauptäste ohne gespeicherte Seite, wie auf dem Schirm),
+   *  options.style (Farben aus Erweiterungen, seit 3.1.0: { nodes, defs }). */
   async function renderSvg(backend, options) {
     return Mindmap().toSvgString(await backend.getTree({ archive: !!(options && options.archived) }), {
       mapTitle: await backend.getMapTitle(), expandAll: true, accent: await accentOf(backend), links: await backend.getLinks(),
-      sides: options && options.sides,
+      sides: options && options.sides, style: options && options.style,
     });
   }
 

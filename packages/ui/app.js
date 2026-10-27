@@ -182,6 +182,7 @@
     pluginTableItems: [],       // Einträge der Erweiterungen im Kontextmenü einer Tabelle (seit 2.10.0): { entry, spec }
     tableFormatters: [],        // Format der Tabellen aus Erweiterungen (ctx.tables.format, seit 2.10.0): { entry, fn }
     mapSections: [],            // Abschnitte unter der Mindmap in Export und Druck (ctx.export.addMapSection, seit 2.11.0): { entry, fn }
+    mapStyles: [],              // Farben im Mindmap-Bild für Export, Druck und Kopie (ctx.export.addMapStyle, seit 3.1.0): { entry, fn }
     contextSub: null,           // offenes Untermenü des Kontextmenüs: { anchor, el }
     contextUse: null,           // Kontextmenü eines Knotens mit Einträgen der Erweiterungen: { multi, applied }
     editorMode: 'edit',   // 'edit' | 'split' | 'preview'
@@ -575,7 +576,8 @@
     el.exportZipBtn.disabled = true;
     try {
       const archived = el.exportArchive.checked;
-      const svg = await Exporter.renderSvg(B, { archived, sides: state.map.sides() });
+      const style = await mapStyleFor('export', (await B.getTree({ archive: archived })).map(r => r.id));
+      const svg = await Exporter.renderSvg(B, { archived, sides: state.map.sides(), style });
       let png = null;
       try { png = await Exporter.svgToPng(svg, 2); }
       catch (e) { console.warn('PNG', e); }
@@ -959,7 +961,7 @@
         addMapButton: item => addPluginMapButton(entry, item),
         addMapOverlay: element => addPluginMapOverlay(entry, element),
       }),
-      export: Object.freeze({ addMapSection: fn => addMapSection(entry, fn) }),
+      export: Object.freeze({ addMapSection: fn => addMapSection(entry, fn), addMapStyle: fn => addMapStyle(entry, fn) }),
       editor: pluginEditorApi(),
       tables: Object.freeze({
         format: fn => addTableFormatter(entry, fn),
@@ -1029,6 +1031,39 @@
     const item = { entry, fn };
     state.mapSections.push(item);
     return () => { state.mapSections = state.mapSections.filter(x => x !== item); };
+  }
+
+  /** Farben im Mindmap-Bild (seit 3.1.0): fn({ target: 'export' | 'print' | 'copy', ids }) liefert (auch als Promise)
+   *  { nodes: { [id]: { fill, stroke, text } }, defs } oder nichts. ids: die Notizen, die im Bild vorkommen können. Farben sind
+   *  #rgb, rgb(), hsl(), Namen oder url(#…) auf ein Muster aus defs (SVG, etwa <pattern>). Liefert eine Funktion zum Abmelden. */
+  function addMapStyle(entry, fn) {
+    if (typeof fn !== 'function') throw new Error(t('{was} braucht eine Funktion', { was: 'export.addMapStyle' }));
+    const item = { entry, fn };
+    state.mapStyles.push(item);
+    return () => { state.mapStyles = state.mapStyles.filter(x => x !== item); };
+  }
+
+  /** Die Farben aller eingeschalteten Erweiterungen für ein Mindmap-Bild: { nodes, defs } (spätere überschreiben frühere je Knoten).
+   *  defs, die kein gültiges SVG sind, fallen weg, damit das Bild nicht kaputtgeht; Fehler einer Erweiterung lassen nur ihren Teil weg. */
+  async function mapStyleFor(target, ids) {
+    const nodes = {};
+    const defs = [];
+    for (const { entry, fn } of state.mapStyles) {
+      if (entry.status !== 'active') continue;
+      try {
+        const r = await fn(Object.freeze({ target, ids: Object.freeze([...ids]) }));
+        if (!r) continue;
+        for (const [id, st] of Object.entries(r.nodes || {})) {
+          if (st && typeof st === 'object') nodes[id] = Object.assign({}, nodes[id], { fill: st.fill, stroke: st.stroke, text: st.text });
+        }
+        if (typeof r.defs === 'string' && r.defs.trim()) {
+          const doc = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg"><defs>${r.defs}</defs></svg>`, 'image/svg+xml');
+          if (doc.getElementsByTagName('parsererror').length) console.warn(`Erweiterung ${entry.id}: defs sind kein gültiges SVG`); // i18n-ignore: Protokoll
+          else defs.push(r.defs);
+        }
+      } catch (e) { console.warn(`Erweiterung ${entry.id}`, e); } // i18n-ignore: Protokoll
+    }
+    return { nodes, defs: defs.join('') };
   }
 
   /** Die Abschnitte der eingeschalteten Erweiterungen für Export oder Druck: [{ title, markdown }]. Fehler einer Erweiterung
@@ -1157,6 +1192,7 @@
     for (const b of el.mdToolbar.querySelectorAll(`.tb-plugin[data-plugin="${id}"]`)) b.remove();
     for (const x of el.mapView.querySelectorAll(`.map-plugin-btn[data-plugin="${id}"], .map-overlay[data-plugin="${id}"]`)) x.remove();
     state.mapSections = state.mapSections.filter(x => x.entry.id !== id);
+    state.mapStyles = state.mapStyles.filter(x => x.entry.id !== id);
     for (const off of state.pluginProviders.get(id) || []) off();
     state.pluginProviders.delete(id);
     state.pluginContextItems = state.pluginContextItems.filter(x => x.entry.id !== id);
@@ -1531,6 +1567,7 @@
       attachmentUrl: id => attachmentUrl(id),
       tableFormat: tableFormatFor(null),
       mapSections: el.printIncludeMap.checked ? await mapSectionsFor('print') : [],
+      mapStyle: el.printIncludeMap.checked ? await mapStyleFor('print', (await B.getTree({ archive: true })).map(r => r.id)) : null,
     });
     if (el.printDialog.open) el.printDialog.close();
     Printer.print(html);
@@ -5120,24 +5157,37 @@
 
   /** Mindmap als Bild (PNG) in die Zwischenablage (v3.0.0), so wie sie zu sehen ist: eingeklappte Äste bleiben zu, Archiv und
    *  Querverweise wie eingeblendet, ohne Hervorhebung der Suche. Nimmt der Browser kein Bild an, lädt er es herunter. Das Bild
-   *  entsteht in einem Promise, damit der Aufruf von clipboard.write noch zum Klick gehört (Safari verlangt das). */
-  function copyMapImage() {
+   *  entsteht in einem Promise, damit der Aufruf von clipboard.write noch zum Klick gehört (Safari verlangt das).
+   *  focus (v3.1.0): Nummern der Knoten, ab denen kopiert wird (der Weg von der Wurzel, die Knoten mit ihren Unternotizen, darüber der
+   *  Name des Bereichs); null: die ganze Mindmap; ohne Angabe nach der Auswahl (Mehrfachauswahl, sonst der gewählte Knoten). */
+  function copyMapImage(focus) {
     hideContextMenu();
     const shown = state.mapShown;
     if (!shown) return;
+    if (focus === undefined) focus = state.multi.size ? [...state.multi] : typeof state.mapSelection === 'number' ? [state.mapSelection] : null;
+    const visible = new Set(shown.rows.map(r => r.id));
+    const ids = (focus || []).filter(id => visible.has(id));
+    const area = shell && shell.area && shell.area.name ? String(shell.area.name).trim() : '';
+    const caption = ids.length && area && area.toLowerCase() !== String(shown.mapTitle || '').trim().toLowerCase() ? area : '';
+    const titleOf = id => { const r = shown.rows.find(x => x.id === id); return (r && String(r.title || '').trim()) || t('Ohne Titel'); };
     const png = (async () => {
-      const svg = Mindmap.toSvgString(shown.rows, { mapTitle: shown.mapTitle, links: shown.links, accent: await Exporter.accentOf(B), sides: state.map.sides() });
+      const style = await mapStyleFor('copy', shown.rows.map(r => r.id));
+      const svg = Mindmap.toSvgString(shown.rows, { mapTitle: shown.mapTitle, links: shown.links, accent: await Exporter.accentOf(B), sides: state.map.sides(), focus: ids, caption, style });
       const m = /width="(\d+)" height="(\d+)"/.exec(svg);
       const side = m ? Math.max(Number(m[1]), Number(m[2])) : 0;
       const bytes = await Exporter.svgToPng(svg, side ? Math.min(2, 8000 / side) : 2); // höchstens 8000 Pixel je Seite
       return new Blob([bytes], { type: 'image/png' });
     })();
+    const name = ids.length === 1 ? titleOf(ids[0]) : (shown.mapTitle || 'Mindmap');
+    const done = !ids.length ? t('Mindmap als Bild in die Zwischenablage kopiert')
+      : ids.length === 1 ? t('Ab «{titel}» als Bild in die Zwischenablage kopiert', { titel: name })
+      : tn('{n} Ast als Bild in die Zwischenablage kopiert', '{n} Äste als Bild in die Zwischenablage kopiert', ids.length);
     const fallback = async e => {
       if (e) console.warn('Zwischenablage', e);
       let blob;
       try { blob = await png; }
       catch (e2) { console.error(e2); setStatus(t('Die Mindmap konnte nicht als Bild gerendert werden.'), 'error'); return; }
-      Store.download(new Uint8Array(await blob.arrayBuffer()), `${Exporter.slugify(shown.mapTitle || 'Mindmap')}.png`, 'image/png');
+      Store.download(new Uint8Array(await blob.arrayBuffer()), `${Exporter.slugify(name)}.png`, 'image/png');
       setStatus(t('Dieser Browser legt keine Bilder in die Zwischenablage; das Bild wurde heruntergeladen.'), saveState());
     };
     if (!navigator.clipboard || typeof navigator.clipboard.write !== 'function' || typeof window.ClipboardItem !== 'function') { fallback(); return; }
@@ -5145,7 +5195,7 @@
     try { item = new ClipboardItem({ 'image/png': png }); }
     catch (e) { fallback(e); return; }
     navigator.clipboard.write([item])
-      .then(() => setStatus(t('Mindmap als Bild in die Zwischenablage kopiert'), saveState()))
+      .then(() => setStatus(done, saveState()))
       .catch(fallback);
   }
 
@@ -5388,7 +5438,7 @@
         { label: t('Alles einklappen'), action: () => setAllCollapsed(true) },
         { write: true, label: t('Hauptäste neu verteilen'), title: t('Verteilt die Hauptäste ausgewogen auf beide Seiten.'), action: () => rebalanceMap() },
         'sep',
-        { label: t('Als Bild kopieren'), key: 'Ctrl+C', action: () => copyMapImage() },
+        { label: t('Als Bild kopieren'), key: 'Ctrl+C', action: () => copyMapImage(null) },
       ], x, y);
       return;
     }
@@ -5403,7 +5453,7 @@
         { label: t('Einpassen'), key: '0', action: () => state.map.fit() },
         { write: true, label: t('Hauptäste neu verteilen'), title: t('Verteilt die Hauptäste ausgewogen auf beide Seiten.'), action: () => rebalanceMap() },
         'sep',
-        { label: t('Als Bild kopieren'), key: 'Ctrl+C', action: () => copyMapImage() },
+        { label: t('Als Bild kopieren'), key: 'Ctrl+C', action: () => copyMapImage(null) },
         { label: t('Alles drucken…'), action: () => openPrintDialog({ scope: 'all' }) },
       ], x, y);
       return;
@@ -5416,6 +5466,7 @@
         { write: true, label: t('Zurückholen'), action: () => unarchiveById(id) },
       ];
       if (info.childCount) archivedItems.push({ label: info.collapsed ? t('Ausklappen') : t('Einklappen'), action: () => toggleCollapse(id) });
+      archivedItems.push({ label: t('Als Bild kopieren'), key: 'Ctrl+C', action: () => copyMapImage([id]) });
       archivedItems.push('sep', { write: true, label: t('Löschen'), key: t('Entf'), danger: true, action: () => deleteNoteById(id) });
       showContextMenu(archivedItems, x, y);
       return;
@@ -5432,6 +5483,7 @@
     if (templateStore() && canSaveTemplates()) items.push({ label: t('Als Vorlage speichern…'), action: () => openTemplateSave(id) });
     items.push(
       { label: t('Link kopieren'), action: () => copyNoteLink(id) },
+      { label: t('Als Bild kopieren'), key: 'Ctrl+C', title: t('Den Weg von der Wurzel und diesen Ast als Bild in die Zwischenablage kopieren'), action: () => copyMapImage(state.multi.has(id) ? [...state.multi] : [id]) },
       { label: t('Drucken…'), action: () => openPrintDialog({ noteId: id, scope: 'subtree' }) },
       { write: true, label: t('Archivieren…'), action: () => archiveNotes([id]) },
       { write: true, label: t('Nach oben'), key: 'Alt+↑', action: async () => { state.mapSelection = id; await moveSelected(-1); } },

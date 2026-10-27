@@ -3287,6 +3287,130 @@ async function runDatesUi(browser, part, step) {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+// ============================================================
+/* v3.1.0: Mindmap ab einem Knoten als Bild kopieren (Weg von der Wurzel, Unternotizen wie zu sehen, Name des Bereichs als
+   Überschrift), Mehrfachauswahl, Kontextmenü, Ctrl+C und Knopf nach der Auswahl; Farben aus Erweiterungen (ctx.export.addMapStyle)
+   in Kopie und Druck, ungültige Angaben fallen weg. */
+async function runCopyNodeUi(browser, part, step) {
+  const PLUGIN = `NoNotesPlugins.register({ id: 'bild-test', name: 'Bild-Test', api: 1, activate(ctx) {
+    window.__ctx = ctx; window.__styleCalls = []; window.__colored = null;
+    ctx.export.addMapStyle(({ target, ids }) => {
+      window.__styleCalls.push({ target, n: ids.length });
+      const id = window.__colored;
+      return id ? { nodes: { [id]: { fill: 'url(#bt-muster)', stroke: '#9c1111', text: '"><script>x</script>' } },
+        defs: '<pattern id="bt-muster" width="8" height="8" patternUnits="userSpaceOnUse"><rect width="8" height="8" fill="#fad6d6"/></pattern>' } : null;
+    });
+    ctx.export.addMapStyle(() => ({ defs: '<pattern id="kaputt"' }));
+    ctx.export.addMapStyle(() => { throw new Error('kaputt'); });
+    window.__bad = 0;
+    try { ctx.export.addMapStyle('keine Funktion'); } catch (e) { window.__bad++; }
+  } });`;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nonotes-bild-'));
+  const dir = path.join(tmp, 'NoNotes');
+  fs.cpSync(DIST, dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'plugins', 'bild-test.js'), PLUGIN);
+  fs.writeFileSync(path.join(dir, 'plugins', 'plugins.js'), "NoNotesPlugins.list(['bild-test.js']);\n");
+  const ctx = await browser.newContext({ viewport: { width: 1300, height: 820 }, locale: 'de-CH' });
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await ctx.addInitScript(() => { window.__printed = []; window.print = () => { window.__printed.push(document.getElementById('printArea').innerHTML); }; });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  await page.goto('file://' + path.join(dir, 'index.html'));
+  await page.waitForSelector(READY, { timeout: 30000 });
+  assert.equal(await page.evaluate(() => window.__bad), 1, 'addMapStyle ohne Funktion wirft');
+  await page.evaluate(() => { const o = NoNotesMindmap.toSvgString; NoNotesMindmap.toSvgString = (r, opt) => (window.__svg = o(r, opt)); });
+
+  const ids = await page.evaluate(async () => {
+    const B = __ctx.backend;
+    const make = async (title, parent) => { const id = await B.createNote(parent); await B.renameNote(id, title); return id; };
+    const out = {};
+    out.Projekt = await make('Projekt', null);
+    out.Heizung = await make('Heizung', out.Projekt);
+    out.Fenster = await make('Fenster', out.Projekt);
+    out.Glas = await make('Glas', out.Fenster);
+    out.Budget = await make('Budget', null);
+    out.Team = await make('Team', null);
+    await B.setMapTitle('Karte Süd');
+    await __ctx.refresh();
+    return out;
+  });
+  const status = () => page.textContent('#status');
+  const titles = svg => [...svg.matchAll(/<text x="[\d.]+" y="[\d.]+" text-anchor="middle"[^>]*>([^<]*)<\/text>/g)].map(m => m[1]).sort();
+  const copy = async how => {
+    await page.evaluate(() => { window.__svg = null; document.querySelector('#status').textContent = ''; });
+    await how();
+    await page.waitForFunction(() => /in die Zwischenablage kopiert/.test(document.querySelector('#status').textContent) && window.__svg);
+    return page.evaluate(() => window.__svg);
+  };
+  const node = id => page.locator(`.mm-node[data-id="${id}"] rect`);
+  const ctrlC = async () => { await page.focus('#mindmap'); await page.keyboard.press('Control+c'); };
+
+  // Ein Knoten gewählt: Ctrl+C kopiert ab ihm
+  await node(ids.Fenster).click();
+  let svg = await copy(ctrlC);
+  assert.match(await status(), /Ab «Fenster» als Bild in die Zwischenablage kopiert/);
+  assert.deepEqual(titles(svg), ['Fenster', 'Glas', 'Karte Süd', 'Projekt'], 'der Weg von der Wurzel, der Knoten und seine Unternotizen');
+  const caption = /<title>([^<]*)<\/title>/.exec(svg)[1];
+  assert.ok(caption && caption !== 'Karte Süd' && svg.includes(`>${caption}</text>`), 'der Name des Bereichs als Überschrift: ' + caption);
+  const clip = await page.evaluate(async () => { const items = await navigator.clipboard.read(); return [...new Uint8Array(await (await items[0].getType('image/png')).arrayBuffer()).slice(0, 4)]; });
+  assert.deepEqual(clip, [0x89, 0x50, 0x4e, 0x47], 'ein PNG in der Zwischenablage');
+  part('Ein Knoten gewählt: Ctrl+C kopiert den Weg von der Wurzel und den Ast, Name des Bereichs als Überschrift');
+
+  // Eingeklappt bleibt eingeklappt (wie zu sehen); der Knopf in der Leiste folgt der Auswahl
+  await page.evaluate(async id => { await __ctx.backend.setCollapsed(id, true); await __ctx.refresh(); }, ids.Fenster);
+  await node(ids.Fenster).click();
+  svg = await copy(() => page.click('#mapCopyBtn'));
+  assert.deepEqual(titles(svg), ['Fenster', 'Karte Süd', 'Projekt'], 'Glas bleibt eingeklappt');
+  assert.match(svg, /<circle r="10"[^>]*\/><text[^>]*>1<\/text>/, 'der Kreis am eingeklappten Knoten zählt die verborgene Notiz');
+  await page.evaluate(async id => { await __ctx.backend.setCollapsed(id, false); await __ctx.refresh(); }, ids.Fenster);
+  part('Unternotizen wie zu sehen: eingeklappt bleibt zu; der Knopf in der Leiste folgt der Auswahl');
+
+  // Mehrfachauswahl
+  await node(ids.Heizung).click({ modifiers: ['Control'] });
+  await node(ids.Budget).click({ modifiers: ['Control'] });
+  svg = await copy(ctrlC);
+  assert.match(await status(), /2 Äste als Bild in die Zwischenablage kopiert/);
+  assert.deepEqual(titles(svg), ['Budget', 'Heizung', 'Karte Süd', 'Projekt'], 'die Wege zu beiden, sonst nichts');
+  await page.keyboard.press('Escape');
+  part('Mehrfachauswahl: ein Bild mit den Wegen zu allen gewählten Knoten');
+
+  // Kontextmenü: Knoten ab dem Knoten, Wurzel die ganze Mindmap; Wurzel gewählt: Ctrl+C alles ohne Überschrift
+  await node(ids.Team).click({ button: 'right' });
+  svg = await copy(() => page.locator('#contextMenu button', { hasText: 'Als Bild kopieren' }).click());
+  assert.deepEqual(titles(svg), ['Karte Süd', 'Team']);
+  await page.locator('.mm-node[data-id="root"] rect').click({ button: 'right' });
+  svg = await copy(() => page.locator('#contextMenu button', { hasText: 'Als Bild kopieren' }).click());
+  assert.equal(titles(svg).length, 7, 'die ganze Mindmap');
+  assert.match(await status(), /^Mindmap als Bild in die Zwischenablage kopiert/);
+  await page.locator('.mm-node[data-id="root"] rect').click();
+  svg = await copy(ctrlC);
+  assert.equal(titles(svg).length, 7);
+  assert.ok(!svg.includes(`>${caption}</text>`), 'ohne Überschrift');
+  part('Kontextmenü: ab dem Knoten oder die ganze Mindmap; Wurzel gewählt: Ctrl+C kopiert alles, ohne Überschrift');
+
+  // Farben aus einer Erweiterung, in der Kopie und im Druck; ungültige Angaben fallen weg
+  await page.evaluate(id => { window.__colored = id; }, ids.Fenster);
+  await node(ids.Fenster).click();
+  svg = await copy(ctrlC);
+  assert.ok(svg.includes('<pattern id="bt-muster"') && svg.includes('fill="url(#bt-muster)" stroke="#9c1111"'), 'Muster und Farben der Erweiterung');
+  assert.ok(!svg.includes('<script') && !svg.includes('kaputt'), 'ungültige Farbe und ungültige defs fallen weg');
+  await page.click('#mapPrintBtn');
+  await page.waitForSelector('#printDialog[open]');
+  await page.check('#printForm input[name="printScope"][value="all"]');
+  await page.click('#printGoBtn');
+  await page.waitForFunction(() => window.__printed.length === 1);
+  assert.ok((await page.evaluate(() => window.__printed[0])).includes('fill="url(#bt-muster)"'), 'auch im Druck');
+  const targets = await page.evaluate(() => [...new Set(window.__styleCalls.map(c => c.target))].sort());
+  assert.deepEqual(targets, ['copy', 'print']);
+  part('Hook ctx.export.addMapStyle: Farben und Muster in Kopie und Druck, ungültige Angaben und Fehler einer Erweiterung schaden nicht');
+
+  assert.deepEqual(errors, []);
+  await ctx.close();
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 suite('Erweiterungs-Test', [
   { name: 'Erweiterungen: Lader, Dialog, Schnittstelle 1, Menü, Toolleiste, Ereignisse, Hilfe, Designs, Ein- und Ausschalten zur Laufzeit, Verzeichnis, Beispiele, Pseudo-Sprache', run: runPlugins },
   { name: 'Hauptfarbe: Palette, Auswahl, Datei, Export und Druck, hell und dunkel', run: runPalette },
@@ -3298,6 +3422,7 @@ suite('Erweiterungs-Test', [
   { name: 'Tabellen: Raster in der Toolleiste, Tab und Enter, Titelzeile oben, Rechtsklick, Schnittstelle für Erweiterungen, Druck, Lesemodus', run: runTablesUi },
   { name: 'Personen an Aufgaben und Tabellenfelder: Aufgaben-Ansicht (Filter, nach Person, geerbt), Druck, Kästchen und Knöpfe im Feld, Knopf und Element über der Mindmap, Abschnitt im Druck', run: runCellsPeopleUi },
   { name: 'Termine mit «>» (v3.0.0): Datumsauswahl, Knopf, Strg+Leertaste, Abzeichen, alte @Datum, Aufgabenliste, Vorlagen im Ordner, Mindmap-Seiten, Gleiten, Bild kopieren, Umstellung mit Sicherung', run: runDatesUi },
+  { name: 'Mindmap ab einem Knoten als Bild (v3.1.0): Weg von der Wurzel, Überschrift, wie zu sehen, Mehrfachauswahl, Kontextmenü, Farben aus Erweiterungen in Kopie und Druck', run: runCopyNodeUi },
   { name: 'Sprachen: Pseudo-Sprache durch alle Ansichten, Englisch, Browsersprache, Mehrzahl, Testpaket, Wechsel', run: runI18n },
   { name: 'WebMCP: Werkzeuge für den Agenten des Browsers, Aufrufe ändern Daten und Oberfläche, gespeichert, Lesemodus, ohne Schnittstelle nichts', run: runWebMcp },
 ], { browser: true });

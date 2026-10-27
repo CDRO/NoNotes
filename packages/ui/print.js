@@ -59,15 +59,15 @@
     return list;
   }
 
-  async function mapSvgFor(backend, list, scope, archived) {
+  async function mapSvgFor(backend, list, scope, archived, style) {
     const links = await backend.getLinks(); // Querverweise: gezeichnet, wenn beide Enden im Bild sind
-    if (scope === 'all') return Mindmap().toSvgString(await backend.getTree({ archive: !!archived }), { mapTitle: await backend.getMapTitle(), expandAll: true, accent: await Exporter().accentOf(backend), links });
+    if (scope === 'all') return Mindmap().toSvgString(await backend.getTree({ archive: !!archived }), { mapTitle: await backend.getMapTitle(), expandAll: true, accent: await Exporter().accentOf(backend), links, style });
     const rows = await backend.getTree({ archive: true });
     const included = new Set(list.map(n => n.id));
     const subset = rows.filter(r => included.has(r.id)).map(r => Object.assign({}, r, {
       parent_id: r.parent_id != null && included.has(r.parent_id) ? r.parent_id : null,
     }));
-    return Mindmap().toSvgString(subset, { mapTitle: await backend.getMapTitle(), expandAll: true, accent: await Exporter().accentOf(backend), links });
+    return Mindmap().toSvgString(subset, { mapTitle: await backend.getMapTitle(), expandAll: true, accent: await Exporter().accentOf(backend), links, style });
   }
 
   async function metaHtml(backend, n, note) {
@@ -86,7 +86,8 @@
    *  options: { scope: 'current'|'subtree'|'selection'|'all', noteId, ids, withChildren, archived,
    *             includeMap, includeToc, pageBreaks, attachmentUrl, tableFormat, mapSections } (attachmentUrl: id → Promise der
    *             Anzeige-Adresse; tableFormat: Format der Tabellen aus Erweiterungen, siehe packages/core/markdown.js; mapSections:
-   *             [{ title, markdown }] der Erweiterungen unter dem Mindmap-Bild, seit 2.11.0) */
+   *             [{ title, markdown }] der Erweiterungen unter dem Mindmap-Bild, seit 2.11.0; mapStyle: { nodes, defs } Farben im
+   *             Mindmap-Bild aus Erweiterungen, seit 3.1.0) */
   async function buildNotesDocument(backend, options) {
     const list = await resolveNotes(backend, options);
     const mapTitle = await backend.getMapTitle();
@@ -100,7 +101,7 @@
     const parts = [];
     parts.push(`<header class="print-head"><h1>${esc(title)}</h1><p class="print-meta">${esc(mapTitle)} · ${esc(t('Gedruckt {datum}', { datum: fmtDate(new Date().toISOString()) }))} · ${esc(tn('{n} Notiz', '{n} Notizen', list.length))}</p></header>`);
     if (options.includeMap && list.length) {
-      parts.push(`<figure class="print-map">${await mapSvgFor(backend, list, options.scope, options.archived)}</figure>`);
+      parts.push(`<figure class="print-map">${await mapSvgFor(backend, list, options.scope, options.archived, options.mapStyle)}</figure>`);
       for (const sec of options.mapSections || []) {
         parts.push(`<section class="print-map-section">${sec.title ? `<h2>${esc(sec.title)}</h2>` : ''}<div class="md">${global.NoNotesMarkdown.render(sec.markdown, { resolveRef, tableSrc: false })}</div></section>`);
       }

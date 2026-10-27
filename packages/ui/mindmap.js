@@ -844,12 +844,49 @@
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
+  /** Nur der Weg von der Wurzel zu jeder Notiz in focus und diese selbst mit ihren Unternotizen (v3.1.0). Die Knoten auf dem Weg sind
+   *  offen; die Unternotizen bleiben, wie sie sind (eingeklappt oder nicht). Ohne einen Treffer: alle Zeilen. */
+  function focusRows(rows, focus) {
+    const byId = new Map(rows.map(r => [r.id, r]));
+    const kids = new Map();
+    for (const r of rows) {
+      const p = r.parent_id == null ? null : r.parent_id;
+      if (!kids.has(p)) kids.set(p, []);
+      kids.get(p).push(r.id);
+    }
+    const keep = new Set(), path = new Set();
+    for (const id of focus) {
+      if (!byId.has(id)) continue;
+      const stack = [id];
+      while (stack.length) {
+        const x = stack.pop();
+        if (keep.has(x)) continue;
+        keep.add(x);
+        for (const k of kids.get(x) || []) stack.push(k);
+      }
+      for (let p = byId.get(id).parent_id; p != null && byId.has(p) && !path.has(p); p = byId.get(p).parent_id) path.add(p);
+    }
+    if (!keep.size) return rows;
+    return rows.filter(r => keep.has(r.id) || path.has(r.id))
+      .map(r => (path.has(r.id) && !keep.has(r.id) && r.collapsed ? Object.assign({}, r, { collapsed: 0 }) : r));
+  }
+
+  /** Eine Farbe aus einer Erweiterung, wenn sie sicher in ein Attribut passt (#rgb, rgb(), hsl(), Name, url(#muster)), sonst null. */
+  function styleColor(v) {
+    const s = typeof v === 'string' ? v.trim() : '';
+    return /^(#[0-9a-f]{3,8}|(?:rgb|hsl)a?\([\d\s.,%/-]+\)|[a-z]{3,20}|url\(#[\w-]+\))$/i.test(s) ? s : null;
+  }
+
   /** Rendert die Mindmap als eigenständige SVG-Zeichenkette (helles Farbschema, Stile eingebettet).
    *  rows wie bei render(); options.mapTitle, options.expandAll (eingeklappte Äste aufklappen), options.links (Querverweise),
-   *  options.sides (Seiten der Hauptäste ohne gespeicherte Seite, etwa sides() der Mindmap auf dem Schirm). */
+   *  options.sides (Seiten der Hauptäste ohne gespeicherte Seite, etwa sides() der Mindmap auf dem Schirm).
+   *  Seit v3.1.0: options.focus (Nummern von Notizen: nur der Weg dorthin und ihre Unternotizen, siehe focusRows), options.caption
+   *  (Überschrift über dem Bild, etwa der Name des Bereichs), options.style ({ nodes: { id: { fill, stroke, text } }, defs }: Farben
+   *  je Knoten und SVG-Definitionen aus Erweiterungen, ctx.export.addMapStyle). */
   function toSvgString(rows, options) {
     options = options || {};
-    const prepared = options.expandAll ? rows.map(r => Object.assign({}, r, { collapsed: 0 })) : rows;
+    const chosen = options.focus && options.focus.length ? focusRows(rows, options.focus) : rows;
+    const prepared = options.expandAll ? chosen.map(r => Object.assign({}, r, { collapsed: 0 })) : chosen;
     const { root, byId } = buildTree(prepared, options.mapTitle || '');
     for (const n of byId.values()) { n.match = false; n.matchInside = false; }
     const layout = layoutTree(root, { sides: options.sides });
@@ -859,10 +896,15 @@
     const links = drawable.map(l => linkPath(l.a, l.b, index));
     const bounds = links.reduce((b, l) => unionBox(b, l.box), layout.bounds); // Platz für die Linien
     const pad = 32;
-    const width = Math.ceil(bounds.maxX - bounds.minX + 2 * pad);
-    const height = Math.ceil(bounds.maxY - bounds.minY + 2 * pad);
+    const caption = String(options.caption || '').trim();
+    const CAPTION_FONT = '600 18px ' + FONT_FAMILY;
+    const capH = caption ? 34 : 0; // Platz für die Überschrift über der Mindmap
+    const width = Math.ceil(Math.max(bounds.maxX - bounds.minX, caption ? measure(caption, CAPTION_FONT) : 0) + 2 * pad);
+    const height = Math.ceil(bounds.maxY - bounds.minY + 2 * pad + capH);
     const ox = -bounds.minX + pad;
-    const oy = -bounds.minY + pad;
+    const oy = -bounds.minY + pad + capH;
+    const styles = (options.style && options.style.nodes) || {};
+    const own = n => (n.isRoot ? null : styles[n.id] || null);
 
     const c = {
       bg: '#ffffff', panel: '#ffffff', text: '#1c1e22', muted: '#6b7280', border: '#d7dbe2',
@@ -872,8 +914,10 @@
     if (options.accent) Object.assign(c, { accent: options.accent.accent, accentContrast: options.accent.contrast, tint: options.accent.tint });
     const parts = [];
     parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" font-family="${esc(FONT_FAMILY.replace(/"/g, "'"))}">`);
-    parts.push(`<title>${esc(options.mapTitle || 'Mindmap')}</title>`);
+    parts.push(`<title>${esc(caption || options.mapTitle || 'Mindmap')}</title>`);
+    if (options.style && options.style.defs) parts.push(`<defs>${options.style.defs}</defs>`); // von Erweiterungen, vorher geprüft
     parts.push(`<rect width="100%" height="100%" fill="${c.bg}"/>`);
+    if (caption) parts.push(`<text x="${pad}" y="${pad + 4}" dominant-baseline="central" fill="${c.text}" style="font: 600 18px ${esc(FONT_FAMILY.replace(/"/g, "'"))}">${esc(caption)}</text>`);
     parts.push(`<g transform="translate(${ox} ${oy})">`);
     for (const n of placed) {
       for (const ch of n.visibleChildren) {
@@ -892,9 +936,10 @@
       for (const l of links) parts.push(`<path d="${l.d}" fill="none" stroke="${c.muted}" stroke-opacity="0.8" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#mmLinkArrow)"/>`);
     }
     for (const n of placed) {
-      const fill = n.isRoot ? c.accent : c.panel;
-      const stroke = n.isRoot ? c.accent : c.border;
-      const textFill = n.isRoot ? c.accentContrast : c.text;
+      const st = own(n);
+      const fill = (st && styleColor(st.fill)) || (n.isRoot ? c.accent : c.panel);
+      const stroke = (st && styleColor(st.stroke)) || (n.isRoot ? c.accent : c.border);
+      const textFill = (st && styleColor(st.text)) || (n.isRoot ? c.accentContrast : c.text);
       const font = n.isRoot ? '700 16px' : '600 14px';
       parts.push(`<g transform="translate(${n.x} ${n.y})"${n.archived ? ' opacity="0.6"' : ''}>`);
       parts.push(`<rect width="${n.w}" height="${n.h}" rx="${n.isRoot ? 12 : 9}" fill="${fill}" stroke="${stroke}" stroke-width="1.5"${n.archived ? ' stroke-dasharray="5 3"' : ''}/>`);

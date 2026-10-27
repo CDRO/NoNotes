@@ -109,6 +109,7 @@ gilt für eine Erweiterung, deren `activate` oder deren Ereignisrückruf einen F
 | `ctx.ui.addToolbarButton({ label, title?, action })` | Knopf in der Toolleiste des Editors; `action(editor)` bekommt die Editor-Schnittstelle |
 | `ctx.ui.addMapButton({ label, title?, action })` | Seit 2.11.0. Knopf in der Leiste der Mindmap (vor dem Suchfeld); `action(button)`. Liefert den Knopf, etwa für `aria-pressed` |
 | `ctx.ui.addMapOverlay(element)` | Seit 2.11.0. Ein eigenes Element über der Mindmap (etwa eine Legende); Lage und Aussehen setzt die Erweiterung (`position: absolute` im Bereich der Mindmap; die CSS-Variable `--map-bar-bottom` nennt die Unterkante der Leiste, also `top: calc(var(--map-bar-bottom) + 8px)`). Liefert eine Funktion zum Entfernen |
+| `ctx.export.addMapStyle(fn)` | Seit 3.1.0. Farben im Mindmap-Bild für Markdown-Export, Druck und *Als Bild kopieren*: `fn({ target: 'export' \| 'print' \| 'copy', ids })` liefert (auch als Promise) `{ nodes: { [id]: { fill, stroke, text } }, defs }` oder nichts. `ids` sind die Notizen, die im Bild vorkommen können; `fill`, `stroke` (Rand) und `text` (Titel) sind Farben (`#rgb`, `rgb()`, `hsl()`, Namen) oder `url(#…)` auf ein Muster aus `defs` (SVG, etwa `<pattern>`, Kennungen mit eigenem Vorsatz). Was keine Farbe ist, und `defs`, die kein gültiges SVG sind, fallen weg; mehrere Erweiterungen: die spätere gewinnt je Knoten. Ein Fehler lässt nur diese Erweiterung weg. Liefert eine Funktion zum Abmelden |
 | `ctx.export.addMapSection(fn)` | Seit 2.11.0. Abschnitt direkt unter dem Mindmap-Bild im Markdown-Export (`index.md` bzw. die eine Datei) und im Druck mit Mindmap-Bild: `fn({ target: 'export' \| 'print' })` liefert (auch als Promise) `{ title, markdown }` oder nichts. Ein Fehler lässt nur diesen Abschnitt weg. Liefert eine Funktion zum Abmelden |
 | `ctx.ui.addContextMenuItem({ label, title?, write?, visible?, action? \| panel? })` | Seit 2.8.0. Eintrag im Kontextmenü eines Knotens der Mindmap (Rechtsklick), mit `action(target)` oder einem Untermenü `panel(target, { close })`; siehe unten |
 | `ctx.ui.addTableMenuItem({ label, title?, write?, visible?, action? \| panel? })` | Seit 2.10.0. Eintrag im Menü, das ein Rechtsklick auf eine Tabelle in der Vorschau öffnet; Felder wie oben, `target` beschreibt die Tabelle; siehe [Tabellen](#tabellen-seit-2100) |
@@ -276,7 +277,19 @@ const button = ctx.ui.addMapButton({ label: 'Legende', action: b => {
 ctx.export.addMapSection(({ target }) => ({ title: 'Legende', markdown: '- **Rot:** dringend' }));
 ```
 
-Knopf, Element und Abschnitt entfernt die App beim Ausschalten selbst. Was dauerhaft zur Datenbank gehören soll (und im Dienst für
+Farben im **Mindmap-Bild** (Export, Druck, *Als Bild kopieren*, seit 3.1.0), etwa damit ein Knoten mit Tag `dringend` auch im Bild rot
+ist; die Erweiterung rechnet selbst aus, welche Knoten welche Farbe haben:
+
+```js
+ctx.export.addMapStyle(async ({ target, ids }) => {
+  const nodes = {};
+  for (const id of ids) if ((await ctx.backend.getTags(id)).includes('dringend')) nodes[id] = { fill: 'url(#meine-streifen)', stroke: '#9c1111', text: '#9c1111' };
+  return { nodes, defs: '<pattern id="meine-streifen" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'
+    + '<rect width="8" height="8" fill="#fad6d6"/><rect width="4" height="8" fill="#fdeaea"/></pattern>' };
+});
+```
+
+Knopf, Element, Abschnitt und Farben entfernt die App beim Ausschalten selbst. Was dauerhaft zur Datenbank gehören soll (und im Dienst für
 alle im Arbeitsbereich gilt), legt die Erweiterung mit `ctx.backend.setMeta('plugin:<kennung>:…', wert)` ab und liest es mit
 `getMeta`; im Lesemodus (`ctx.readOnly()`) nur lesen. Nach einem Wechsel der Datei oder des Bereichs (Ereignis `database:replaced`)
 neu lesen.
@@ -367,6 +380,7 @@ anbieten will, wählt anhand von `ctx.language()` selbst aus.
   (`if (ctx.ui.addSomething) …`).
 - Ein Bruch käme frühestens mit `api: 2` in NoNotes 2.0; die App meldet dann eine ältere Erweiterung
   deutlich, statt sie still falsch zu behandeln.
+- Seit 3.1.0 (ohne Änderung an `api`): `ctx.export.addMapStyle` (Farben im Mindmap-Bild).
 - Seit 3.0.0 (ohne Änderung an `api`): `reminders` in `questions:rendered`, `side` in `getTree()`, `setSides` im Backend; Termine im
   Text mit `>` (siehe oben).
 - Seit 2.11.0 dazugekommen (ohne Änderung an `api`): `ctx.readOnly`, `ctx.ui.addMapButton`, `ctx.ui.addMapOverlay`, `ctx.export.addMapSection`.
