@@ -1,7 +1,7 @@
 /* NoNotes – Sprachpaket Español (España) (es-ES). Mit tools/i18n.cjs erzeugt und abgeglichen; siehe docs/LANGUAGES.md.
    Schlüssel ist der deutsche Text. Leer lassen, was nicht übersetzt ist: dann erscheint der deutsche Text. */
 NoNotesI18n.register('es-ES', 'Español (España)', {
-  'Diese SQLite-Datei stammt nicht von NoNotes (keine Tabelle "notes").': 'Este archivo SQLite no procede de NoNotes (no tiene la tabla "notes").',
+  'Diese SQLite-Datei stammt nicht von NoNotes (keine Tabelle "notes").': 'Este archivo SQLite no procede de NoNotes (no tiene la tabla «notes»).',
   'Diese Datenbank hat Schema-Version {version}, diese App versteht nur bis {unterstuetzt}. Bitte App aktualisieren.': 'Esta base de datos tiene la versión de esquema {version}, pero esta aplicación solo entiende hasta la {unterstuetzt}. Actualiza la aplicación.',
   'Unter einer archivierten Notiz lässt sich nichts anlegen.': 'No se puede crear nada bajo una nota archivada.',
   'Archivierte Notizen lassen sich nicht umhängen.': 'Las notas archivadas no se pueden mover.',
