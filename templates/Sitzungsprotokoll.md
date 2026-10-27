@@ -15,8 +15,8 @@ tags: ["sitzung"]
 3. Varia
 
 ## Pendenzen
-- [ ] … @{{datum+7}}
+- [ ] … >{{datum+7}}
 <!-- nonotes:note {"depth":1,"title":"Entscheide","tags":[]} -->
-?! … @{{datum+7}}
+?! … >{{datum+7}}
 <!-- nonotes:note {"depth":1,"title":"Offene Fragen","tags":[]} -->
 ? …

@@ -15,7 +15,7 @@ const DIST = path.join(ROOT, 'dist', 'NoNotes');
 const APP_URL = 'file://' + path.join(DIST, 'index.html');
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '16'; // muss zu packages/data/db.js passen
+const SCHEMA_VERSION = '17'; // muss zu packages/data/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 // ============================================================
@@ -970,7 +970,7 @@ async function runSmoke(browser, part, step) {
     const { page: page14, errors: errors14 } = await openApp(ctx14, 'list');
     await page14.click('#newBtn');
     await page14.fill('#title', 'Umbau');
-    await page14.fill('#body', 'Plan\n- [ ] Elektriker anrufen @01.01.2020\n- [ ] Offerten einholen\n- [x] Baubewilligung\n? Frage?');
+    await page14.fill('#body', 'Plan\n- [ ] Elektriker anrufen >01.01.2020\n- [ ] Offerten einholen\n- [x] Baubewilligung\n? Frage?');
     await page14.fill('#tagInput', 'projekt');
     await page14.keyboard.press('Enter');
     await waitSaved(page14);
@@ -1011,7 +1011,7 @@ async function runSmoke(browser, part, step) {
     assert.match(await page14.locator('#viewTasksBtn').innerText(), /Aufgaben\s*1/);
     await page14.locator('.t-item').first().locator('button:has-text("Zur Notiz")').click();
     await page14.waitForSelector('body.editor-open');
-    assert.equal(await page14.inputValue('#body'), 'Plan\n- [ ] Elektriker anrufen @01.01.2020\n- [x] Offerten einholen\n- [x] Baubewilligung\n? Frage?');
+    assert.equal(await page14.inputValue('#body'), 'Plan\n- [ ] Elektriker anrufen >01.01.2020\n- [x] Offerten einholen\n- [x] Baubewilligung\n? Frage?');
     // Kästchen in der Vorschau
     await page14.click('#modeSwitch button[data-mode="preview"]');
     await page14.waitForSelector('#preview li.task[data-line="2"] input');
@@ -1096,7 +1096,7 @@ async function runSmoke(browser, part, step) {
     const { page: page15, errors: errors15 } = await openApp(ctx15, 'list');
     await page15.click('#newBtn');
     await page15.fill('#title', 'Budget');
-    await page15.fill('#body', '? Offerten da? @01.01.2020\n? Versicherung? @2030-01-01\n? Ohne Termin?\n? Fertig? @2030-02-02\n! ja');
+    await page15.fill('#body', '? Offerten da? >01.01.2020\n? Versicherung? >2030-01-01\n? Ohne Termin?\n? Fertig? >2030-02-02\n! ja');
     await waitSaved(page15);
     assert.match(await page15.locator('#viewQuestionsBtn').innerText(), /Fragen\s*3/);
     assert.equal(await page15.locator('#viewQuestionsBtn .count.q-overdue').count(), 1, 'überfällige Frage rot');
@@ -1130,7 +1130,7 @@ async function runSmoke(browser, part, step) {
     await waitSaved(page15);
     await page15.locator('.q-item').first().locator('button:has-text("Zur Notiz")').click();
     await page15.waitForSelector('body.editor-open');
-    assert.ok((await page15.inputValue('#body')).startsWith('? Offerten da? @01.01.2020\n! Ja, heute gekommen\n'));
+    assert.ok((await page15.inputValue('#body')).startsWith('? Offerten da? >01.01.2020\n! Ja, heute gekommen\n'));
     await page15.keyboard.press('Escape');
     await page15.waitForSelector('body:not(.editor-open)');
     part('Fragen: Gruppen nach Fälligkeit, Sortierung, Beantworten behält den Termin');
@@ -1192,9 +1192,9 @@ async function runSmoke(browser, part, step) {
     await page16.keyboard.press('Enter');
     await page16.keyboard.type('x');
     assert.equal(await body(), '1. a\n2. x\n3. b', 'Nummerierung läuft weiter und zählt nach');
-    await setBody('- [x] a @01.01.2020');
+    await setBody('- [x] a >01.01.2020');
     await page16.keyboard.press('Enter');
-    assert.equal(await body(), '- [x] a @01.01.2020\n- [ ] ', 'Aufgabe: neues offenes Kästchen ohne Termin');
+    assert.equal(await body(), '- [x] a >01.01.2020\n- [ ] ', 'Aufgabe: neues offenes Kästchen ohne Termin');
     await setBody('> z');
     await page16.keyboard.press('Enter');
     assert.equal(await body(), '> z\n> ');
@@ -1220,7 +1220,7 @@ async function runSmoke(browser, part, step) {
     await waitSaved(page16);
     part('Editor: Enter führt Listen weiter, Tab rückt ein und aus');
 
-    await setBody('- [ ] Offerte @01.01.2020\n- [x] Fertig @2030-01-01\n? Frage @01.01.2020');
+    await setBody('- [ ] Offerte >01.01.2020\n- [x] Fertig >2030-01-01\n? Frage >01.01.2020');
     await page16.click('#modeSwitch button[data-mode="preview"]');
     await page16.waitForSelector('#preview li.task .md-due.overdue');
     assert.equal(await page16.locator('#preview li.task .md-due.overdue').innerText(), 'überfällig · 1.1.2020');
@@ -1328,15 +1328,15 @@ async function runSmoke(browser, part, step) {
     await page18.click('#newBtn');
     await page18.fill('#title', 'Termine');
     await page18.fill('#body', [
-      '- [ ] Offerte einholen @15.10.2026 14:30',
-      '- [x] Bericht abgeben @16.10.2026',
-      '- [ ] Ganztag @17.10.2026',
+      '- [ ] Offerte einholen >15.10.2026 14:30',
+      '- [x] Bericht abgeben >16.10.2026',
+      '- [ ] Ganztag >17.10.2026',
       '- [ ] Ohne Termin',
-      `- [ ] ${longText} @20.10.2026`,
+      `- [ ] ${longText} >20.10.2026`,
       '',
-      '? Offene Frage @18.10.2026 09:00',
+      '? Offene Frage >18.10.2026 09:00',
       '',
-      '? Beantwortete Frage @19.10.2026',
+      '? Beantwortete Frage >19.10.2026',
       '! Die Antwort',
     ].join('\n'));
     await waitSaved(page18);
@@ -1391,9 +1391,9 @@ async function runSmoke(browser, part, step) {
 
     // Termin verschieben, Aufgabe abhaken, Aufgabe umformulieren: gleiche UIDs, höhere SEQUENCE, Entferntes abgesagt.
     await page18.fill('#body', (await page18.inputValue('#body'))
-      .replace('Offerte einholen @15.10.2026 14:30', 'Offerte einholen @22.10.2026 16:00')
+      .replace('Offerte einholen >15.10.2026 14:30', 'Offerte einholen >22.10.2026 16:00')
       .replace('- [ ] Ganztag', '- [x] Ganztag')
-      .replace(`${longText} @20.10.2026`, 'Kurz @20.10.2026'));
+      .replace(`${longText} >20.10.2026`, 'Kurz >20.10.2026'));
     await waitSaved(page18);
     await page18.click('#menuBtn');
     await page18.click('#calendarBtn');
@@ -1670,7 +1670,7 @@ async function runSmoke(browser, part, step) {
 
     await page21.click('#newBtn');
     await page21.fill('#title', 'Projekt');
-    await page21.fill('#body', ['- [ ] Haupt @15.10.2026', '  - [ ] Unter A @12.10.2026', '    - [ ] Enkel', '  - [ ] Unter B', '- [ ] Einzel'].join('\n'));
+    await page21.fill('#body', ['- [ ] Haupt >15.10.2026', '  - [ ] Unter A >12.10.2026', '    - [ ] Enkel', '  - [ ] Unter B', '- [ ] Einzel'].join('\n'));
     await waitSaved(page21);
     await page21.click('#viewTasksBtn');
     await page21.waitForSelector('body.view-tasks');
@@ -1744,7 +1744,7 @@ async function runSmoke(browser, part, step) {
     await page21.selectOption('#tSort', 'due');
     await row21('Haupt').locator('button:has-text("Zur Notiz")').click();
     await page21.waitForSelector('body.editor-open');
-    await page21.fill('#body', ['- [x] Haupt @15.10.2026', '  - [ ] Unter A @12.10.2026', '    - [ ] Enkel', '  - [x] Unter B', '- [ ] Einzel'].join('\n'));
+    await page21.fill('#body', ['- [x] Haupt >15.10.2026', '  - [ ] Unter A >12.10.2026', '    - [ ] Enkel', '  - [x] Unter B', '- [ ] Einzel'].join('\n'));
     await waitSaved(page21);
     await page21.keyboard.press('Escape');
     await page21.waitForSelector('body:not(.editor-open)');
@@ -1758,7 +1758,7 @@ async function runSmoke(browser, part, step) {
     await page21.waitForSelector('body.view-list');
     await page21.locator('#list li').first().click();
     await page21.waitForFunction(() => document.querySelector('#title').value === 'Projekt');
-    await page21.fill('#body', ['- [ ] Haupt @15.10.2026', '  - [ ] Unter A @12.10.2026', '    - [ ] Enkel', '  - [ ] Unter B', '- [ ] Einzel'].join('\n'));
+    await page21.fill('#body', ['- [ ] Haupt >15.10.2026', '  - [ ] Unter A >12.10.2026', '    - [ ] Enkel', '  - [ ] Unter B', '- [ ] Einzel'].join('\n'));
     await waitSaved(page21);
     await page21.click('#modeSwitch button[data-mode="preview"]');
     await page21.waitForSelector('#preview li.task');
@@ -1769,14 +1769,14 @@ async function runSmoke(browser, part, step) {
     assert.ok(!(await page21.inputValue('#body')).includes('[x]'), 'Text unverändert');
     await page21.locator('#preview li.task').first().dblclick({ position: { x: 70, y: 10 } });
     await page21.waitForFunction(() => document.querySelector('#body').value.split('\n').filter(l => l.includes('[x]')).length === 4);
-    assert.equal(await page21.inputValue('#body'), ['- [x] Haupt @15.10.2026', '  - [x] Unter A @12.10.2026', '    - [x] Enkel', '  - [x] Unter B', '- [ ] Einzel'].join('\n'), 'Doppelklick schliesst die ganze Gruppe ab');
+    assert.equal(await page21.inputValue('#body'), ['- [x] Haupt >15.10.2026', '  - [x] Unter A >12.10.2026', '    - [x] Enkel', '  - [x] Unter B', '- [ ] Einzel'].join('\n'), 'Doppelklick schliesst die ganze Gruppe ab');
     assert.deepEqual(await page21.locator('#preview .md-progress').allInnerTexts(), ['3/3', '1/1']);
     assert.equal(await page21.locator('#preview .md-progress.complete').count(), 2);
     const deco21 = await page21.evaluate(() => { const li = document.querySelector('#preview li.task.done'); return [getComputedStyle(li).textDecorationLine, getComputedStyle(li.querySelector(':scope > .task-text')).textDecorationLine]; });
     assert.deepEqual(deco21, ['none', 'line-through'], 'Durchstreichen nur am Text der Aufgabe, nicht an ihren Unteraufgaben');
     await page21.locator('#preview li.task input').nth(2).click(); // Enkel wieder öffnen
     await page21.waitForFunction(() => document.querySelector('#body').value.split('\n').filter(l => l.includes('[ ]')).length === 4);
-    assert.equal(await page21.inputValue('#body'), ['- [ ] Haupt @15.10.2026', '  - [ ] Unter A @12.10.2026', '    - [ ] Enkel', '  - [x] Unter B', '- [ ] Einzel'].join('\n'), 'Hauptaufgaben darüber geöffnet');
+    assert.equal(await page21.inputValue('#body'), ['- [ ] Haupt >15.10.2026', '  - [ ] Unter A >12.10.2026', '    - [ ] Enkel', '  - [x] Unter B', '- [ ] Einzel'].join('\n'), 'Hauptaufgaben darüber geöffnet');
     await page21.locator('#preview li.task').nth(2).dblclick({ position: { x: 60, y: 8 } }); // Enkel ohne Unteraufgaben
     await page21.waitForFunction(() => document.querySelector('#body').value.includes('[x] Enkel'));
     await page21.click('#modeSwitch button[data-mode="edit"]');
@@ -1888,7 +1888,7 @@ async function runSmoke(browser, part, step) {
     ids22.Gamma = await addChild22(ids22.Beta, 'Gamma');
     ids22.Delta = await addChild22(ids22.Alpha, 'Delta');
     ids22.Epsilon = await newRootNote(p22, 'Epsilon');
-    await setBody22(ids22.Gamma, 'Quokka Gamma\n- [ ] Gamma-Aufgabe @31.12.2026\n? Gamma-Frage @30.12.2026');
+    await setBody22(ids22.Gamma, 'Quokka Gamma\n- [ ] Gamma-Aufgabe >31.12.2026\n? Gamma-Frage >30.12.2026');
     await setBody22(ids22.Epsilon, 'Verweis auf [[Gamma]]');
     const node22 = name => p22.locator(`.mm-node[data-id="${ids22[name]}"]`);
     const visible22 = async () => (await p22.locator('.mm-node:not(.mm-root)').evaluateAll(ns => ns.map(n => n.querySelector('text').textContent))).sort();
@@ -2161,7 +2161,7 @@ async function runBackend(browser, part, step) {
     const miss = C.missing(B);
     if (miss.length) fail('Methoden fehlen: ' + miss.join(', '));
     // Jede Funktion in db.js, die mit db als erstem Argument arbeitet, ist Teil des Vertrags oder bewusst intern.
-    const INTERNAL = new Set(['open', 'exportBytes', 'configure', 'normalizeTag', 'syncQuestions', 'syncTasks', 'syncLinks', 'subtreeNoteIds']);
+    const INTERNAL = new Set(['open', 'exportBytes', 'configure', 'normalizeTag', 'syncQuestions', 'syncTasks', 'syncLinks', 'subtreeNoteIds', 'inspect']);
     for (const [name, fn] of Object.entries(DB)) {
       if (typeof fn !== 'function' || INTERNAL.has(name)) continue;
       if (!C.METHODS.includes(name)) fail(`db.js-Funktion ${name} ist weder im Vertrag noch als intern vermerkt`);
@@ -2187,7 +2187,7 @@ async function runBackend(browser, part, step) {
 
     const a = await call('createNote', null);
     const b = await call('createNote', a);
-    await call('updateNote', a, 'Alpha', 'Text\n- [ ] Aufgabe @15.10.2026\n  - [ ] Unterpunkt\n? Frage? @16.10.2026\n[[Beta]]');
+    await call('updateNote', a, 'Alpha', 'Text\n- [ ] Aufgabe >15.10.2026\n  - [ ] Unterpunkt\n? Frage? >16.10.2026\n[[Beta]]');
     await call('renameNote', b, 'Beta');
     // Verlauf: die Uhr der Seite um eine Pause vorstellen, damit eine Fassung entsteht
     const RealDate = window.Date;
@@ -2233,6 +2233,7 @@ async function runBackend(browser, part, step) {
     const qs = await B.listQuestions({ status: 'all' });
     if (qs.length) { await call('getQuestion', qs[0].id); await call('answerQuestion', qs[0].id, 'Antwort'); }
     await call('setCollapsed', a, true);
+    await call('setSides', { [a]: 'left' });
     await call('setAllCollapsed', false);
     await call('moveNote', b, a, 'after').catch(() => {});
     await call('moveAmongSiblings', b, -1).catch(() => {});

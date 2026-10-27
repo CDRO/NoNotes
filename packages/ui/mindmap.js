@@ -20,6 +20,8 @@
   const MAX_W = 260;
   const MIN_ZOOM = 0.2;
   const MAX_ZOOM = 3;
+  const GLIDE_MS = 200;   // so lange gleiten die Knoten an ihren neuen Platz (v3.0.0)
+  const GLIDE_MAX = 400;  // bei mehr Knoten springen sie, damit grosse Mindmaps flüssig bleiben
 
   const measureCanvas = document.createElement('canvas').getContext('2d');
 
@@ -51,6 +53,7 @@
       byId.set(r.id, {
         id: r.id, title: r.title, parentId: r.parent_id, order: r.sort_order,
         collapsed: !!r.collapsed, badge: r.badge || 0, dbadge: r.dbadge || 0, tbadge: r.tbadge || 0, archived: !!r.archived_at, children: [],
+        side: r.side === 'left' || r.side === 'right' ? r.side : null,
       });
     }
     const root = { id: 'root', isRoot: true, title: mapTitle, children: [], badge: 0, dbadge: 0, tbadge: 0 };
@@ -65,7 +68,8 @@
     return { root, byId };
   }
 
-  function layoutTree(root) {
+  /** layout.ignoreSides: alle Hauptäste neu verteilen («Neu verteilen»), ohne die gespeicherten Seiten. */
+  function layoutTree(root, layout) {
     const sizeNode = n => {
       const font = n.isRoot ? ROOT_FONT : FONT;
       const fit = fitLabel((n.title || '').trim() || t('Ohne Titel'), font, MAX_W);
@@ -101,13 +105,29 @@
       return h;
     };
 
-    // Kinder der Wurzel ausgewogen auf rechts und links verteilen.
+    // Hauptäste links und rechts (v3.0.0): jeder behält seine gespeicherte Seite (side), damit nichts springt, wenn ein Ast wächst
+    // oder einer dazukommt. Einer ohne Seite kommt auf die kürzere, die höchsten zuerst (so verteilt sich eine bestehende Mindmap
+    // beim ersten Mal ausgewogen); diese Wahl meldet das Layout zurück (auto), die App speichert sie. Je Seite gilt die Reihenfolge.
     const right = [], left = [];
     let hr = 0, hl = 0;
+    const ignore = !!(layout && layout.ignoreSides);
+    const given = (layout && layout.sides) || {}; // ersatzweise, etwa für den Export dieselben Seiten wie auf dem Schirm
+    const fixed = c => {
+      const side = ignore ? null : (c.side || given[c.id]);
+      return side === 'left' || side === 'right' ? side : null;
+    };
     for (const c of root.children) {
-      if (hr <= hl) { right.push(c); hr += subtreeH(c) + GAP_Y; }
-      else { left.push(c); hl += subtreeH(c) + GAP_Y; }
+      if (fixed(c) === 'right') hr += subtreeH(c) + GAP_Y;
+      else if (fixed(c) === 'left') hl += subtreeH(c) + GAP_Y;
     }
+    const auto = new Map();
+    const free = root.children.filter(c => !fixed(c)).sort((a, b) => subtreeH(b) - subtreeH(a) || (a.order - b.order) || (a.id - b.id));
+    for (const c of free) {
+      const side = hr <= hl ? 'right' : 'left';
+      auto.set(c.id, side);
+      if (side === 'right') hr += subtreeH(c) + GAP_Y; else hl += subtreeH(c) + GAP_Y;
+    }
+    for (const c of root.children) ((fixed(c) || auto.get(c.id)) === 'left' ? left : right).push(c);
 
     root.x = -root.w / 2;
     root.y = -root.h / 2;
@@ -142,7 +162,7 @@
       minX: Math.min(b.minX, n.x), minY: Math.min(b.minY, n.y),
       maxX: Math.max(b.maxX, n.x + n.w), maxY: Math.max(b.maxY, n.y + n.h),
     }), { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
-    return { placed, bounds };
+    return { placed, bounds, auto };
   }
 
   // ---------- Querverweise ----------
@@ -374,18 +394,13 @@
     }
 
     function drawEdge(parent, child) {
-      const dir = child.dir;
-      const px = dir > 0 ? parent.x + parent.w : parent.x;
-      const py = parent.y + parent.h / 2;
-      const cx = dir > 0 ? child.x : child.x + child.w;
-      const cy = child.y + child.h / 2;
-      const mx = (px + cx) / 2;
+      const e = edgeEnds(parent, child, parent, child);
       // data-*: für Erweiterungen (Verbindung Eltern → Kind samt Endpunkten); 'root' ist die Wurzel
-      svgEl('path', {
+      return svgEl('path', {
         class: 'mm-edge',
-        d: `M ${px} ${py} C ${mx} ${py}, ${mx} ${cy}, ${cx} ${cy}`,
+        d: edgeD(e),
         'data-from': String(parent.id), 'data-to': String(child.id),
-        'data-x1': px, 'data-y1': py, 'data-x2': cx, 'data-y2': cy,
+        'data-x1': e.px, 'data-y1': e.py, 'data-x2': e.cx, 'data-y2': e.cy,
       }, edgesG);
     }
 
@@ -419,7 +434,9 @@
         for (const n of byId.values()) { n.match = false; n.matchInside = false; }
       }
       svg.classList.toggle('has-matches', !!matches);
-      const { placed, bounds } = layoutTree(root);
+      const before = shownPositions(); // wo die Knoten bisher standen, zum Gleiten
+      const { placed, bounds, auto } = layoutTree(root);
+      inst.rows = rows;
       inst.root = root;
       inst.byId = byId;
       inst.placed = placed;
@@ -431,15 +448,134 @@
       edgesG.replaceChildren();
       linksG.replaceChildren();
       nodesG.replaceChildren();
+      const edges = [];
       for (const n of placed) {
-        for (const c of n.visibleChildren) drawEdge(n, c);
+        for (const c of n.visibleChildren) edges.push({ el: drawEdge(n, c), parent: n, child: c });
       }
       inst.linkIndex = null; // wird beim ersten Verweis gebaut
       for (const l of drawableLinks(options.links, placed)) inst.bounds = unionBox(inst.bounds, drawLink(l)); // Einpassen mit den Linien
-      for (const n of placed) drawNode(n);
+      const els = new Map(placed.map(n => [n, drawNode(n)]));
 
-      if (inst.needsFit) { fit(); inst.needsFit = false; }
+      const fitNow = inst.needsFit;
+      if (fitNow) { fit(); inst.needsFit = false; }
       else applyTransform();
+      if (!fitNow) glide(before, els, edges);
+      // Neue Hauptäste haben ihre Seite eben bekommen: die App hält sie fest, damit sie beim nächsten Mal nicht springen
+      if (auto.size && handlers.onSides) handlers.onSides(Object.fromEntries(auto));
+    }
+
+    // ---------- Gleiten (v3.0.0) ----------
+
+    /** Anfangs- und Endpunkte der Linie Eltern → Kind, mit den Positionen pp (Eltern) und cp (Kind). */
+    function edgeEnds(parent, child, pp, cp) {
+      const dir = child.dir;
+      return {
+        px: dir > 0 ? pp.x + parent.w : pp.x, py: pp.y + parent.h / 2,
+        cx: dir > 0 ? cp.x : cp.x + child.w, cy: cp.y + child.h / 2,
+      };
+    }
+
+    function edgeD(e) {
+      const mx = (e.px + e.cx) / 2;
+      return `M ${e.px} ${e.py} C ${mx} ${e.py}, ${mx} ${e.cy}, ${e.cx} ${e.cy}`;
+    }
+
+    /** pos: id → { x, y }, wo die Knoten gerade zu sehen sind, auch mitten im Gleiten, ein eben gezogener Knoten dort, wo er
+     *  losgelassen wurde; fading: Knoten, die noch am Einblenden sind (die App zeichnet nach dem Anlegen gleich ein zweites Mal). */
+    function shownPositions() {
+      const pos = new Map();
+      let fading = new Set();
+      if (inst.glide) {
+        cancelAnimationFrame(inst.glide.raf);
+        for (const [id, p] of inst.glide.now) pos.set(id, p);
+        fading = inst.glide.fading;
+        inst.glide.finish(false);
+      } else {
+        for (const n of inst.placed) pos.set(String(n.id), { x: n.x, y: n.y });
+      }
+      if (inst.dropped) { pos.set(inst.dropped.id, inst.dropped); inst.dropped = null; }
+      return { pos, fading };
+    }
+
+    function reducedMotion() {
+      try { return !!(global.matchMedia && global.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) { return false; }
+    }
+
+    /** Lässt die Knoten von ihrem bisherigen Platz (before) an den neuen gleiten; neue blenden ein, Querverweise erscheinen am Schluss.
+     *  Ohne Bewegung, bei einer ganz anderen Mindmap, sehr vielen Knoten oder «Bewegung reduzieren» steht alles sofort da. */
+    function glide(before, els, edges) {
+      if (!before.pos.size || inst.placed.length > GLIDE_MAX || reducedMotion() || typeof requestAnimationFrame !== 'function') return;
+      const moves = [], fresh = [];
+      for (const n of inst.placed) {
+        const p = before.pos.get(String(n.id));
+        if (!p || before.fading.has(String(n.id))) fresh.push(n);
+        else if (Math.abs(p.x - n.x) > 0.5 || Math.abs(p.y - n.y) > 0.5) moves.push({ n, el: els.get(n), x0: p.x, y0: p.y });
+      }
+      if (!moves.length && !fresh.length) return;
+      if (fresh.length >= inst.placed.length - 1) return; // eine andere Mindmap (nur die Wurzel ist gleich): nichts gleitet
+      const moving = new Map(moves.map(m => [m.n, m]));
+      const freshSet = new Set(fresh);
+      const lines = edges.filter(e => moving.has(e.parent) || moving.has(e.child) || freshSet.has(e.child));
+      const now = new Map(inst.placed.map(n => [String(n.id), { x: n.x, y: n.y }]));
+      const pos = (n, k) => {
+        const m = moving.get(n);
+        return m ? { x: m.x0 + (n.x - m.x0) * k, y: m.y0 + (n.y - m.y0) * k } : { x: n.x, y: n.y };
+      };
+      const hideLinks = moves.length && linksG.childNodes.length;
+      if (hideLinks) linksG.style.opacity = '0';
+      const show = k => {
+        for (const m of moves) {
+          const p = pos(m.n, k);
+          m.el.setAttribute('transform', `translate(${p.x} ${p.y})`);
+          now.set(String(m.n.id), p);
+        }
+        for (const e of lines) {
+          e.el.setAttribute('d', edgeD(edgeEnds(e.parent, e.child, pos(e.parent, k), pos(e.child, k))));
+          if (freshSet.has(e.child)) e.el.style.opacity = String(k);
+        }
+        for (const n of fresh) els.get(n).style.opacity = String(k);
+      };
+      const g = inst.glide = { raf: 0, now, fading: new Set(fresh.map(n => String(n.id))) };
+      g.finish = done => {
+        if (inst.glide === g) inst.glide = null;
+        if (!done) return; // eine neue Darstellung ersetzt ohnehin alles
+        show(1);
+        for (const e of lines) e.el.style.opacity = '';
+        for (const n of fresh) els.get(n).style.opacity = '';
+        if (hideLinks) linksG.style.opacity = '';
+      };
+      const ease = u => 1 - Math.pow(1 - u, 3);
+      let t0 = null;
+      const step = ts => {
+        if (t0 == null) t0 = ts;
+        const u = Math.min(1, (ts - t0) / GLIDE_MS);
+        if (u >= 1) { g.finish(true); return; }
+        show(ease(u));
+        g.raf = requestAnimationFrame(step);
+      };
+      show(0);
+      g.raf = requestAnimationFrame(step);
+    }
+
+    /** Beendet ein laufendes Gleiten sofort (etwa bevor ein Knoten gezogen wird). */
+    function endGlide() {
+      if (!inst.glide) return;
+      cancelAnimationFrame(inst.glide.raf);
+      inst.glide.finish(true);
+    }
+
+    /** Seiten der Hauptäste, wie sie gerade zu sehen sind: { id: 'left' | 'right' } (für den Export). */
+    function sides() {
+      const out = {};
+      if (inst.root) for (const c of inst.root.children) if (c.dir) out[c.id] = c.dir < 0 ? 'left' : 'right';
+      return out;
+    }
+
+    /** «Neu verteilen»: ausgewogene Seiten für alle Hauptäste, die höchsten zuerst auf die kürzere Seite; ohne die gespeicherten. */
+    function balancedSides() {
+      if (!inst.rows) return {};
+      const { root } = buildTree(inst.rows, '');
+      return Object.fromEntries(layoutTree(root, { ignoreSides: true }).auto);
     }
 
     // ---------- Ansicht ----------
@@ -568,7 +704,9 @@
       if (drag.id === 'root') return;
       const n = nodeOf(drag.id);
       if (!n || n.archived) return; // archivierte Notizen lassen sich nicht umhängen
+      endGlide();
       drag.el.classList.add('mm-dragging');
+      drag.at = { x: n.x + dx / inst.k, y: n.y + dy / inst.k };
       drag.el.setAttribute('transform', `translate(${n.x + dx / inst.k} ${n.y + dy / inst.k})`);
       const under = document.elementFromPoint(e.clientX, e.clientY);
       const targetEl = under && under.closest ? under.closest('.mm-node') : null;
@@ -614,7 +752,14 @@
       clearDropTarget();
       const n = nodeOf(d.id);
       if (d.valid && handlers.onReparent) {
-        handlers.onReparent(Number(d.id), d.targetId === 'root' ? null : Number(d.targetId), d.where || 'child');
+        // Auf die Wurzel gezogen: auf die Seite, auf der losgelassen wurde (so wechselt ein Hauptast die Seite)
+        let side = null;
+        if (d.targetId === 'root' && e) {
+          const r = screenRectOf('root');
+          if (r) side = e.clientX < r.left + r.width / 2 ? 'left' : 'right';
+        }
+        if (d.at) inst.dropped = { id: d.id, x: d.at.x, y: d.at.y }; // von dort gleitet er an den neuen Platz
+        handlers.onReparent(Number(d.id), d.targetId === 'root' ? null : Number(d.targetId), d.where || 'child', side);
       } else if (n) {
         d.el.setAttribute('transform', `translate(${n.x} ${n.y})`);
       }
@@ -680,14 +825,14 @@
     }
 
     return {
-      render, fit, setSelected, setMulti, neighbor, screenRectOf, ensureVisible,
+      render, fit, setSelected, setMulti, neighbor, screenRectOf, ensureVisible, sides, balancedSides,
       zoomIn: () => zoomBy(1.25),
       zoomOut: () => zoomBy(1 / 1.25),
       requestFit: () => { inst.needsFit = true; },
       getSelected: () => inst.selectedId,
       nodeInfo: id => {
         const n = nodeOf(id);
-        return n ? { id: n.id, isRoot: !!n.isRoot, title: n.title, parentId: n.isRoot ? undefined : n.parentId, childCount: n.children.length, collapsed: !!n.collapsed, archived: !!n.archived, dir: n.dir } : null;
+        return n ? { id: n.id, isRoot: !!n.isRoot, title: n.title, parentId: n.isRoot ? undefined : n.parentId, childCount: n.children.length, collapsed: !!n.collapsed, archived: !!n.archived, dir: n.dir, side: n.isRoot || n.parentId != null ? null : (n.dir < 0 ? 'left' : 'right') } : null;
       },
       nodeCount: () => inst.byId.size,
     };
@@ -700,13 +845,14 @@
   }
 
   /** Rendert die Mindmap als eigenständige SVG-Zeichenkette (helles Farbschema, Stile eingebettet).
-   *  rows wie bei render(); options.mapTitle, options.expandAll (eingeklappte Äste aufklappen), options.links (Querverweise). */
+   *  rows wie bei render(); options.mapTitle, options.expandAll (eingeklappte Äste aufklappen), options.links (Querverweise),
+   *  options.sides (Seiten der Hauptäste ohne gespeicherte Seite, etwa sides() der Mindmap auf dem Schirm). */
   function toSvgString(rows, options) {
     options = options || {};
     const prepared = options.expandAll ? rows.map(r => Object.assign({}, r, { collapsed: 0 })) : rows;
     const { root, byId } = buildTree(prepared, options.mapTitle || '');
     for (const n of byId.values()) { n.match = false; n.matchInside = false; }
-    const layout = layoutTree(root);
+    const layout = layoutTree(root, { sides: options.sides });
     const placed = layout.placed;
     const drawable = drawableLinks(options.links, placed);
     const index = drawable.length ? linkIndex(placed) : null;

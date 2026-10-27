@@ -103,11 +103,11 @@
     const path = async noteId => (await backend.getPath(noteId)).map(p => p.title.trim() || t('Ohne Titel'));
     for (const task of await backend.listTasks({ status: includeDone ? 'all' : 'open', sort: 'due' })) {
       if (!task.due) continue;
-      items.push({ kind: 'task', id: task.id, text: task.text, due: task.due, closed: !!task.done, noteId: task.note_id, noteTitle: task.note_title, path: await path(task.note_id), tags: await backend.getTags(task.note_id), answer: null });
+      items.push({ kind: 'task', id: task.id, text: task.text, due: task.due, reminders: task.reminders || [], closed: !!task.done, noteId: task.note_id, noteTitle: task.note_title, path: await path(task.note_id), tags: await backend.getTags(task.note_id), answer: null });
     }
     for (const q of await backend.listQuestions({ status: includeDone ? 'all' : 'open', sort: 'due' })) {
       if (!q.due) continue;
-      items.push({ kind: 'question', id: q.id, text: q.text, due: q.due, closed: !!q.answer, noteId: q.note_id, noteTitle: q.note_title, path: await path(q.note_id), tags: await backend.getTags(q.note_id), answer: q.answer });
+      items.push({ kind: 'question', id: q.id, text: q.text, due: q.due, reminders: q.reminders || [], closed: !!q.answer, noteId: q.note_id, noteTitle: q.note_title, path: await path(q.note_id), tags: await backend.getTags(q.note_id), answer: q.answer });
     }
     items.sort((a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : 0));
     return items;
@@ -180,6 +180,18 @@
         // Mit Uhrzeit 30 Minuten vorher, ganztägig am Vortag um 9 Uhr (15 Stunden vor Mitternacht).
         push(timed ? 'TRIGGER:-PT30M' : 'TRIGGER:-PT15H');
         push('END:VALARM');
+      }
+      // Erinnerungen (v3.0.0, die früheren Termine der Zeile): je ein Alarm zum festen Zeitpunkt, ohne Uhrzeit um 9 Uhr
+      if (!it.closed) {
+        for (const r of it.reminders || []) {
+          const at = D().toDate(D().hasTime(r) ? r : r + 'T09:00');
+          if (!at) continue;
+          push('BEGIN:VALARM');
+          push('ACTION:DISPLAY');
+          push(`DESCRIPTION:${escapeText(t('Erinnerung: {text}', { text: it.text }))}`);
+          push(`TRIGGER;VALUE=DATE-TIME:${utcStamp(at)}`);
+          push('END:VALARM');
+        }
       }
       push('END:VEVENT');
     }

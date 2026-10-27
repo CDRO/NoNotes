@@ -25,7 +25,7 @@ sind Dateien im Ordner `lang/` und lassen sich mit jedem Release ergänzen. Ausg
   sonst Deutsch. Ein Wechsel lädt die Seite neu.
 - Zeitstempel (Erstellt, Geändert, Gedruckt, Gespeichert) folgen der Sprache (`Intl`). Fälligkeiten
   von Aufgaben und Fragen werden vorerst in jeder Sprache als `T.M.JJJJ` angezeigt; die Eingabe im Text
-  (`@15.10.2026` oder `@2026-10-15`, optional mit Uhrzeit) ist Syntax und bleibt überall gleich.
+  (`>15.10.2026` oder `>2026-10-15`, optional mit Uhrzeit; bis v2.x `@Datum`) ist Syntax und bleibt überall gleich.
 - Der Test `test/extend.cjs` führt die Seite in `qps` und in `en` durch alle Ansichten, Dialoge und Rückfragen und
   schlägt fehl, sobald irgendwo deutscher Text stehen bleibt.
 - Die Entwicklungssprache `qps` umschliesst jeden Text mit `⟦ ⟧`. Wer sie einstellt
@@ -60,7 +60,7 @@ Regeln für Übersetzungen:
   Text in `<code>` und `<kbd>` ist Syntax oder eine Taste und bleibt in der Regel stehen.
 - Die Hilfe nennt Menüeinträge wie «Datenbank → Datenbankdatei anlegen…». Diese Namen so übersetzen, wie
   sie im Menü stehen.
-- Die Schreibweise von Fragen (`?`), Antworten (`!`), Aufgaben (`- [ ]`) und Terminen (`@Datum`) ist keine
+- Die Schreibweise von Fragen (`?`), Antworten (`!`), Aufgaben (`- [ ]`) und Terminen (`>Datum`) ist keine
   Sprache, sondern Syntax des Notiztexts und bleibt in allen Sprachen gleich.
 
 ## Texte nachführen

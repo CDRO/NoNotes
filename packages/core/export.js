@@ -98,7 +98,7 @@
     const md = text => inline(text, resolveLink, resolveAttachment);
     const labelOf = qb => qb.kind === 'decision' ? (qb.answer ? t('Entscheid (getroffen)') : t('Offener Entscheid')) : (qb.answer ? t('Frage (beantwortet)') : t('Offene Frage'));
     const headOf = qb => qb.kind === 'decision' ? (qb.decided && D ? t('Entschieden {datum}', { datum: D.formatDue(qb.decided) }) : t('Entschieden')) : t('Antwort');
-    const dueOf = qb => qb.due && D ? ' (' + t('bis {datum}', { datum: D.formatDue(qb.due) }) + ')' : '';
+    const dueOf = qb => qb.due && D ? ' (' + D.dueText(qb.due, qb.reminders) + ')' : '';
     let fence = null;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -190,7 +190,7 @@
     if (!rows.length) return [kind === 'decision' ? t('Keine offenen Entscheide.') : t('Keine offenen Fragen.')];
     return rows.map(r => {
       const n = byId.get(r.note_id);
-      const due = r.due && D ? ' (' + t('bis {datum}', { datum: D.formatDue(r.due) }) + ')' : '';
+      const due = r.due && D ? ' (' + D.dueText(r.due, r.reminders) + ')' : '';
       const within = r.parent_text ? ' (' + t('Teil von «{titel}»', { titel: r.parent_text }) + ')' : '';
       return n ? `- ${r.text}${due}${within} — ${t('aus')} [${n.title.trim() || t('Ohne Titel')}](${hrefOf(n)})` : `- ${r.text}${due}${within}`;
     });
@@ -202,13 +202,13 @@
   }
 
   async function openTaskLines(backend, nodes, hrefOf, archived) {
-    const T = global.NoNotesTasks;
+    const D = global.NoNotesDates;
     const byId = new Map(nodes.map(n => [n.id, n]));
     const rows = await backend.listTasks({ status: 'open', sort: 'due', archived });
     if (!rows.length) return [t('Keine offenen Aufgaben.')];
     return rows.map(r => {
       const n = byId.get(r.note_id);
-      const due = (r.due ? ' (' + t('bis {datum}', { datum: T.formatDue(r.due) }) + ')' : '') + (r.parent_text ? ' · ' + t('Teil von „{aufgabe}“', { aufgabe: r.parent_text }) : '');
+      const due = (r.due ? ' (' + D.dueText(r.due, r.reminders) + ')' : '') + (r.parent_text ? ' · ' + t('Teil von „{aufgabe}“', { aufgabe: r.parent_text }) : '');
       return n ? `- [ ] ${r.text}${due} — ${t('aus')} [${n.title.trim() || t('Ohne Titel')}](${hrefOf(n)})` : `- [ ] ${r.text}${due}`;
     });
   }
@@ -312,9 +312,11 @@
     return P.light(await backend.getMeta('accent'));
   }
 
+  /** options.archived (Archiv mitzeichnen), options.sides (Seiten der Hauptäste ohne gespeicherte Seite, wie auf dem Schirm). */
   async function renderSvg(backend, options) {
     return Mindmap().toSvgString(await backend.getTree({ archive: !!(options && options.archived) }), {
       mapTitle: await backend.getMapTitle(), expandAll: true, accent: await accentOf(backend), links: await backend.getLinks(),
+      sides: options && options.sides,
     });
   }
 

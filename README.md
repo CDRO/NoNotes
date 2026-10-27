@@ -142,7 +142,9 @@ Termin als iCalendar-Datei, die sich in Outlook, Thunderbird, Google Kalender od
 Kalender importieren oder abonnieren lässt.
 
 - Mit Uhrzeit dauert ein Termin 30 Minuten, ohne Uhrzeit ist er ganztägig. Erinnerung
-  30 Minuten vorher bzw. am Vortag um 9 Uhr (abschaltbar).
+  30 Minuten vorher bzw. am Vortag um 9 Uhr (abschaltbar). Stehen mehrere Termine am Zeilenende
+  (seit 3.0.0), ist der späteste der Termin im Kalender; die früheren kommen als zusätzliche
+  Erinnerungen zum festen Zeitpunkt dazu, ohne Uhrzeit um 9 Uhr.
 - Jeder Termin trägt eine feste Kennung (UID) aus einer Kennung der Datenbank und der Nummer
   des Eintrags. Sie bleibt erhalten, wenn Termin oder Status wechseln; die Versionsnummer
   (SEQUENCE) steigt mit jedem Export. Kalenderprogramme aktualisieren deshalb bestehende
@@ -178,7 +180,9 @@ Die Notizen bilden einen Baum um einen zentralen Knoten, dessen Titel du per Dop
 | Notiz öffnen | Doppelklick auf den Knoten oder `Enter`. Der Editor öffnet sich im Vollbild, `Esc` oder «Zurück» schliesst ihn. |
 | Neue Notiz | **Neue Notiz** oder `Tab`: hängt eine Unternotiz an den ausgewählten Knoten (ohne Auswahl an die Wurzel) und fragt gleich den Titel ab. |
 | Umbenennen | `F2` oder Rechtsklick → Umbenennen. |
-| Umhängen | Knoten mit der Maus auf die Mitte eines anderen Knotens oder auf die Wurzel ziehen. |
+| Umhängen | Knoten mit der Maus auf die Mitte eines anderen Knotens oder auf die Wurzel ziehen. Auf der Wurzel zählt die Hälfte: links losgelassen, kommt der Ast auf die linke Seite. |
+| Seiten der Hauptäste (seit 3.0.0) | Jeder Ast an der Wurzel behält seine Seite, auch wenn er wächst oder ein neuer dazukommt; ein neuer kommt auf die kürzere Seite. Wechseln: auf die andere Hälfte der Wurzel ziehen oder Rechtsklick → *Auf die linke/rechte Seite*. **Hauptäste neu verteilen** (Rechtsklick auf die Wurzel oder die Fläche) verteilt alle ausgewogen, die grössten zuerst. Beim ersten Öffnen mit 3.0.0 verteilt NoNotes eine bestehende Mindmap einmal so. Ändert sich das Bild, gleiten die Knoten kurz an ihren neuen Platz, neue blenden ein (nicht bei «Bewegung reduzieren» des Systems und nicht bei sehr grossen Mindmaps). |
+| Als Bild kopieren (seit 3.0.0) | **Als Bild kopieren** in der Leiste, `Ctrl+C` in der Mindmap oder Rechtsklick auf die Wurzel: legt die Mindmap so, wie sie zu sehen ist (eingeklappte Äste zu, Archiv und Querverweise wie eingeblendet), als PNG in die Zwischenablage, zum Einfügen in Mails, Word oder PowerPoint. Ein Browser ohne Bilder in der Zwischenablage lädt das Bild herunter. |
 | Reihenfolge | Knoten auf den oberen oder unteren Rand eines Geschwisterknotens ziehen (grüne Einfügemarke), oder `Alt+↑` / `Alt+↓`, oder Rechtsklick → Nach oben / Nach unten. |
 | Ein-/Ausklappen | Kleiner Kreis am Knoten (zeigt eingeklappt die Anzahl der verborgenen Notizen) oder Rechtsklick. |
 | Löschen | `Entf` oder Rechtsklick → Löschen. Unternotizen rücken zum übergeordneten Knoten auf. |
@@ -286,7 +290,7 @@ beginnen, sind die Antwort. Ein Termin darf wie bei Aufgaben am Zeilenende stehe
 Notiztext bleibt die einzige Wahrheit, die App führt nur einen Index darüber.
 
 ```
-? Wie hoch ist das Budget? @15.10.2026
+? Wie hoch ist das Budget? >15.10.2026
 ! 20'000 CHF laut Mail von Anna
 ```
 
@@ -312,13 +316,13 @@ beginnen, sind der getroffene Entscheid; die erste darf mit dem Datum beginnen. 
 wie bei Fragen. Die Zeile mit dem Öffner bestimmt die Art: unter `?!` zählt auch `!`, unter `?` auch `!!`.
 
 ```
-?! Variante B oder C? @lea1234 (@tom5678) @31.10.2026
+?! Variante B oder C? @lea1234 (@tom5678) >31.10.2026
 !! 14.10.2026: Variante B, weil sie ohne Serverkomponente auskommt
 ```
 
 - **Personen:** `@kürzel` im Text einer Frage oder eines Entscheids nennt, wer antworten oder
-  entscheiden soll; `(@kürzel)` ist jemand, der wahlweise dabei ist. Beim Tippen von `@` schlägt der
-  Editor bekannte Kürzel vor (die in der Datei vorkommen; Erweiterungen und Ausprägungen können
+  entscheiden soll; `(@kürzel)` ist jemand, der wahlweise dabei ist. `@` steht seit 3.0.0 nur noch für
+  Personen (Termine hinter `>`). Beim Tippen von `@` schlägt der Editor bekannte Kürzel vor (die in der Datei vorkommen; Erweiterungen und Ausprägungen können
   weitere liefern, siehe [docs/PLUGINS.md](docs/PLUGINS.md)). Das Kürzel, das gerade getippt wird,
   schlägt sich nicht selbst vor, auch wenn die Notiz zwischendurch gespeichert wurde (seit 2.0.1).
   `↑` `↓` wählen, `Enter` oder `Tab` übernimmt, `Esc` schliesst.
@@ -336,7 +340,7 @@ wie bei Fragen. Die Zeile mit dem Öffner bestimmt die Art: unter `?!` zählt au
 ### Mehrzeilige Entscheide, Einträge in Listen, Unterentscheide (seit 2.4.0)
 
 ````
-?!``` Ablage auf SharePoint umstellen @anna @15.11.2026
+?!``` Ablage auf SharePoint umstellen @anna >15.11.2026
 Ab 1.11. liegen alle Projektordner auf SharePoint.
 - Altdaten bleiben bis Ende Jahr lesbar
 ?! Wer migriert die Altdaten? @ben
@@ -348,7 +352,7 @@ Ab 1.11. liegen alle Projektordner auf SharePoint.
 - Budget 2027
 - ?! Neues Tool kaufen? @anna
   !! 20.10.2026: Ja, Variante B
-- ?!``` Welches Ticketsystem? @anna @15.11.2026
+- ?!``` Welches Ticketsystem? @anna >15.11.2026
   Wir brauchen bis Ende Jahr eines.
   - Variante A: günstig
   - Variante B: mit Schnittstelle
@@ -406,7 +410,7 @@ Eine **Vorlage** ist eine Notiz samt Unternotizen als Markdown-Datei, mit Platzh
   Vorlage…* im Menü *Notiz* und im Kontextmenü der Mindmap. *Notiz → Vorlage einfügen…* setzt den Text der Vorlage an die Stelle des
   Cursors und legt ihre Unternotizen unter der offenen Notiz an. Die Auswahl zeigt eine Vorschau mit ersetzten Platzhaltern.
 - **Platzhalter:** `{{datum}}` (heute), `{{datum+7}}` und `{{datum-1}}` (Tage dazu oder weg, zum Beispiel für Termine:
-  `- [ ] Offerte @{{datum+7}}`), `{{zeit}}`, `{{wochentag}}`, `{{woche}}` (Kalenderwoche), `{{jahr}}`, `{{vorlage}}`, `{{bereich}}`,
+  `- [ ] Offerte >{{datum+7}}`), `{{zeit}}`, `{{wochentag}}`, `{{woche}}` (Kalenderwoche), `{{jahr}}`, `{{vorlage}}`, `{{bereich}}`,
   `{{ich}}` (im Dienst dein `@kürzel`). Die Namen sind übersetzbar (Sprachpaket, Schlüssel `platzhalter:…`) und werden in jeder Sprache
   erkannt (`{{date}}` geht auch); unbekannte bleiben stehen.
 - **Datumsformat (seit 2.5.1):** hinter einem Doppelpunkt, zum Beispiel `{{datum+2:JJJJ-MM-TT}}` (2026-10-22), `{{datum:TT.MM.JJJJ}}`
@@ -415,7 +419,7 @@ Eine **Vorlage** ist eine Notiz samt Unternotizen als Markdown-Datei, mit Platzh
   `T`/`d` für den Tag, `TTT` (Di) und `TTTT` (Dienstag) für den Wochentag; Text in Hochkommas bleibt stehen (`'KW'`, `''` für ein
   Hochkomma). Statt Kürzeln ein Stil der Sprache der Oberfläche (`Intl.DateTimeFormat`): `kurz`, `mittel`, `lang`, `voll` (englisch
   `short`, `medium`, `long`, `full`) und `iso`. Ohne Format gilt `20.10.2026`. Als Termin taugen `T.M.JJJJ`, `TT.MM.JJJJ` und `JJJJ-MM-TT`
-  (`@{{datum+7:JJJJ-MM-TT}}`). *Heutiges Datum ersetzen* behält beim Speichern die Schreibweise (`2026-10-20` wird `{{datum:JJJJ-MM-TT}}`).
+  (`>{{datum+7:JJJJ-MM-TT}}`). *Heutiges Datum ersetzen* behält beim Speichern die Schreibweise (`2026-10-20` wird `{{datum:JJJJ-MM-TT}}`).
 - **Ausfüllbare Platzhalter (seit 2.12.0):** `{{?Kunde}}` füllst du beim Anlegen selbst aus. Nach dem Einfügen ist der erste
   ausgewählt (steht einer im Titel, zuerst der); Tippen ersetzt ihn, `Tab` springt zum nächsten, `Umschalt+Tab` zurück, `Esc` beendet
   (nach dem letzten springt `Tab` ans Ende des eingefügten Texts). Gleiche Namen bekommen denselben Wert, im Text, im Titel und in den
@@ -434,8 +438,11 @@ Eine **Vorlage** ist eine Notiz samt Unternotizen als Markdown-Datei, mit Platzh
   `"remove"` im Kopf) lässt ausgefüllte als `{{?Kunde: Firma AG}}` stehen: Die Vorschau zeigt nur den Wert, fein unterstrichen; ein Klick
   hinein wählt ihn und zeigt die Beschreibung wieder, `Tab` springt durch die Platzhalter der Notiz, Rechtsklick → *Platzhalter auflösen*
   (oder alle der Notiz) macht daraus gewöhnlichen Text. Aufgaben, Fragen, Personen, Termine, Suche, Listen, Druck und Export sehen nur den
-  Wert (offene als `[Name]`): `- [ ] {{?Beschreibung}} @{{?Wer: anna}} @{{?Bis wann: 31.10.2026}}` ist eine Aufgabe für @anna bis
+  Wert (offene als `[Name]`): `- [ ] {{?Beschreibung}} @{{?Wer: anna}} >{{?Bis wann: 31.10.2026}}` ist eine Aufgabe für @anna bis
   31.10.2026. In Code (`` ` ``…`` ` `` und Codeblöcke) ist nichts ein Platzhalter. Beispiel: die Vorlage *Aufgabe* im ZIP.
+- **Termine in Vorlagen (seit 3.0.0):** `>{{datum+7}}` statt `@{{datum+7}}`. Vorlagen im Browser und im Dienst stellt NoNotes selbst um;
+  enthalten Dateien im verbundenen Ordner noch `@Datum`, zeigt *Datenbank → Vorlagen…* einen Hinweis und den Knopf **Auf «>» umstellen**,
+  der die Dateien umschreibt. NoNotes liest sie aber auch so richtig.
 - **Lokal:** Vorlagen liegen im Ordner `templates/` neben `index.html`, für alle Bereiche gleich. *Datenbank → Vorlagen…* verbindet den
   Ordner einmal (Edge, Chrome); danach liest NoNotes die `.md`-Dateien darin, und neue Vorlagen landen direkt dort (gleicher Name: `Name (2).md`).
   Ohne Ordner (oder in Firefox) wird die Vorlage heruntergeladen und in diesem Browser gemerkt. Im selben Dialog: Datei hinzufügen,
@@ -489,20 +496,53 @@ Mit Leerzeichen: <\\srv01\Projekte\Angebot 2026.docx> oder [Angebot](<\\srv01\Pr
 - Der Text bleibt, wie er geschrieben ist (Export, Agenten). Andere Markdown-Programme zeigen einen Netzwerkpfad mit nur einem `\` am Anfang,
   weil sie `\\` als maskierten Backslash lesen.
 
+### Termine, Frist und Erinnerungen (seit 3.0.0)
+
+Ein Termin steht am Ende einer Aufgabe, einer Frage oder eines Entscheids, hinter `>` mit einem Leerzeichen davor:
+`- [ ] Offerte einholen >15.10.2026`, mit Uhrzeit `>15.10.2026 14:30` (auch `14.30` oder `>2026-10-15 14:30`). Mit
+Uhrzeit gilt der Zeitpunkt, ohne Uhrzeit der ganze Tag; ein heutiger Termin mit vergangener Uhrzeit ist überfällig. Das
+gilt überall: in Listen, in Blöcken (`?!```` … ```` ``` ````) und in Tabellenfeldern. Kein Termin sind `>` am Zeilenanfang
+(Zitat), `->`, `=>`, `a > b` und alles in Code.
+
+```
+- [ ] Offerte einholen @anna >30.10.2026 >6.11.2026      Frist 6.11., Erinnerung am 30.10.
+?! Lieferant wählen @ben >3.11.2026 >10.11.2026 14:00    Frist 10.11. um 14:00, Erinnerung am 3.11.
+```
+
+- **Frist und Erinnerungen:** Stehen mehrere Termine am Zeilenende, ist der späteste die **Frist** und die früheren
+  sind **Erinnerungen**. «Überfällig» richtet sich nur nach der Frist. Die Vorschau zeigt jeden Termin als Abzeichen,
+  Erinnerungen kleiner mit Glocke; die Listen *Aufgaben*, *Fragen* und *Entscheide* zeigen die Frist und die nächste
+  offene Erinnerung. Der Kalenderexport macht aus jeder Erinnerung einen Alarm, und im Dienst kommt an jedem
+  Erinnerungstag eine Mail am Morgen.
+- **Datumsauswahl:** Tippt man `>` nach einem Leerzeichen, öffnet sich unter der Zeile ein kleiner Kalender. `←`/`→`
+  ein Tag, `↑`/`↓` eine Woche, `Bild↑`/`Bild↓` ein Monat; `Tab` geht durch *Heute*, *Morgen*, *Nächste Woche*
+  (Montag), den Kalender und das Feld *Uhrzeit* (leer = ohne); `Enter` oder ein Klick setzt das Datum ein, `Esc`
+  schliesst und lässt das `>` stehen. Ziffern weitertippen geht auch, der Kalender folgt; jedes andere Zeichen
+  schliesst ihn, so stört er bei `a > b` nicht. Im Text steht immer das ganze Datum (`TT.MM.JJJJ`), damit in einem
+  Jahr noch klar ist, welcher Tag gemeint war. Fügt die Auswahl einen Termin in eine Zeile mit Terminen ein, ordnet
+  sie die Termine nach dem Datum, damit der letzte im Text auch die Frist ist.
+- **Ändern:** Klick auf das Abzeichen in der Vorschau oder `Ctrl+Leertaste` im Text auf dem Termin. Der Knopf
+  **Termin** in der Toolleiste setzt ` >` ans Ende der Zeile und öffnet die Auswahl.
+- **Umstellung von 2.x:** Bis v2.12 standen Termine hinter `@`. Beim ersten Öffnen mit 3.0.0 schreibt NoNotes in allen
+  Notizen jedes `@Datum` am Zeilenende (ausserhalb von Code) zu `>Datum` um, auch in den Vorlagen; die Texte behalten
+  ihre Länge, «Geändert» und der Verlauf bleiben (er bekommt einen Vermerk «Umstellung auf v3.0.0»). Vorher fragt die
+  App einmal und lädt auf Wunsch eine Sicherung herunter (`NoNotes-vor-3.0.0-<Bereich>.sqlite`). Ältere Versionen
+  öffnen die umgestellten Daten nicht mehr; zurück geht es nur mit der Sicherung. Steht danach wieder ein `@Datum`
+  am Zeilenende (eingefügter alter Text, ein Agent), zählt es als Termin und wird beim Speichern still zu `>Datum`.
+  Das Agenten-Programm legt vor dem ersten Schreiben einer alten Datei `<Name>-vor-3.0.0.sqlite` daneben.
+
 ### Aufgaben
 
 Eine Markdown-Checkbox ist eine Aufgabe: `- [ ] Offerte einholen` offen, `- [x] …` erledigt.
-Ein Termin darf am Zeilenende stehen: `- [ ] Offerte einholen @15.10.2026`, mit Uhrzeit
-`@15.10.2026 14:30` (auch `14.30` oder `@2026-10-15 14:30`). Mit Uhrzeit gilt der Zeitpunkt,
-ohne Uhrzeit der ganze Tag; ein heutiger Termin mit vergangener Uhrzeit ist überfällig.
-Dasselbe gilt für Fragen.
+Ein Termin darf am Zeilenende stehen: `- [ ] Offerte einholen >15.10.2026`, mehrere als Frist
+und Erinnerungen (siehe oben). Dasselbe gilt für Fragen und Entscheide.
 
-- **Personen** (seit 2.11.0): `- [ ] Offerte einholen @anna (@ben) @15.10.2026` – `@anna` ist
+- **Personen** (seit 2.11.0): `- [ ] Offerte einholen @anna (@ben) >15.10.2026` – `@anna` ist
   verantwortlich, `(@ben)` beteiligt, wie bei Fragen und Entscheiden; mehrere sind gleichwertig.
   Eine Unteraufgabe ohne eigene Person gehört den Personen ihrer Hauptaufgabe (in der Liste blass,
   «Über die Hauptaufgabe»). Abhaken darf weiterhin jede Person, die schreiben darf. Im Dienst
   bekommt eine neu genannte Person eine Mail, und jeden Morgen um 7 Uhr eine Übersicht ihrer
-  offenen Aufgaben (überfällig, heute, die nächsten 7 Tage) mit Links; abschaltbar im Konto.
+  offenen Aufgaben (Erinnerung heute, überfällig, heute, die nächsten 7 Tage) mit Links; abschaltbar im Konto.
 - Die Ansicht **Aufgaben** sammelt alle Aufgaben aller Notizen. Standardfilter ist *Offen*;
   *Alle* und *Erledigt* holen den Rest zurück. Sortierung nach Fälligkeit gruppiert in
   Überfällig, Heute, Diese Woche, Später und Ohne Termin; alternativ nach Notiz oder nach Person
@@ -594,7 +634,7 @@ Dasselbe gilt für Fragen.
     und die Tabelle neu ausgerichtet. In einem Feld wirken die Knöpfe für Aufgabe, Frage, Entscheid
     und Antwort auf den Teil, in dem der Cursor steht. Unteraufgaben gibt es in Feldern nicht.
 - Die **Toolleiste** über dem Text setzt alles per Klick: Überschrift (Auswahlliste), fett,
-  kursiv, durchgestrichen, Code, Listen, Aufgabe, Zitat, Codeblock, Trennlinie, Tabelle, Link,
+  kursiv, durchgestrichen, Code, Listen, Aufgabe, Termin, Zitat, Codeblock, Trennlinie, Tabelle, Link,
   Notiz-Verweis, Bild, Frage und Antwort. Die Knöpfe wirken auf den markierten Text oder die
   aktuellen Zeilen und lassen sich mit einem zweiten Klick wieder aufheben.
   Tastenkürzel: `Ctrl+B`, `Ctrl+I`, `Ctrl+K` für Link.
@@ -604,7 +644,7 @@ Dasselbe gilt für Fragen.
   `Tab` und `Shift+Tab` rücken Listenelemente ein und aus, auch über mehrere markierte
   Zeilen. `Shift+Enter` fügt eine normale neue Zeile ein.
 - Termine von Aufgaben und Fragen erscheinen in der Vorschau und im Druck als Abzeichen,
-  rot bei überfällig, orange bei heute. Im Text bleibt `@15.10.2026` unverändert.
+  rot bei überfällig, orange bei heute, Erinnerungen kleiner mit Glocke. Im Text bleibt `>15.10.2026` unverändert.
 - Der **?**-Knopf rechts (oder `F1`) öffnet die Hilfe mit allen Schreibweisen, allen
   Tastenkürzeln und einer eigenen Seite zur Datenablage, die auch unter
   *Datenbank → Datenablage erklärt…* zu finden ist.
@@ -637,13 +677,13 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | Teil | Umsetzung |
 | --- | --- |
 | Oberfläche | `index.html`, `css/app.css`, `js/app.js` (`packages/ui/`) – reines HTML/CSS/JS, keine Frameworks; der Build kopiert nur |
-| Mindmap | `packages/ui/mindmap.js`: eigenes Layout (links/rechts ausbalanciert), SVG, Zoom, Ziehen, Tastatur; archivierte Knoten blass und gestrichelt |
+| Mindmap | `packages/ui/mindmap.js`: eigenes Layout (Hauptäste auf ihrer gespeicherten Seite `notes.side`, neue auf die kürzere, `balancedSides` für «Neu verteilen»), Gleiten beim Neuzeichnen, SVG, Zoom, Ziehen, Tastatur, Bild für Export und Zwischenablage (`toSvgString`); archivierte Knoten blass und gestrichelt |
 | Vorlagen | `packages/core/templates.js` (Dateiformat, Platzhalter, aus Notizen, Anlegen und Einfügen), Ablage über `shell.templates` (lokal `packages/store-local/templates-local.js`: Ordner `templates/` mit der File System Access API, sonst Browser), Beispiele in `templates/`; Tests `test/core.cjs` und `test/extend.cjs` |
 | Ausfüllbare Platzhalter | `packages/core/placeholders.js` (seit 2.12.0): `{{?Name}}` und `{{?Name: Wert}}` finden, ausfüllen und auflösen, Beschreibungsblöcke ```` ```template-description ```` ; Aufgaben, Fragen und Verweise lesen den Text mit den Werten (`flatten`), Druck und Export ohne Beschreibungen (`plain`); Sitzung zum Ausfüllen (Tab, Kasten, Rechtsklick) in `packages/ui/app.js` |
 | Pfade | `packages/core/markdown.js` (seit 2.12.0): `pathInfo` erkennt Netzwerk-, Laufwerks- und `file://`-Pfade, `configure({ localFiles })` legt fest, ob sie sich öffnen lassen; Klick und Rechtsklick in `packages/ui/app.js` |
 | Fragen und Entscheide | `packages/core/questions.js`: ein Parser für `?`-, `?!`-, `!`- und `!!`-Zeilen samt Datum und `@kürzel`, Einträge in Listen und Blöcke `?!```` … ```` ``` ```` mit Unter-Einträgen (`parseBlock` nutzen auch Vorschau und Export, `nest` die Ansichten und der Druck); Index in der Tabelle `questions` mit `kind`, `decided`, `people`, `details`, `parent_id` (Schema 15), bei jeder Änderung abgeglichen; Vorschläge für Kürzel über `packages/core/mentions.js`; Tests `test/core.cjs` (mehrzeilige Entscheide) und `test/extend.cjs` |
-| Aufgaben | `packages/core/tasks.js`: Parser für `- [ ]`-Zeilen mit `@Datum`, Unteraufgaben über die Einrückung, Abschluss-Regeln als reine Textfunktionen; Index in der Tabelle `tasks`, gleiches Prinzip |
-| Termine | `packages/core/dates.js`: gemeinsame Logik für `@TT.MM.JJJJ` bzw. `@JJJJ-MM-TT`, Dringlichkeit, Anzeige |
+| Aufgaben | `packages/core/tasks.js`: Parser für `- [ ]`-Zeilen mit `>Datum`, Unteraufgaben über die Einrückung, Abschluss-Regeln als reine Textfunktionen; Index in der Tabelle `tasks`, gleiches Prinzip |
+| Termine | `packages/core/dates.js`: gemeinsame Logik für `>TT.MM.JJJJ` bzw. `>JJJJ-MM-TT` am Zeilenende (`tail`, `splitDue`: Frist und Erinnerungen), Umstellung von `@Datum` (`rewriteLegacy`, gleiche Länge), Dringlichkeit, Anzeige; Datumsauswahl in `packages/ui/datepicker.js` |
 | Markdown | `packages/core/markdown.js`: eigener Renderer, escaped allen Text, erlaubt nur sichere Link-Schemata |
 | Toolleiste | `packages/core/editing.js`: reine Textfunktionen (umschliessen, Zeilenpräfixe, Überschriften, Links) |
 | Tabellen | `packages/core/tables.js`: Markdown-Tabellen lesen (seit 2.11.0 auch Teile eines Felds, `cellParts`, `lineBreak`, `togglePrefix`; Aufgaben, Fragen und Entscheide in Feldern liest `tasks.js` bzw. `questions.js`) (`parseAt`, Format-Zeile `<!-- tabelle: … -->`) und schreiben (`format` richtet aus), Schritte des Editors (`move`, `enter`, `insert`) und des Rechtsklicks (`setMeta`, `toggleHeader`, Zeilen und Spalten) als reine Textfunktionen; `markdown.js` zeichnet sie (`thead` bleibt oben, `th scope="row"` für die Titelspalte, Angaben von Erweiterungen über `tableFormat`); Raster, Tasten und Rechtsklick in `packages/ui/app.js`; Schnittstelle `ctx.tables` und `ctx.ui.addTableMenuItem` ([docs/PLUGINS.md](docs/PLUGINS.md)) |
@@ -672,11 +712,12 @@ Language Mode zur Verfügung. Dort sind weder `HttpListener` noch der Zugriff au
 File System Access API alles mit, um direkt in die Datenbankdatei zu schreiben, und
 sql.js liefert SQLite als reines JavaScript.
 
-Das **Standardschema** (Version 14) steht als Liste in `packages/data/db.js`: eine neue Datei bekommt es ganz,
+Das **Standardschema** (Version 17) steht als Liste in `packages/data/db.js`: eine neue Datei bekommt es ganz,
 eine bestehende Datei wird beim Öffnen **in einem Schritt** daran angeglichen, gleich aus welcher Version sie stammt:
 fehlende Tabellen und Spalten kommen dazu, danach werden die Indexe (Fragen und Entscheide, Aufgaben, Querverweise)
 aus den Texten neu gefüllt. Schritt-für-Schritt-Migrationen gibt es seit v2.0.0 nicht mehr; die Versionsnummer sagt
-nur, ob eine Datei schon auf diesem Stand ist oder von einer neueren App stammt (dann «App aktualisieren»).
+nur, ob eine Datei schon auf diesem Stand ist oder von einer neueren App stammt (dann «App aktualisieren»). Einzige
+Ausnahme ist der Schritt auf 17 (v3.0.0): Dabei schreibt die App die Termine `@Datum` zu `>Datum` um (siehe Termine).
 
 ```sql
 CREATE TABLE notes (
@@ -690,10 +731,12 @@ CREATE TABLE notes (
   collapsed   INTEGER NOT NULL DEFAULT 0,
   deleted_at  TEXT,            -- gesetzt = im Papierkorb
   archived_at TEXT,            -- gesetzt = im Archiv (ausgeblendet, durchsuchbar, schreibgeschützt)
-  updated_by  TEXT             -- wer den heutigen Stand geschrieben hat (nur mit einem Backend, das Namen liefert)
+  updated_by  TEXT,            -- wer den heutigen Stand geschrieben hat (nur mit einem Backend, das Namen liefert)
+  side        TEXT             -- Seite eines Hauptasts in der Mindmap: 'left', 'right' oder NULL (seit 3.0.0)
 );
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);  -- schema_version, created_at, map_title, accent, theme,
-                                                                -- calendar_uid, calendar_sequence, calendar_known
+                                                                -- calendar_uid, calendar_sequence, calendar_known,
+                                                                -- dates_migrated_at (Umstellung auf 3.0.0)
 CREATE TABLE questions (          -- Index über die ?-, ?!-, !- und !!-Zeilen, wird aus dem Text abgeleitet
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   note_id     INTEGER NOT NULL,
@@ -703,7 +746,8 @@ CREATE TABLE questions (          -- Index über die ?-, ?!-, !- und !!-Zeilen, 
   line_no     INTEGER NOT NULL,
   created_at  TEXT NOT NULL,
   answered_at TEXT,
-  due         TEXT,               -- Fälligkeit aus "@Datum [Zeit]": YYYY-MM-DD oder YYYY-MM-DDTHH:MM
+  due         TEXT,               -- Frist aus ">Datum [Zeit]" (der späteste am Zeilenende): YYYY-MM-DD oder YYYY-MM-DDTHH:MM
+  reminders   TEXT,               -- JSON-Liste der früheren Termine der Zeile (Erinnerungen, seit 3.0.0)
   kind        TEXT NOT NULL DEFAULT 'question',  -- 'question' oder 'decision'
   decided     TEXT,               -- Tag des Entscheids aus dem Text, YYYY-MM-DD
   people      TEXT,               -- JSON [{ handle, optional }] aus "@kürzel" und "(@kürzel)"
@@ -715,6 +759,7 @@ CREATE TABLE note_tags (note_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMA
 CREATE TABLE tasks (                -- Index über die "- [ ]"-Zeilen, aus dem Text abgeleitet
   id INTEGER PRIMARY KEY AUTOINCREMENT, note_id INTEGER NOT NULL, text TEXT NOT NULL, norm TEXT NOT NULL,
   done INTEGER NOT NULL DEFAULT 0, due TEXT, line_no INTEGER NOT NULL, created_at TEXT NOT NULL, done_at TEXT,
+  reminders TEXT,                   -- JSON-Liste der Erinnerungen (frühere Termine der Zeile, seit 3.0.0)
   parent_id INTEGER,                -- Hauptaufgabe (tasks.id) bei Unteraufgaben, sonst NULL
   depth INTEGER NOT NULL DEFAULT 0  -- Anzahl übergeordneter Aufgaben
 );

@@ -15,7 +15,7 @@ const DIST = path.join(ROOT, 'dist', 'NoNotes');
 const APP_URL = 'file://' + path.join(DIST, 'index.html');
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '16'; // muss zu packages/data/db.js passen
+const SCHEMA_VERSION = '17'; // muss zu packages/data/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 // ============================================================

@@ -281,6 +281,15 @@ alle im Arbeitsbereich gilt), legt die Erweiterung mit `ctx.backend.setMeta('plu
 `getMeta`; im Lesemodus (`ctx.readOnly()`) nur lesen. Nach einem Wechsel der Datei oder des Bereichs (Ereignis `database:replaced`)
 neu lesen.
 
+## Termine im Text (seit 3.0.0)
+
+Termine stehen am Zeilenende hinter `>`, mit einem Leerzeichen davor: `- [ ] Offerte >30.10.2026 >6.11.2026` (der späteste ist die
+Frist, die früheren sind Erinnerungen). `@` nennt nur noch Personen. Eine Erweiterung, die Termine schreibt, schreibt sie so, immer
+mit dem ganzen Datum (`NoNotesDates.toText('2026-11-06')` ergibt `06.11.2026`); lesen geht mit `NoNotesDates.splitDue(text)` →
+`{ text, due, reminders }`. Ein altes `@Datum` am Zeilenende liest NoNotes weiter als Termin und schreibt es beim Speichern zu `>Datum`
+um. Die Mindmap merkt sich die Seite jedes Hauptasts (`side` in den Zeilen von `ctx.backend.getTree()`); eine Erweiterung, die Knoten
+an der Wurzel anlegt, braucht nichts zu tun, die Mindmap wählt die Seite selbst.
+
 ## Ereignisse
 
 | Ereignis | Wann | Daten |
@@ -294,7 +303,7 @@ neu lesen.
 | `database:replaced` | Eine andere Datei wurde geöffnet oder importiert, lokal auch beim Wechsel des Bereichs. Seit 2.8.1 **vor** dem Neuzeichnen: Zwischenstände zur alten Datei (gleiche Nummern, andere Notizen) hier verwerfen; `mindmap:rendered` folgt mit der neuen | `{}` |
 | `template:saved` | Eine Vorlage wurde gespeichert (seit 2.5.0) | `{ name, where, id }`: `where` ist `'folder'`, `'download'` oder `'server'` |
 | `template:applied` | Eine Vorlage wurde angewendet (seit 2.5.0) | `{ name, mode }`: `mode` ist `'new'` (neue Notiz) oder `'insert'` (in die offene Notiz) |
-| `questions:rendered` | Die Ansicht «Fragen» oder «Entscheide» wurde (neu) gezeichnet (seit 1.11.0) | `{ kind, items }`: `kind` ist `'question'` oder `'decision'`, `items` die gezeigten Einträge mit `id`, `noteId`, `kind`, `text`, `answer`, `decided`, `due`, `people` (`[{ handle, optional }]`), seit 2.4.0 `details` (Beschreibung eines Blocks oder `null`) und `parentId` (Block eines Unter-Eintrags oder `null`), und `element` (der Eintrag in der Liste, zum Beispiel um Knöpfe oder Marken anzuhängen) |
+| `questions:rendered` | Die Ansicht «Fragen» oder «Entscheide» wurde (neu) gezeichnet (seit 1.11.0) | `{ kind, items }`: `kind` ist `'question'` oder `'decision'`, `items` die gezeigten Einträge mit `id`, `noteId`, `kind`, `text`, `answer`, `decided`, `due` (die Frist), seit 3.0.0 `reminders` (frühere Termine der Zeile), `people` (`[{ handle, optional }]`), seit 2.4.0 `details` (Beschreibung eines Blocks oder `null`) und `parentId` (Block eines Unter-Eintrags oder `null`), und `element` (der Eintrag in der Liste, zum Beispiel um Knöpfe oder Marken anzuhängen) |
 
 Rückrufe dürfen `async` sein. Die App wartet nicht auf sie. Jedes Ereignis geht zusätzlich als DOM-Ereignis `nonotes:<name>` am `document`
 aus (`detail` trägt die Daten), damit auch Skripte ohne Erweiterungs-Schnittstelle zuhören können, etwa die Hülle einer Ausprägung.
@@ -358,6 +367,8 @@ anbieten will, wählt anhand von `ctx.language()` selbst aus.
   (`if (ctx.ui.addSomething) …`).
 - Ein Bruch käme frühestens mit `api: 2` in NoNotes 2.0; die App meldet dann eine ältere Erweiterung
   deutlich, statt sie still falsch zu behandeln.
+- Seit 3.0.0 (ohne Änderung an `api`): `reminders` in `questions:rendered`, `side` in `getTree()`, `setSides` im Backend; Termine im
+  Text mit `>` (siehe oben).
 - Seit 2.11.0 dazugekommen (ohne Änderung an `api`): `ctx.readOnly`, `ctx.ui.addMapButton`, `ctx.ui.addMapOverlay`, `ctx.export.addMapSection`.
 - Seit 2.10.0 dazugekommen (ohne Änderung an `api`): `ctx.tables.format`, `ctx.tables.update` und `ctx.ui.addTableMenuItem`.
 - Seit 2.8.0 dazugekommen (ohne Änderung an `api`): `ctx.ui.addContextMenuItem` (Kontextmenü eines Knotens, mit Untermenü).

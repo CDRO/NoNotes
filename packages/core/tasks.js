@@ -1,7 +1,7 @@
 /* NoNotes – Aufgaben im Notiztext.
    Syntax: Markdown-Checkbox "- [ ] Text" (offen) bzw. "- [x] Text" (erledigt), optional mit
-   Fälligkeit am Zeilenende: "@15.10.2026" oder "@2026-10-15" (siehe js/dates.js). Der Text
-   bleibt die einzige Wahrheit; die Tabelle "tasks" ist ein Index darüber.
+   Termin am Zeilenende: ">15.10.2026" oder ">2026-10-15" (siehe dates.js); mehrere Termine: der späteste ist die Frist (due), die
+   früheren sind Erinnerungen (reminders, seit v3.0.0). Der Text bleibt die einzige Wahrheit; die Tabelle "tasks" ist ein Index darüber.
    Unteraufgaben: Eine Checkbox-Zeile, die tiefer eingerückt direkt unter einer Aufgabe steht, gehört
    zu ihr (beliebig tief). Eine Zeile ohne Kästchen, die nicht tiefer eingerückt ist, beendet den
    Teilbaum; Leerzeilen und tiefer eingerückter Text tun das nicht. Eine Aufgabe lässt sich erst
@@ -29,7 +29,7 @@
     return Q ? Q.people(text) : [];
   }
 
-  /** Aufgaben in den Feldern einer Tabellenzeile, in der Reihenfolge der Felder und Teile: [{ done, text, due, from }]; from ist die
+  /** Aufgaben in den Feldern einer Tabellenzeile, in der Reihenfolge der Felder und Teile: [{ done, text, due, reminders, from }]; from ist die
    *  Lage von "[" in der Zeile. Ohne Text (nur Termin) ist es keine Aufgabe. cols: nur so viele Felder wie die Tabelle Spalten hat. */
   function cellTasks(line, cols) {
     const tb = Tb();
@@ -38,8 +38,8 @@
     for (const p of tb.cellParts(line, cols)) {
       const m = CELL_TASK_RE.exec(p.text);
       if (!m) continue;
-      const { text, due } = D().splitDue(m[2]);
-      if (text) out.push({ done: m[1] !== ' ', text, due, from: p.from });
+      const { text, due, reminders } = D().splitDue(m[2]);
+      if (text) out.push({ done: m[1] !== ' ', text, due, reminders, from: p.from });
     }
     return out;
   }
@@ -71,7 +71,7 @@
         for (let r = 0; r < table.rows.length; r++) {
           const L = table.head + 2 + r;
           cellTasks(lines[L], table.cols).forEach((c, slot) => {
-            out.push({ text: c.text, norm: normalize(c.text), done: c.done, due: c.due, lineIndex: L, slot, cell: true, indent: 0, parent: -1, depth: 0, people: peopleIn(c.text) });
+            out.push({ text: c.text, norm: normalize(c.text), done: c.done, due: c.due, reminders: c.reminders, lineIndex: L, slot, cell: true, indent: 0, parent: -1, depth: 0, people: peopleIn(c.text) });
           });
         }
         i = table.end - 1;
@@ -84,11 +84,11 @@
         continue;
       }
       while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
-      const { text, due } = D().splitDue(m[4]);
+      const { text, due, reminders } = D().splitDue(m[4]);
       const parent = stack.length ? stack[stack.length - 1].index : -1;
       let people = peopleIn(text);
       if (!people.length && parent >= 0) people = out[parent].people.map(p => ({ handle: p.handle, optional: p.optional, inherited: true }));
-      out.push({ text, norm: normalize(text), done: m[3] !== ' ', due, lineIndex: i, indent, parent, depth: stack.length, people });
+      out.push({ text, norm: normalize(text), done: m[3] !== ' ', due, reminders, lineIndex: i, indent, parent, depth: stack.length, people });
       stack.push({ indent, index: out.length - 1 });
     }
     return out;
@@ -206,4 +206,4 @@
     parse, setDone, locate, splitDue, normalize, todayIso, formatDue, urgency, TASK_RE, CELL_TASK_RE, cellTasks,
     descendantIndexes, ancestorIndexes, openSubtasks, openMessage, completeTree, reopen, doubleClick,
   };
-})(window);
+})(typeof window !== 'undefined' ? window : globalThis);

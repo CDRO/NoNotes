@@ -5,7 +5,7 @@ description: "Eine Aufgabe mit Beschreibung, Ziel, verantwortlicher Person und T
 title: "{{?Beschreibung}}"
 tags: ["aufgabe"]
 ---
-- [ ] {{?Beschreibung}} @{{?Wer}} @{{?Bis wann: {{datum+7}}}}
+- [ ] {{?Beschreibung}} @{{?Wer}} >{{?Bis wann: {{datum+7}}}}
 
 **Ziel:** {{?Ziel}}
 
@@ -20,7 +20,7 @@ Das **Kürzel** der Person, die dafür sorgt, ohne `@` (das steht schon da). Wei
 ```
 
 ```template-description Bis wann
-Der Termin als Datum, etwa **31.10.2026**. Vorgeschlagen ist in einer Woche; ohne Termin den Platzhalter samt `@` löschen.
+Der Termin als Datum, etwa **31.10.2026**. Vorgeschlagen ist in einer Woche; ohne Termin den Platzhalter samt `>` löschen. Weitere Termine davor sind Erinnerungen.
 ```
 
 ```template-description Ziel

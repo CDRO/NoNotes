@@ -24,7 +24,7 @@
     'getMeta', 'setMeta', 'getMapTitle', 'setMapTitle',
     // Notizen und Baum
     'getTree', 'getNote', 'getPath', 'listNotes', 'countNotes', 'createNote', 'updateNote', 'renameNote',
-    'setParent', 'moveNote', 'moveAmongSiblings', 'setCollapsed', 'setAllCollapsed',
+    'setParent', 'moveNote', 'moveAmongSiblings', 'setCollapsed', 'setAllCollapsed', 'setSides',
     // Papierkorb
     'deleteNote', 'purgeNote', 'restoreNote', 'emptyTrash', 'countTrash',
     // Archiv
@@ -47,7 +47,7 @@
    *  Ausprägung speichern kann. */
   const MUTATING = new Set([
     'setMeta', 'setMapTitle', 'createNote', 'updateNote', 'renameNote', 'setParent', 'moveNote',
-    'moveAmongSiblings', 'setCollapsed', 'setAllCollapsed', 'deleteNote', 'purgeNote', 'restoreNote',
+    'moveAmongSiblings', 'setCollapsed', 'setAllCollapsed', 'setSides', 'deleteNote', 'purgeNote', 'restoreNote',
     'emptyTrash', 'archiveNote', 'unarchiveNote', 'setTags', 'answerQuestion', 'setTaskDone',
     'toggleTaskTree', 'addAttachment', 'deleteAttachment', 'restoreHistoryVersion', 'clearHistory',
   ]);

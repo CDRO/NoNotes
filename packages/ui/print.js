@@ -176,7 +176,8 @@
       const answered = !!r.answer;
       const ruled = !answered && options.lines ? '<div class="print-lines"><span></span><span></span><span></span></div>' : '';
       const u = answered ? 'none' : D.urgency(r.due, today);
-      const due = r.due ? `<span class="due ${u}">${esc(answered ? D.formatDue(r.due) : D.dueLabel(r.due, today))}</span>` : '';
+      const rem = r.due && !answered && r.reminders && r.reminders.length ? `<span class="due reminder">${esc(t('Erinnerung {datum}', { datum: r.reminders.map(D.formatDue).join(', ') }))}</span> ` : '';
+      const due = r.due ? `${rem}<span class="due ${u}">${esc(answered ? D.formatDue(r.due) : D.dueLabel(r.due, today))}</span>` : '';
       const from = groupBy === 'note' ? '' : ` · ${esc(t('aus'))} ${esc(r.note_title.trim() || t('Ohne Titel'))}`;
       const when = decision
         ? (answered ? t('Entschieden {datum}', { datum: r.decided ? D.formatDue(r.decided) : fmtDate(r.answered_at) }) : t('Gestellt {datum}', { datum: fmtDate(r.created_at) }))
@@ -234,6 +235,7 @@
    *  nach Person steht eine Aufgabe bei jeder Person, die sie nennt, auch geerbt von der Hauptaufgabe) */
   async function buildTasksDocument(backend, options) {
     const T = global.NoNotesTasks;
+    const D = global.NoNotesDates;
     const rows = await backend.listTasks({ status: options.status || 'all', tag: options.tag || '', query: options.query || '', person: options.person || '', sort: options.groupBy === 'note' ? 'note' : 'due' });
     const mapTitle = await backend.getMapTitle();
     const today = global.NoNotesDates.nowIso();
@@ -249,7 +251,7 @@
       const u = r.done ? 'none' : T.urgency(r.due, today);
       const inherited = (r.people || []).filter(p => p.inherited).map(p => '@' + p.handle);
       const meta = [
-        r.due ? t('bis {datum}', { datum: T.formatDue(r.due) }) : null,
+        r.due ? D.dueText(r.due, r.done ? [] : r.reminders) : null,
         inherited.length ? t('über die Hauptaufgabe: {personen}', { personen: inherited.join(', ') }) : null,
         r.sub_total ? t('{erledigt}/{gesamt} Unteraufgaben', { erledigt: r.sub_done, gesamt: r.sub_total }) : null,
         options.groupBy === 'note' ? null : (r.parent_text ? t('Teil von „{aufgabe}“', { aufgabe: r.parent_text }) : null),

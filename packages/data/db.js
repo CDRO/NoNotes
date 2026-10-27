@@ -3,7 +3,7 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 16; // 16: Personen an Aufgaben (v2.11.0)
+  const SCHEMA_VERSION = 17; // 16: Personen an Aufgaben (v2.11.0); 17: Termine mit ">", Erinnerungen (v3.0.0)
   // Regeln, nach denen die Indexe (Fragen, Aufgaben, Querverweise) aus den Texten entstehen. Steigt die Zahl ohne neues Schema
   // (2: Blöcke in Listen, v2.6.0; 3: Aufgaben, Fragen und Entscheide in Tabellenfeldern, v2.11.0), füllt das Öffnen die Indexe
   // neu; ältere Versionen öffnen die Datei weiter.
@@ -91,6 +91,7 @@
       ['deleted_at', 'TEXT'],                   // gesetzt = im Papierkorb
       ['archived_at', 'TEXT'],                  // gesetzt = im Archiv (ausgeblendet, durchsuchbar, schreibgeschützt)
       ['updated_by', 'TEXT'],                   // wer den heutigen Stand geschrieben hat (Anzeigename, leer = unbekannt)
+      ['side', 'TEXT'],                         // Hauptast der Mindmap: 'left' | 'right', NULL = die Mindmap wählt (Schema 17)
     ], indexes: [
       'CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes (updated_at DESC)',
       'CREATE INDEX IF NOT EXISTS idx_notes_parent ON notes (parent_id, sort_order)',
@@ -107,7 +108,8 @@
       ['line_no', 'INTEGER NOT NULL'],
       ['created_at', 'TEXT NOT NULL'],
       ['answered_at', 'TEXT'],
-      ['due', 'TEXT'],                          // Fälligkeit aus "@Datum [Zeit]": YYYY-MM-DD oder YYYY-MM-DDTHH:MM
+      ['due', 'TEXT'],                          // Frist aus ">Datum [Zeit]" (der späteste Termin): YYYY-MM-DD oder YYYY-MM-DDTHH:MM
+      ['reminders', 'TEXT'],                    // JSON [ISO …]: die früheren Termine der Zeile, Erinnerungen (Schema 17)
       ['kind', "TEXT NOT NULL DEFAULT 'question'"], // 'question' oder 'decision'
       ['decided', 'TEXT'],                      // Tag des Entscheids aus dem Text, YYYY-MM-DD
       ['people', 'TEXT'],                       // JSON [{ handle, optional }] aus "@kürzel" und "(@kürzel)"
@@ -132,7 +134,8 @@
       ['text', 'TEXT NOT NULL'],
       ['norm', 'TEXT NOT NULL'],
       ['done', 'INTEGER NOT NULL DEFAULT 0'],
-      ['due', 'TEXT'],
+      ['due', 'TEXT'],                          // Frist (der späteste Termin der Zeile)
+      ['reminders', 'TEXT'],                    // JSON [ISO …]: die früheren Termine, Erinnerungen (Schema 17)
       ['line_no', 'INTEGER NOT NULL'],
       ['created_at', 'TEXT NOT NULL'],
       ['done_at', 'TEXT'],
@@ -188,9 +191,10 @@
     setMeta(db, 'map_title', defaultMapTitle);
   }
 
-  /** Gleicht eine bestehende Datei in einem Schritt an das Standardschema an. Dateien jeder bisherigen Version (1 bis 13)
-   *  kommen so auf den heutigen Stand; was schon da ist, bleibt unberührt. */
-  function upgrade(db) {
+  /** Gleicht eine bestehende Datei in einem Schritt an das Standardschema an. Dateien jeder bisherigen Version (1 bis 16)
+   *  kommen so auf den heutigen Stand; was schon da ist, bleibt unberührt. Von vor Schema 17 (v3.0.0) werden die Termine
+   *  "@Datum" am Zeilenende zu ">Datum" (rewriteDates). Gibt die Zahl der umgeschriebenen Notizen zurück. */
+  function upgrade(db, from) {
     const hadTree = hasTable(db, 'notes') && columnsOf(db, 'notes').includes('sort_order');
     for (const t of SCHEMA) {
       if (!hasTable(db, t.name)) { db.exec(createTableSql(t)); continue; }
@@ -203,8 +207,26 @@
       selectAll(db, 'SELECT id FROM notes ORDER BY created_at, id').forEach((row, i) => db.run('UPDATE notes SET sort_order = ? WHERE id = ?', [i, row.id]));
     }
     if (getMeta(db, 'map_title') == null) setMeta(db, 'map_title', defaultMapTitle);
+    const rewritten = from < 17 ? rewriteDates(db) : 0;
     reindex(db);
     setMeta(db, 'schema_version', SCHEMA_VERSION);
+    return rewritten;
+  }
+
+  /** Umstellung auf v3.0.0: in allen Notizen (auch Archiv und Papierkorb) wird jedes "@Datum" am Zeilenende zu ">Datum"
+   *  (NoNotesDates.rewriteLegacy). Zeitstempel und Verlauf bleiben; die Länge der Texte auch, darum passen die Fassungen im
+   *  Verlauf weiter. Der Zeitpunkt steht in meta dates_migrated_at (der Verlauf zeigt ihn als Vermerk). */
+  function rewriteDates(db) {
+    const D = global.NoNotesDates;
+    if (!D || !D.rewriteLegacy) return 0;
+    let n = 0;
+    for (const row of selectAll(db, "SELECT id, body FROM notes WHERE body LIKE '%@%'")) {
+      const body = D.rewriteLegacy(row.body);
+      if (body !== row.body) { db.run('UPDATE notes SET body = ? WHERE id = ?', [body, row.id]); n++; }
+    }
+    setMeta(db, 'dates_migrated_at', nowIso());
+    setMeta(db, 'dates_migrated_notes', n);
+    return n;
   }
 
   /** Die Indexe aus den Texten neu füllen: so gelten die heutigen Regeln (Termine mit Uhrzeit, Unteraufgaben, Entscheide,
@@ -219,8 +241,10 @@
   }
 
   /** Öffnet eine Datenbank aus Bytes (oder legt eine neue an) und bringt sie auf das aktuelle Schema.
-   *  Fremde SQLite-Dateien (Tabellen vorhanden, aber keine "notes") werden abgelehnt. */
-  function open(SQL, bytes) {
+   *  Fremde SQLite-Dateien (Tabellen vorhanden, aber keine "notes") werden abgelehnt.
+   *  info (wahlweise, wird gefüllt): upgradedFrom (die Version davor, wenn angeglichen wurde), rewritten (Notizen, deren
+   *  Termine von "@" auf ">" umgestellt wurden). */
+  function open(SQL, bytes, info) {
     const db = bytes && bytes.length ? new SQL.Database(bytes) : new SQL.Database();
     try {
       const tables = selectAll(db,
@@ -234,14 +258,39 @@
         if (version > SCHEMA_VERSION) {
           throw fail('SCHEMA_TOO_NEW', `Diese Datenbank hat Schema-Version ${version}, diese App versteht nur bis ${SCHEMA_VERSION}. Bitte App aktualisieren.`, { version, unterstuetzt: SCHEMA_VERSION });
         }
-        if (version < SCHEMA_VERSION) upgrade(db);
-        else if (Number(getMeta(db, 'index_rules') || 1) < INDEX_RULES) reindex(db);
+        if (version < SCHEMA_VERSION) {
+          const rewritten = upgrade(db, version);
+          if (info) Object.assign(info, { upgradedFrom: version, rewritten });
+        } else if (Number(getMeta(db, 'index_rules') || 1) < INDEX_RULES) reindex(db);
       }
       registerFunctions(db);
       return db;
     } catch (e) {
       db.close();
       throw e;
+    }
+  }
+
+  /** Sieht in eine Datei, ohne sie zu ändern: { version, legacyNotes } – Schema-Version und wie viele Notizen beim Öffnen von "@" auf
+   *  ">" umgestellt würden (nur bei einer Datei von vor Schema 17, sonst 0). Leer oder fremd: null. Für die Rückfrage vor der
+   *  Umstellung (Sicherung herunterladen). */
+  function inspect(SQL, bytes) {
+    if (!bytes || !bytes.length) return null;
+    let db;
+    try { db = new SQL.Database(bytes); } catch (e) { return null; }
+    try {
+      if (!hasTable(db, 'notes')) return null;
+      const version = hasTable(db, 'meta') ? Number(getMeta(db, 'schema_version') || 1) : 1;
+      let legacyNotes = 0;
+      const D = global.NoNotesDates;
+      if (version < 17 && D && D.hasLegacy) {
+        for (const row of selectAll(db, "SELECT body FROM notes WHERE body LIKE '%@%'")) if (D.hasLegacy(row.body)) legacyNotes++;
+      }
+      return { version, legacyNotes };
+    } catch (e) {
+      return null;
+    } finally {
+      db.close();
     }
   }
 
@@ -304,7 +353,7 @@
   function getTree(db, options) {
     const archive = options && options.archive;
     const rows = selectAll(db,
-      `SELECT id, title, parent_id, sort_order, collapsed, archived_at, updated_at,
+      `SELECT id, title, parent_id, sort_order, collapsed, archived_at, updated_at, side,
               CASE WHEN archived_at IS NULL THEN (SELECT count(*) FROM questions q WHERE q.note_id = notes.id AND q.answer IS NULL) ELSE 0 END AS badge,
               CASE WHEN archived_at IS NULL THEN (SELECT count(*) FROM questions q WHERE q.note_id = notes.id AND q.answer IS NULL AND q.kind = 'decision') ELSE 0 END AS dbadge,
               CASE WHEN archived_at IS NULL THEN (SELECT count(*) FROM tasks t WHERE t.note_id = notes.id AND t.done = 0) ELSE 0 END AS tbadge
@@ -373,6 +422,8 @@
    *  options.newVersion: erzwingt eine neue Fassung im Verlauf. */
   function updateNote(db, id, title, body, options) {
     const ts = nowIso();
+    const D = global.NoNotesDates;
+    if (D && D.rewriteLegacy && body && body.includes('@')) body = D.rewriteLegacy(body); // alte Termine "@Datum" → ">Datum" (v3.0.0)
     const old = selectOne(db, 'SELECT title, body, updated_at, created_at, updated_by FROM notes WHERE id = ?', [id]);
     const base = options && options.baseUpdatedAt;
     if (old && base != null && old.updated_at !== base) {
@@ -517,6 +568,7 @@
     }
     db.run('UPDATE notes SET parent_id = ?, sort_order = ?, updated_at = ? WHERE id = ?',
       [pid, nextSortOrder(db, pid), nowIso(), id]);
+    if (pid != null) db.run('UPDATE notes SET side = NULL WHERE id = ?', [id]); // die Seite gilt nur für Hauptäste
   }
 
   /** Hängt eine Notiz direkt vor oder nach eine andere Notiz (gleicher Elternknoten wie der Anker).
@@ -540,6 +592,8 @@
     siblings.splice(where === 'after' ? idx + 1 : idx, 0, id);
     db.run('UPDATE notes SET parent_id = ?, updated_at = ? WHERE id = ?', [pid, nowIso(), id]);
     siblings.forEach((sid, i) => db.run('UPDATE notes SET sort_order = ? WHERE id = ?', [i, sid]));
+    // Mindmap (v3.0.0): ein Hauptast kommt auf die Seite seines Nachbarn; unter einer Notiz gilt keine Seite
+    db.run('UPDATE notes SET side = ? WHERE id = ?', [pid == null ? scalar(db, 'SELECT side FROM notes WHERE id = ?', [anchorId]) : null, id]);
   }
 
   /** Verschiebt eine Notiz unter ihren Geschwistern nach oben (-1) oder unten (+1). */
@@ -567,6 +621,15 @@
     db.run('UPDATE notes SET collapsed = ? WHERE id = ?', [collapsed ? 1 : 0, id]);
   }
 
+  /** Seiten der Hauptäste in der Mindmap (v3.0.0): sides { id: 'left' | 'right' | null }. Die Mindmap setzt sie, sobald ein Ast an der
+   *  Wurzel auftaucht, und hält sie dann fest; verschieben per Ziehen oder Rechtsklick, «Neu verteilen» setzt alle. */
+  function setSides(db, sides) {
+    for (const [id, side] of Object.entries(sides || {})) {
+      const v = side === 'left' || side === 'right' ? side : null;
+      db.run('UPDATE notes SET side = ? WHERE id = ?', [v, Number(id)]);
+    }
+  }
+
   function setAllCollapsed(db, collapsed) {
     db.run('UPDATE notes SET collapsed = ? WHERE deleted_at IS NULL', [collapsed ? 1 : 0]);
   }
@@ -578,8 +641,9 @@
     const ts = nowIso();
     const children = selectAll(db, 'SELECT id FROM notes WHERE parent_id = ? AND deleted_at IS NULL ORDER BY sort_order, id', [id]);
     for (const child of children) {
-      db.run('UPDATE notes SET parent_id = ?, sort_order = ? WHERE id = ?',
-        [note.parent_id, nextSortOrder(db, note.parent_id), child.id]);
+      // rücken die Kinder eines Hauptasts an die Wurzel, bleiben sie auf seiner Seite der Mindmap
+      db.run('UPDATE notes SET parent_id = ?, sort_order = ?, side = ? WHERE id = ?',
+        [note.parent_id, nextSortOrder(db, note.parent_id), note.parent_id == null ? (note.side || null) : null, child.id]);
     }
     db.run('UPDATE notes SET deleted_at = ?, updated_at = ? WHERE id = ?', [ts, ts, id]);
   }
@@ -683,20 +747,22 @@
       const done = t.done ? 1 : 0;
       const parentId = t.parent >= 0 ? ids[t.parent] : null;
       const people = t.people && t.people.length ? JSON.stringify(t.people) : null;
+      const reminders = t.reminders && t.reminders.length ? JSON.stringify(t.reminders) : null;
       if (idx >= 0) {
         const e = unused.splice(idx, 1)[0];
         let doneAt = e.done_at;
         if (done && !e.done) doneAt = ts;
         if (!done) doneAt = null;
         if (e.text !== t.text || e.done !== done || e.due !== t.due || e.line_no !== t.lineIndex || e.done_at !== doneAt
-            || (e.parent_id == null ? null : e.parent_id) !== parentId || (e.depth || 0) !== t.depth || (e.people || null) !== people) {
-          db.run('UPDATE tasks SET text = ?, done = ?, due = ?, line_no = ?, done_at = ?, parent_id = ?, depth = ?, people = ? WHERE id = ?',
-            [t.text, done, t.due, t.lineIndex, doneAt, parentId, t.depth, people, e.id]);
+            || (e.parent_id == null ? null : e.parent_id) !== parentId || (e.depth || 0) !== t.depth || (e.people || null) !== people
+            || (e.reminders || null) !== reminders) {
+          db.run('UPDATE tasks SET text = ?, done = ?, due = ?, reminders = ?, line_no = ?, done_at = ?, parent_id = ?, depth = ?, people = ? WHERE id = ?',
+            [t.text, done, t.due, reminders, t.lineIndex, doneAt, parentId, t.depth, people, e.id]);
         }
         ids.push(e.id);
       } else {
-        db.run('INSERT INTO tasks (note_id, text, norm, done, due, line_no, created_at, done_at, parent_id, depth, people) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [noteId, t.text, t.norm, done, t.due, t.lineIndex, ts, done ? ts : null, parentId, t.depth, people]);
+        db.run('INSERT INTO tasks (note_id, text, norm, done, due, reminders, line_no, created_at, done_at, parent_id, depth, people) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [noteId, t.text, t.norm, done, t.due, reminders, t.lineIndex, ts, done ? ts : null, parentId, t.depth, people]);
         ids.push(scalar(db, 'SELECT last_insert_rowid()'));
       }
     }
@@ -763,12 +829,12 @@
       ? 't.done, n.updated_at DESC, n.id, t.line_no, t.id'
       : 't.done, (t.due IS NULL), t.due, n.updated_at DESC, n.id, t.line_no, t.id';
     const rows = selectAll(db,
-      `SELECT t.id, t.note_id, t.text, t.norm, t.done, t.due, t.line_no, t.created_at, t.done_at, t.parent_id, t.depth, t.people,
+      `SELECT t.id, t.note_id, t.text, t.norm, t.done, t.due, t.reminders, t.line_no, t.created_at, t.done_at, t.parent_id, t.depth, t.people,
               n.title AS note_title, n.updated_at AS note_updated_at
          FROM tasks t JOIN notes n ON n.id = t.note_id
         WHERE ${where.join(' AND ')}
         ORDER BY ${order}`, params);
-    for (const r of rows) r.people = peopleOf(r);
+    for (const r of rows) { r.people = peopleOf(r); r.reminders = remindersOf(r); }
     if (sort === 'person') {
       // nach der ersten verantwortlichen Person (sonst der ersten genannten); ohne Person am Schluss; sonst bleibt die Reihenfolge
       const key = r => { const p = r.people.find(x => !x.optional) || r.people[0]; return p ? p.handle.toLowerCase() : null; };
@@ -828,7 +894,7 @@
 
   function getTask(db, id) {
     const row = selectOne(db, 'SELECT * FROM tasks WHERE id = ?', [id]);
-    return row ? Object.assign(row, { people: peopleOf(row) }) : row;
+    return row ? Object.assign(row, { people: peopleOf(row), reminders: remindersOf(row) }) : row;
   }
 
   function locateTask(db, taskId) {
@@ -998,6 +1064,7 @@
     for (const q of parsed) {
       const idx = unused.findIndex(e => e.norm === q.norm && (e.kind || 'question') === q.kind);
       const people = q.people.length ? JSON.stringify(q.people) : null;
+      const reminders = q.reminders && q.reminders.length ? JSON.stringify(q.reminders) : null;
       const decided = q.decided || null;
       const details = q.details || null;
       const parentId = q.parent != null && ids[q.parent] != null ? ids[q.parent] : null;
@@ -1009,14 +1076,14 @@
         const due = q.due || null;
         if (e.text !== q.text || e.answer !== q.answer || e.line_no !== q.lineIndex || e.answered_at !== answeredAt || e.due !== due
           || (e.kind || 'question') !== q.kind || (e.decided || null) !== decided || (e.people || null) !== people
-          || (e.details || null) !== details || (e.parent_id == null ? null : e.parent_id) !== parentId) {
-          db.run('UPDATE questions SET text = ?, answer = ?, line_no = ?, answered_at = ?, due = ?, kind = ?, decided = ?, people = ?, details = ?, parent_id = ? WHERE id = ?',
-            [q.text, q.answer, q.lineIndex, answeredAt, due, q.kind, decided, people, details, parentId, e.id]);
+          || (e.details || null) !== details || (e.parent_id == null ? null : e.parent_id) !== parentId || (e.reminders || null) !== reminders) {
+          db.run('UPDATE questions SET text = ?, answer = ?, line_no = ?, answered_at = ?, due = ?, reminders = ?, kind = ?, decided = ?, people = ?, details = ?, parent_id = ? WHERE id = ?',
+            [q.text, q.answer, q.lineIndex, answeredAt, due, reminders, q.kind, decided, people, details, parentId, e.id]);
         }
         ids.push(e.id);
       } else {
-        db.run('INSERT INTO questions (note_id, text, norm, answer, line_no, created_at, answered_at, due, kind, decided, people, details, parent_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [noteId, q.text, q.norm, q.answer, q.lineIndex, ts, q.answer ? ts : null, q.due || null, q.kind, decided, people, details, parentId]);
+        db.run('INSERT INTO questions (note_id, text, norm, answer, line_no, created_at, answered_at, due, reminders, kind, decided, people, details, parent_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [noteId, q.text, q.norm, q.answer, q.lineIndex, ts, q.answer ? ts : null, q.due || null, reminders, q.kind, decided, people, details, parentId]);
         ids.push(scalar(db, 'SELECT last_insert_rowid()'));
       }
     }
@@ -1027,6 +1094,13 @@
   function peopleOf(row) {
     if (!row || !row.people) return [];
     try { const v = JSON.parse(row.people); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+  }
+
+  /** Erinnerungen aus der Indexspalte: [ISO …] aufsteigend (Schema 17). */
+  function remindersOf(row) {
+    if (!row || !row.reminders) return [];
+    if (Array.isArray(row.reminders)) return row.reminders;
+    try { const v = JSON.parse(row.reminders); return Array.isArray(v) ? v.filter(x => typeof x === 'string') : []; } catch (e) { return []; }
   }
 
   /** Fragen oder Entscheide über alle lebenden Notizen. kind: 'question' (Standard) | 'decision' | 'all';
@@ -1061,7 +1135,7 @@
       ? '(q.answer IS NOT NULL), (q.due IS NULL), q.due, n.updated_at DESC, n.id, q.line_no'
       : '(q.answer IS NOT NULL), n.updated_at DESC, n.id, q.line_no';
     return selectAll(db,
-      `SELECT q.id, q.note_id, q.text, q.norm, q.answer, q.line_no, q.created_at, q.answered_at, q.due, q.kind, q.decided, q.people,
+      `SELECT q.id, q.note_id, q.text, q.norm, q.answer, q.line_no, q.created_at, q.answered_at, q.due, q.reminders, q.kind, q.decided, q.people,
               q.details, q.parent_id, p.text AS parent_text, p.kind AS parent_kind, (p.answer IS NOT NULL) AS parent_answered,
               ${SUB_COUNTS},
               n.title AS note_title, n.updated_at AS note_updated_at
@@ -1083,7 +1157,7 @@
     delete r.sub_decisions; delete r.sub_decisions_open; delete r.sub_questions; delete r.sub_questions_open;
     if (r.parent_id == null) { r.parent_text = null; r.parent_kind = null; r.parent_answered = null; }
     else r.parent_answered = !!r.parent_answered;
-    return Object.assign(r, { people: peopleOf(r), details: r.details || null, sub: sub.decisions + sub.questions ? sub : null });
+    return Object.assign(r, { people: peopleOf(r), reminders: remindersOf(r), details: r.details || null, sub: sub.decisions + sub.questions ? sub : null });
   }
 
   /** Alle Kürzel, die Fragen, Entscheide und Aufgaben lebender Notizen nennen (ohne @, jede Schreibweise einmal), alphabetisch.
@@ -1121,7 +1195,7 @@
 
   function getQuestion(db, id) {
     const row = selectOne(db, 'SELECT * FROM questions WHERE id = ?', [id]);
-    return row ? Object.assign(row, { people: peopleOf(row), details: row.details || null }) : row;
+    return row ? Object.assign(row, { people: peopleOf(row), reminders: remindersOf(row), details: row.details || null }) : row;
   }
 
   /** Schreibt die Antwort als "!"-Zeilen unter die Frage in der Notiz, bei einem Entscheid als "!!"-Zeilen, die erste mit
@@ -1170,6 +1244,7 @@
     SCHEMA_VERSION,
     configure,
     open,
+    inspect,
     listNotes,
     getTree,
     getNote,
@@ -1182,6 +1257,7 @@
     moveAmongSiblings,
     setCollapsed,
     setAllCollapsed,
+    setSides,
     deleteNote,
     purgeNote,
     countNotes,

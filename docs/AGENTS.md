@@ -32,14 +32,14 @@ Namen und Beschreibungen sind Englisch, weil Agenten sie lesen. Inhalte bleiben,
 | `move_note`, `delete_note`, `restore_note`, `archive_note`, `unarchive_note`, `set_tags` | Baum, Papierkorb, Archiv, Tags |
 | `list_questions`, `answer_question` | Fragen (`?`-Zeilen) auflisten, filtern nach Text, Tag, Person, Notiz; Antwort als `!`-Zeilen schreiben |
 | `list_decisions`, `record_decision` | Entscheide (`?!`-Zeilen, auch in Listen und als Block) auflisten, mit Beschreibung (`details`), Block (`parent_id`) und Zählern der Unter-Einträge (`sub_entries`); Entscheid als `!!`-Zeile mit Datum festhalten, auch im Block |
-| `list_tasks`, `complete_task`, `reopen_task` | Aufgaben mit Fälligkeit und Unteraufgaben; abschliessen erst, wenn die Unteraufgaben erledigt sind |
+| `list_tasks`, `complete_task`, `reopen_task` | Aufgaben mit Frist (`due`), Erinnerungen (`reminders`, seit v3.0.0) und Unteraufgaben; abschliessen erst, wenn die Unteraufgaben erledigt sind |
 | `list_people` | alle `@kürzel` aus Fragen und Entscheiden |
 | `list_templates`, `create_note_from_template` | Vorlagen auflisten; neue Notiz samt Unternotizen aus einer Vorlage, Platzhalter ersetzt (seit v2.5.0; nur, wo es Vorlagen gibt: lokal der Ordner `templates/` neben der App oder `--templates <Ordner>`, im Dienst die Vorlagen des Arbeitsbereichs). Seit v2.12.0 nennt `list_templates` die ausfüllbaren Platzhalter `{{?Name}}` als `fields` (Name, Vorschlag, Beschreibung), und `create_note_from_template` nimmt ihre Werte als `values`; was fehlt, bleibt für den Menschen offen |
 | `get_history` | frühere Fassungen einer Notiz lesen |
 
 Dazu zwei **Ressourcen** für Agenten, die lieber lesen als Werkzeuge rufen: `nonotes://overview` und `nonotes://note/<id>`
 (die Notiz als Markdown). Der Katalog gibt dem Agenten ausserdem eine kurze Anleitung mit (`NoNotesAgent.INSTRUCTIONS`): was
-`?`, `?!`, `!`, `!!`, `- [ ]`, `@Datum` und `@kürzel` bedeuten, was Pfade auf Dateien und ausfüllbare Platzhalter sind (seit v2.12.0), wie Einträge in Listen und mehrzeilige Blöcke `?!```` … ```` ``` ```` mit Unterentscheiden aussehen (auch als Listenpunkt `- ?!````), und dass er die passenden Werkzeuge einem Umschreiben der
+`?`, `?!`, `!`, `!!`, `- [ ]`, `>Datum` (seit v3.0.0; mehrere am Zeilenende: der späteste ist die Frist, die früheren sind Erinnerungen) und `@kürzel` bedeuten, was Pfade auf Dateien und ausfüllbare Platzhalter sind (seit v2.12.0), wie Einträge in Listen und mehrzeilige Blöcke `?!```` … ```` ``` ```` mit Unterentscheiden aussehen (auch als Listenpunkt `- ?!````), und dass er die passenden Werkzeuge einem Umschreiben der
 ganzen Notiz vorziehen soll.
 
 **Regeln, die für Agenten wie für Menschen gelten:**
@@ -80,6 +80,10 @@ Bank mit Raiffeisen». Der Agent zeigt jeden Werkzeugaufruf an und fragt vor Än
 
 **Optionen:** `--read-only` meldet nur lesende Werkzeuge und schreibt nie; `--create` legt die Datei an, wenn sie fehlt;
 `--verbose` meldet jeden Aufruf auf der Fehlerausgabe; `--help`, `--version`.
+
+**Dateien von NoNotes 2.x** (seit v3.0.0): Das Programm liest sie wie die App (Termine `@Datum` gelten als `>Datum`). Bevor es eine
+solche Datei zum ersten Mal schreibt, legt es den alten Stand als `<Name>-vor-3.0.0.sqlite` daneben, denn danach öffnet nur noch
+NoNotes 3 die Datei. `--dir` lässt diese Sicherungen aus.
 
 **Mehrere Bereiche** (seit v2.3.0): `--file` lässt sich mehrmals angeben, `--dir <Ordner>` nimmt alle `.sqlite`-Dateien eines Ordners
 (beim Start gelesen). Jede Datei wird ein «workspace» mit der Kennung aus ihrem Namen, gleich gebildet wie die Bereiche der App

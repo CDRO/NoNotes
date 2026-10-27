@@ -1,6 +1,7 @@
 /* NoNotes – Fragen, Entscheide und Antworten im Notiztext.
    Syntax: Eine Zeile, die mit "?" beginnt, ist eine Frage; eine Zeile, die mit "?!" beginnt, ein Entscheid. Dasselbe gilt in einer
-   Liste ("- ?! Neues Tool kaufen?"). Beide dürfen am Zeilenende einen Termin tragen ("@15.10.2026", siehe dates.js). Direkt darauf
+   Liste ("- ?! Neues Tool kaufen?"). Beide dürfen am Zeilenende Termine tragen (">15.10.2026", siehe dates.js; mehrere: der späteste ist
+   die Frist, die früheren sind Erinnerungen). Direkt darauf
    folgende Zeilen, die mit "!" oder "!!" beginnen (auch eingerückt), sind die Antwort beziehungsweise der getroffene Entscheid; die
    Zeile mit dem Öffner bestimmt die Art, der Antwortmarker ist nachsichtig. Bei einem Entscheid darf die erste Antwortzeile mit dem
    Datum beginnen ("!! 14.10.2026: Variante B"): es gilt als Tag des Entscheids.
@@ -73,11 +74,11 @@
     return { decided: null, raw: null, text: line || '' };
   }
 
-  /** Titel eines Eintrags: Text ohne Termin, Termin und genannte Personen. */
+  /** Titel eines Eintrags: Text ohne Termine, Frist, Erinnerungen und genannte Personen. */
   function heading(kind, raw) {
     const D = global.NoNotesDates;
-    const split = D ? D.splitDue(raw) : { text: String(raw).trim(), due: null };
-    return { kind, text: split.text, due: split.due, people: people(split.text) };
+    const split = D ? D.splitDue(raw) : { text: String(raw).trim(), due: null, reminders: [] };
+    return { kind, text: split.text, due: split.due, reminders: split.reminders, people: people(split.text) };
   }
 
   /** Antwortzeilen ab Zeile j (höchstens bis limit, exklusiv): { lines, end }. */
@@ -247,7 +248,7 @@
   }
 
   /** Liest ab Zeile i eine Frage oder einen Entscheid samt Antwortzeilen; null, wenn dort keine steht.
-   *  Ergebnis: { kind, text, due, people, answer, decided, decidedRaw, end, answerStart, indent } – end ist die erste Zeile danach
+   *  Ergebnis: { kind, text, due, reminders, people, answer, decided, decidedRaw, end, answerStart, indent } – end ist die erste Zeile danach
    *  (exklusiv). Ein Block hat dazu block: true, closed, contentStart, contentEnd (exklusiv), titleLine (oder null), details
    *  (Beschreibung ohne Unter-Einträge, oder null) und children (die Unter-Einträge mit lineIndex); sein Titel kann leer sein.
    *  options.list: auch "- ? …" und "- ?!``` …" (dann list: true); options.inner: keine Blöcke (im Block selbst). */
@@ -275,6 +276,7 @@
         text: b.text,
         norm: normalize(b.text),
         due: b.due,
+        reminders: b.reminders || [],
         people: b.people,
         answer: b.answer,
         decided: b.decided,

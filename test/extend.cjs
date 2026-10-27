@@ -15,7 +15,7 @@ const DIST = path.join(ROOT, 'dist', 'NoNotes');
 const APP_URL = 'file://' + path.join(DIST, 'index.html');
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '16'; // muss zu packages/data/db.js passen
+const SCHEMA_VERSION = '17'; // muss zu packages/data/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 // ============================================================
@@ -1358,7 +1358,7 @@ async function runDecisions(browser, part, step) {
       'Intro',
       '? Wie hoch ist das Budget? @max1234',
       '! 20k',
-      '?! Variante B oder C? @lea5678 (@tom9012) @01.11.2026',
+      '?! Variante B oder C? @lea5678 (@tom9012) >01.11.2026',
       '?! Lieferant wählen @max1234',
       'Ende',
     ].join('\n'), {});
@@ -1415,7 +1415,7 @@ async function runDecisions(browser, part, step) {
   const body = await page.evaluate(id => __ctx.backend.getNote(id).then(n => n.body), ids.plan);
   assert.equal(body, [
     'Intro', '? Wie hoch ist das Budget? @max1234', '! 20k',
-    '?! Variante B oder C? @lea5678 (@tom9012) @01.11.2026',
+    '?! Variante B oder C? @lea5678 (@tom9012) >01.11.2026',
     `!! ${todayText()}: Variante B, weil billiger`, '!! und schneller',
     '?! Lieferant wählen @max1234', 'Ende',
   ].join('\n'), 'der Entscheid steht mit Datum als "!!"-Zeilen im Text');
@@ -1473,7 +1473,7 @@ async function runDecisions(browser, part, step) {
   await page.keyboard.press('Escape');
   assert.equal(await page.locator('#mentionPopup').isVisible(), false);
   assert.equal(await page.locator('body.editor-open').count(), 1, 'Esc schliesst nur die Liste, nicht den Editor');
-  await page.keyboard.type('@15.10.2026');
+  await page.keyboard.type('>15.10.2026');
   await page.waitForTimeout(150);
   assert.equal(await page.locator('#mentionPopup').isVisible(), false, 'ein Termin ist kein Kürzel');
   await page.waitForFunction(SAVED);
@@ -1785,7 +1785,7 @@ async function runTemplatesUi(browser, part, step) {
   await page.locator('.template-item', { hasText: 'Entscheidungsvorlage' }).click();
   await page.waitForFunction(() => document.querySelector('#templatePickPreview').textContent.includes('Ausgangslage'));
   await page.keyboard.press('Enter');
-  await page.waitForFunction(() => document.querySelector('#body').value.startsWith('?!``` Entscheid: … @'));
+  await page.waitForFunction(() => document.querySelector('#body').value.startsWith('?!``` Entscheid: … >'));
   await page.waitForFunction(SAVED);
   part('Vorlage einfügen: an der Cursorstelle, Enter wählt, gespeichert');
 
@@ -1899,7 +1899,7 @@ async function runPlaceholdersUi(browser, part, step) {
   await page.keyboard.press('Tab');
   await page.waitForFunction(() => document.activeElement === document.querySelector('#body'));
   assert.equal(await page.inputValue('#title'), 'Offerte Heizung');
-  assert.ok((await body()).startsWith('- [ ] Offerte Heizung @{{?Wer}} @{{?Bis wann: '), 'der gleiche Name im Text: ' + await body());
+  assert.ok((await body()).startsWith('- [ ] Offerte Heizung @{{?Wer}} >{{?Bis wann: '), 'der gleiche Name im Text: ' + await body());
   assert.equal(await sel('#body'), '{{?Wer}}');
   assert.match(await hintText(), /^Wer\n+Das Kürzel der Person/);
   await page.keyboard.type('anna');
@@ -1912,7 +1912,7 @@ async function runPlaceholdersUi(browser, part, step) {
   await page.keyboard.press('Tab');
   await page.waitForFunction(() => document.querySelector('#phHint').hidden);
   await page.waitForFunction(SAVED);
-  assert.equal(await body(), '- [ ] Offerte Heizung @anna @30.11.2026\n\n**Ziel:** Heizung läuft\n\n**Notizen:**', 'ohne «behalten»: nur Text, keine Beschreibungen mehr');
+  assert.equal(await body(), '- [ ] Offerte Heizung @anna >30.11.2026\n\n**Ziel:** Heizung läuft\n\n**Notizen:**', 'ohne «behalten»: nur Text, keine Beschreibungen mehr');
   const caret = await page.evaluate(() => document.querySelector('#body').selectionStart);
   assert.equal(caret, (await body()).length, 'nach dem letzten ans Ende des Eingefügten');
   part('Neue Notiz aus «Aufgabe»: Titel zuerst, Tab durch den Text, Beschreibung im Kasten, gleiche Namen, Vorschlag, am Ende ohne Platzhalter');
@@ -1938,7 +1938,7 @@ async function runPlaceholdersUi(browser, part, step) {
   assert.ok(await page.evaluate(() => document.body.classList.contains('editor-open')), 'Esc beendet nur das Ausfüllen');
   await page.waitForFunction(SAVED);
   const kept = await body();
-  assert.ok(kept.startsWith(`- [ ] {{?Beschreibung: Zweite}} @{{?Wer: ben}} @{{?Bis wann: ${inWeek}}}\n\n**Ziel:** {{?Ziel}}`), kept);
+  assert.ok(kept.startsWith(`- [ ] {{?Beschreibung: Zweite}} @{{?Wer: ben}} >{{?Bis wann: ${inWeek}}}\n\n**Ziel:** {{?Ziel}}`), kept);
   assert.match(kept, /```template-description Wer\n/, 'die Beschreibungen bleiben am Ende');
   await page.click('#modeSwitch button[data-mode="split"]');
   await page.waitForSelector('#preview .md-ph.open[data-ph="Ziel"]');
@@ -1970,7 +1970,7 @@ async function runPlaceholdersUi(browser, part, step) {
   assert.equal(await sel('#body'), inWeek);
   await page.keyboard.type('1.12.2026');
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => document.querySelector('#body').value.includes('@{{?Bis wann: 1.12.2026}}'));
+  await page.waitForFunction(() => document.querySelector('#body').value.includes('>{{?Bis wann: 1.12.2026}}'));
   part('Klick in einen ausgefüllten Platzhalter: Beschreibung, Tab zum nächsten, Wert ändern');
 
   // Rechtsklick in der Vorschau: einen und alle auflösen; Beschreibungen ohne Platzhalter verschwinden
@@ -1984,7 +1984,7 @@ async function runPlaceholdersUi(browser, part, step) {
   await page.click('#preview .md-ph[data-ph="Beschreibung"]', { button: 'right' });
   await page.click('#contextMenu button:has-text("Alle Platzhalter der Notiz auflösen")');
   await page.waitForFunction(() => !document.querySelector('#body').value.includes('{{?'));
-  assert.equal((await body()).trim(), '- [ ] Zweite @ben @1.12.2026\n\n**Ziel:** Ziel\n\n**Notizen:**');
+  assert.equal((await body()).trim(), '- [ ] Zweite @ben >1.12.2026\n\n**Ziel:** Ziel\n\n**Notizen:**');
   await page.waitForFunction(SAVED);
   part('Rechtsklick in der Vorschau: einen oder alle Platzhalter auflösen, Beschreibungen gehen mit');
 
@@ -2131,10 +2131,10 @@ async function runI18n(browser, part, step) {
     await check('Editor leer');
     const SAMPLE_BODY = [
       'Intro',
-      '- [ ] Offerte einholen @15.10.2026',
+      '- [ ] Offerte einholen >15.10.2026',
       '  - [ ] Unterpunkt',
-      '- [ ] Hauptpunkt @01.01.2020 10:00',
-      '? Budget Alpha? @15.10.2020',
+      '- [ ] Hauptpunkt >01.01.2020 10:00',
+      '? Budget Alpha? >15.10.2020',
       '! Wichtig',
       '? Liefertermin?',
       '[[Alpha]] [[Gamma]] ![Bild](att:99)',
@@ -2344,7 +2344,7 @@ async function runI18n(browser, part, step) {
     await page.fill('#title', 'Two');
     await page.waitForFunction(SAVED);
     assert.equal(await page.locator('#count').innerText(), '2 notes');
-    await page.fill('#body', '- [ ] Alpha @15.10.2026\n? Beta?');
+    await page.fill('#body', '- [ ] Alpha >15.10.2026\n? Beta?');
     await page.waitForFunction(SAVED);
     assert.match(await page.locator('#noteQuestions').innerText(), /1 open question out of 1/);
     part('Englisch: Einzahl und Mehrzahl, Zeitformat');
@@ -2877,7 +2877,7 @@ async function runCellsPeopleUi(browser, part, step) {
     const B = __ctx.backend;
     const a = await B.createNote(null);
     await B.updateNote(a, 'Projekt', [
-      '- [ ] Offerte einholen @anna @15.11.2030',
+      '- [ ] Offerte einholen @anna >15.11.2030',
       '  - [ ] Preise vergleichen',
       '- [ ] Vertrag prüfen @ben (@anna)',
       '- [ ] Ohne Person',
@@ -2970,6 +2970,323 @@ async function runCellsPeopleUi(browser, part, step) {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+// ============================================================
+/* v3.0.0 in der Oberfläche: Datumsauswahl beim Tippen von «>» (Tasten, Knöpfe, Toolleiste, Strg+Leertaste, Abzeichen in der Vorschau,
+   Ordnen der Termine), alte «@Datum» im Editor, Frist und Erinnerung in der Aufgabenliste, Umstellung beim Öffnen mit Sicherung,
+   Vorlagen im Ordner umstellen, Seiten der Hauptäste in der Mindmap, Gleiten, Mindmap als Bild in die Zwischenablage. */
+async function runDatesUi(browser, part, step) {
+  const PLUGIN = "NoNotesPlugins.register({ id: 'termine-test', name: 'Termine-Test', api: 1, activate(ctx) { window.__ctx = ctx; } });";
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nonotes-v3-ui-'));
+  const dir = path.join(tmp, 'NoNotes');
+  fs.cpSync(DIST, dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'plugins', 'termine-test.js'), PLUGIN);
+  fs.writeFileSync(path.join(dir, 'plugins', 'plugins.js'), "NoNotesPlugins.list(['termine-test.js']);\n");
+  const files = { 'Alt.md': '---\nnonotes: 1\nname: "Alt"\n---\n- [ ] Erledigen @{{datum+7}}\n', 'Neu.md': '---\nnonotes: 1\nname: "Neu"\n---\n- [ ] Erledigen >{{datum+7}}\n' };
+  const ctx = await browser.newContext({ viewport: { width: 1300, height: 860 }, locale: 'de-CH', acceptDownloads: true });
+  await ctx.addInitScript(f => {
+    const store = window.__files = new Map(Object.entries(f));
+    const fileHandle = name => ({
+      kind: 'file', name, getFile: async () => new File([store.get(name)], name), queryPermission: async () => 'granted', requestPermission: async () => 'granted',
+      createWritable: async () => { let data = ''; return { write: async b => { data = typeof b === 'string' ? b : new TextDecoder().decode(b); }, close: async () => { store.set(name, data); } }; },
+    });
+    const folder = {
+      kind: 'directory', name: 'templates', queryPermission: async () => 'granted', requestPermission: async () => 'granted',
+      entries: async function* () { for (const name of [...store.keys()]) yield [name, fileHandle(name)]; },
+      getFileHandle: async name => fileHandle(name), removeEntry: async name => { store.delete(name); },
+    };
+    window.showDirectoryPicker = async () => folder;
+    const saved = {};
+    let ns;
+    Object.defineProperty(window, 'NoNotesStorage', { configurable: true, get: () => ns, set: v => {
+      ns = v;
+      v.browserStore.saveHandleKey = async (k, h) => { saved[k] = h; };
+      v.browserStore.loadHandleKey = async k => saved[k] || null;
+      v.browserStore.clearHandleKey = async k => { delete saved[k]; };
+    } });
+  }, files);
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  page.on('dialog', d => d.accept());
+  await page.goto('file://' + path.join(dir, 'index.html'));
+  await page.waitForSelector(READY, { timeout: 30000 });
+
+  const pad = n => String(n).padStart(2, '0');
+  const day = k => { const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() + k); return d; };
+  const fmt = d => `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+  const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const body = () => page.inputValue('#body');
+  const lines = async () => (await body()).split('\n');
+  const pickerOpen = () => page.evaluate(() => { const p = document.querySelector('.dp'); return !!p && !p.hidden; });
+  const caretTo = (lineNo, col) => page.evaluate(([L, c]) => {
+    const b = document.querySelector('#body');
+    const ls = b.value.split('\n').slice(0, L).reduce((n, x) => n + x.length + 1, 0);
+    b.focus();
+    const at = c == null ? ls + b.value.split('\n')[L].length : ls + c;
+    b.setSelectionRange(at, at);
+  }, [lineNo, col]);
+
+  // ---------- Datumsauswahl ----------
+  const noteId = await page.evaluate(async () => {
+    const B = __ctx.backend;
+    const id = await B.createNote(null);
+    await B.updateNote(id, 'Termine', 'Start', {});
+    await __ctx.refresh();
+    return id;
+  });
+  await page.evaluate(i => __ctx.openNote(i), noteId);
+  await page.waitForSelector('#editorPane:not([hidden])');
+  await page.click('[data-mode="edit"]');
+  await caretTo(0);
+  await page.keyboard.press('Shift+Enter'); // Shift+Enter: neue Zeile ohne Fortführen der Liste
+  await page.keyboard.type('- [ ] Offerte einholen >');
+  await page.waitForFunction(() => { const p = document.querySelector('.dp'); return p && !p.hidden; });
+  assert.equal(await page.locator('.dp-grid button.sel').getAttribute('data-iso'), iso(day(0)), 'vorgewählt ist heute');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.querySelector('.dp').hidden);
+  assert.equal((await lines())[1], `- [ ] Offerte einholen >${fmt(day(1))}`, '→ ein Tag, Enter setzt das ganze Datum ein');
+  // ein früherer Termin dazu: die Auswahl beginnt bei der Frist der Zeile, die Termine werden geordnet
+  await page.keyboard.type(' >');
+  await page.waitForFunction(() => !document.querySelector('.dp').hidden);
+  assert.equal(await page.locator('.dp-grid button.sel').getAttribute('data-iso'), iso(day(1)), 'vorgewählt ist die Frist der Zeile');
+  await page.keyboard.press('ArrowUp'); // eine Woche früher
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.querySelector('.dp').hidden);
+  assert.equal((await lines())[1], `- [ ] Offerte einholen >${fmt(day(-6))} >${fmt(day(1))}`, 'nach dem Datum geordnet: der letzte ist die Frist');
+  assert.equal(await page.evaluate(() => { const b = document.querySelector('#body'); return b.value.slice(0, b.selectionStart).split('\n').pop(); }), (await lines())[1], 'der Cursor steht am Ende der Termine');
+  part('Datumsauswahl: «>» nach einem Leerzeichen öffnet sie, heute vorgewählt, Pfeiltasten, Enter, ganzes Datum, Termine geordnet');
+
+  // Ziffern tippen: der Kalender folgt; a > b und «>» am Zeilenanfang öffnen nichts oder schliessen wieder
+  await page.keyboard.press('Shift+Enter');
+  await page.keyboard.type('- [ ] Getippt >1.12.20');
+  assert.equal(await pickerOpen(), true);
+  await page.keyboard.type('31');
+  assert.equal(await page.locator('.dp-grid button.sel').getAttribute('data-iso'), '2031-12-01', 'der Kalender folgt dem Getippten');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.querySelector('.dp').hidden);
+  assert.equal((await lines())[2], '- [ ] Getippt >01.12.2031');
+  await page.keyboard.press('Shift+Enter');
+  await page.keyboard.type('Vergleich a >');
+  assert.equal(await pickerOpen(), true);
+  await page.keyboard.type(' b');
+  assert.equal(await pickerOpen(), false, 'ein Leerzeichen schliesst sie');
+  await page.keyboard.press('Shift+Enter');
+  await page.keyboard.type('> Zitat');
+  assert.equal(await pickerOpen(), false, 'am Zeilenanfang (Zitat) nicht');
+  await page.keyboard.press('Shift+Enter');
+  await page.keyboard.type('`code >');
+  assert.equal(await pickerOpen(), false, 'in Code nicht');
+  await page.keyboard.type('`');
+  await page.keyboard.press('Shift+Enter');
+  await page.keyboard.type('- [ ] Abbrechen >');
+  await page.keyboard.press('Escape');
+  assert.equal(await pickerOpen(), false);
+  assert.equal((await lines())[6], '- [ ] Abbrechen >', 'Esc lässt das «>» stehen');
+  assert.ok(await page.isVisible('#editorPane'), 'Esc schliesst nur die Auswahl, nicht den Editor');
+  part('Datumsauswahl: Ziffern weitertippen, der Kalender folgt; nicht bei a > b, nicht am Zeilenanfang, nicht in Code; Esc lässt «>» stehen');
+
+  // Knopf «Termin» in der Toolleiste, Knöpfe in der Auswahl, Tab durch die Bereiche, Uhrzeit
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Backspace');
+  await page.keyboard.type(' bis morgen');
+  await page.click('[data-cmd="date"]');
+  await page.waitForFunction(() => !document.querySelector('.dp').hidden);
+  assert.equal((await lines())[6], '- [ ] Abbrechen bis morgen >');
+  await page.locator('.dp-quick button[data-zone="tomorrow"]').click();
+  await page.waitForFunction(() => document.querySelector('.dp').hidden);
+  assert.equal((await lines())[6], `- [ ] Abbrechen bis morgen >${fmt(day(1))}`, 'Knopf «Morgen»');
+  await page.click('[data-cmd="date"]');
+  await page.waitForFunction(() => !document.querySelector('.dp').hidden);
+  await page.keyboard.press('Tab'); // vom Kalender zur Uhrzeit
+  assert.equal(await page.evaluate(() => document.querySelector('.dp').dataset.zone), 'time');
+  await page.keyboard.type('1430');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.querySelector('.dp').hidden);
+  assert.equal((await lines())[6], `- [ ] Abbrechen bis morgen >${fmt(day(1))} >${fmt(day(1))} 14:30`, 'mit Uhrzeit, nach dem Zeitpunkt geordnet');
+  part('Knopf «Termin» setzt « >» ans Zeilenende; «Morgen», Tab zur Uhrzeit, Uhrzeit dazu');
+
+  // Strg+Leertaste auf einem Termin ändert ihn
+  await caretTo(1, 26);
+  await page.keyboard.press('Control+Space');
+  await page.waitForFunction(() => !document.querySelector('.dp').hidden);
+  assert.equal(await page.locator('.dp-grid button.sel').getAttribute('data-iso'), iso(day(-6)), 'der Termin selbst ist vorgewählt');
+  await page.keyboard.press('PageDown'); // ein Monat später
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.querySelector('.dp').hidden);
+  const later = day(-6); later.setMonth(later.getMonth() + 1);
+  assert.equal((await lines())[1], `- [ ] Offerte einholen >${fmt(day(1))} >${fmt(later)}`, 'geändert und neu geordnet: jetzt ist er die Frist');
+  part('Strg+Leertaste auf einem Termin: vorgewählt, Bild↓ ein Monat, ersetzt und neu geordnet');
+
+  // Alte «@Datum»: im Editor erst umgeschrieben, wenn der Cursor die Zeile verlässt
+  await caretTo(2);
+  await page.keyboard.press('Shift+Enter');
+  await page.keyboard.type('- [ ] Alt @anna @6.11.2030');
+  assert.equal((await lines())[3], '- [ ] Alt @anna @6.11.2030', 'beim Tippen bleibt die Zeile');
+  await page.keyboard.press('ArrowUp');
+  await page.waitForFunction(() => document.querySelector('#body').value.split('\n')[3] === '- [ ] Alt @anna >6.11.2030');
+  part('Alte «@Datum» im Editor: umgeschrieben, sobald der Cursor die Zeile verlässt; @Person bleibt');
+
+  // Vorschau: Frist und Erinnerung als Abzeichen; ein Klick öffnet die Auswahl auf dem Termin
+  await page.click('[data-mode="split"]');
+  await page.waitForSelector(`#preview [data-date="${iso(later)}"]`);
+  assert.equal(await page.locator(`#preview .md-reminder[data-date="${iso(day(1))}"]`).count(), 2, 'Erinnerungen klein mit Glocke (zwei Zeilen)');
+  await page.locator('#preview [data-date="2030-11-06"]').click();
+  await page.waitForFunction(() => !document.querySelector('.dp').hidden);
+  assert.equal(await page.locator('.dp-grid button.sel').getAttribute('data-iso'), '2030-11-06');
+  await page.keyboard.press('Escape');
+  await page.click('[data-mode="edit"]');
+  part('Vorschau: Frist und Erinnerungen als Abzeichen, Klick auf ein Abzeichen öffnet die Auswahl auf dem Termin');
+
+  // Aufgabenliste: Frist und nächste Erinnerung
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('body:not(.editor-open)');
+  await page.click('#viewTasksBtn');
+  await page.waitForSelector('#tList .t-item');
+  const offer = page.locator('#tList .t-item', { hasText: 'Offerte einholen' });
+  assert.equal(await offer.locator('.due.reminder').count(), 1, 'die nächste Erinnerung neben der Frist');
+  assert.ok((await offer.innerText()).includes(fmt(later).replace(/^0/, '').replace('.0', '.')) || (await offer.innerText()).includes(fmt(later)), await offer.innerText());
+  const stored = await page.evaluate(async i => (await __ctx.backend.getNote(i)).body, noteId);
+  assert.ok(stored.includes('- [ ] Alt @anna >6.11.2030') && !/@\d/.test(stored), 'gespeichert ohne @Datum');
+  part('Aufgabenliste: Frist und nächste Erinnerung; gespeichert ohne alte Schreibweise');
+
+  // ---------- Vorlagen im Ordner auf «>» umstellen ----------
+  await page.click('#menuBtn');
+  await page.click('#templatesBtn');
+  await page.locator('#templatesFolder button', { hasText: 'Ordner verbinden' }).click();
+  await page.waitForSelector('.templates-legacy');
+  assert.match(await page.locator('.templates-legacy').innerText(), /1 Vorlage im Ordner schreibt Termine noch mit «@».*Alt\.md/);
+  await page.locator('#templatesFolder button', { hasText: 'Auf «>» umstellen' }).click();
+  await page.waitForFunction(() => window.__files.get('Alt.md').includes('>{{datum+7}}'));
+  assert.equal(await page.evaluate(() => window.__files.get('Neu.md')), files['Neu.md'], 'die übrigen bleiben unverändert');
+  await page.locator('#templatesDialog button[value="close"]').click();
+  part('Vorlagen im Ordner: Hinweis mit den Dateien, «Auf «>» umstellen» schreibt nur die alten um');
+
+  // ---------- Mindmap: Seiten der Hauptäste ----------
+  await page.click('#viewMapBtn');
+  const sides = () => page.evaluate(async () => Object.fromEntries((await __ctx.backend.getTree({})).filter(r => r.parent_id == null).map(r => [r.title, r.side])));
+  const shown = () => page.evaluate(() => {
+    const r = document.querySelector('.mm-node[data-id="root"]').getBoundingClientRect();
+    return Object.fromEntries([...document.querySelectorAll('.mm-edge[data-from="root"]')].map(p => {
+      const g = document.querySelector(`.mm-node[data-id="${p.dataset.to}"]`);
+      return [g.querySelector('text').textContent, g.getBoundingClientRect().x < r.x ? 'left' : 'right'];
+    }));
+  });
+  const ids = await page.evaluate(async () => {
+    const B = __ctx.backend;
+    const out = {};
+    for (const t of ['Gross', 'B', 'C']) { out[t] = await B.createNote(null); await B.renameNote(out[t], t); }
+    for (let i = 1; i <= 5; i++) { const k = await B.createNote(out.Gross); await B.renameNote(k, 'G' + i); }
+    await __ctx.refresh();
+    return out;
+  });
+  await page.waitForFunction(async () => (await __ctx.backend.getTree({})).filter(r => r.parent_id == null).every(r => r.side));
+  const first = await sides();
+  assert.deepEqual(await shown(), first, 'gespeichert, wie gezeichnet');
+  assert.ok(first.Gross !== first.B || first.Gross !== first.C, 'der grosse Ast allein auf einer Seite: ' + JSON.stringify(first));
+  await page.evaluate(async () => { const B = __ctx.backend; const n = await B.createNote(null); await B.renameNote(n, 'Neu'); await __ctx.refresh(); });
+  await page.waitForFunction(async () => (await __ctx.backend.getTree({})).filter(r => r.parent_id == null).every(r => r.side));
+  const second = await sides();
+  for (const k of Object.keys(first)) assert.equal(second[k], first[k], `${k} bleibt auf seiner Seite`);
+  // Rechtsklick: auf die andere Seite
+  const other = first.B === 'left' ? 'right' : 'left';
+  await page.click(`.mm-node[data-id="${ids.B}"] rect`, { button: 'right' });
+  await page.locator('#contextMenu button', { hasText: other === 'left' ? 'Auf die linke Seite' : 'Auf die rechte Seite' }).click();
+  await page.waitForFunction(([id, s]) => __ctx.backend.getTree({}).then(rows => rows.find(r => r.id === id).side === s), [ids.B, other]);
+  assert.equal((await shown()).B, other);
+  // Auf die andere Hälfte der Wurzel ziehen
+  const cSide = (await sides()).C;
+  const cb = await page.locator(`.mm-node[data-id="${ids.C}"] rect`).boundingBox();
+  const rb = await page.locator('.mm-node[data-id="root"] rect').boundingBox();
+  await page.mouse.move(cb.x + cb.width / 2, cb.y + cb.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(cb.x + cb.width / 2 + 20, cb.y + cb.height / 2 + 20, { steps: 4 });
+  await page.mouse.move(cSide === 'right' ? rb.x + 10 : rb.x + rb.width - 10, rb.y + rb.height / 2, { steps: 12 });
+  await page.mouse.up();
+  const cNow = cSide === 'right' ? 'left' : 'right';
+  await page.waitForFunction(([id, s]) => __ctx.backend.getTree({}).then(rows => rows.find(r => r.id === id).side === s), [ids.C, cNow]);
+  // Neu verteilen
+  await page.click('.mm-node[data-id="root"] rect', { button: 'right' });
+  await page.locator('#contextMenu button', { hasText: 'Hauptäste neu verteilen' }).click();
+  await page.waitForTimeout(300);
+  const balanced = await sides();
+  const big = balanced.Gross;
+  assert.ok(Object.entries(balanced).filter(([k]) => k !== 'Gross').every(([, v]) => v !== big), 'der grosse Ast allein, die kleinen gegenüber: ' + JSON.stringify(balanced));
+  part('Mindmap: Hauptäste bekommen eine Seite und behalten sie, neue auf die kürzere; Rechtsklick und Ziehen auf die Wurzel wechseln die Seite; neu verteilen');
+
+  // Gleiten (ohne «Bewegung reduzieren»)
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  const samples = await page.evaluate(async () => {
+    const seen = new Map(); // Knoten → Stellungen, die zu sehen waren
+    const t0 = performance.now();
+    const look = () => { for (const g of document.querySelectorAll('.mm-node')) { if (!seen.has(g.dataset.id)) seen.set(g.dataset.id, new Set()); seen.get(g.dataset.id).add(g.getAttribute('transform')); } };
+    const B = __ctx.backend;
+    const n = await B.createNote(null); // ein neuer Hauptast: die Äste auf seiner Seite rücken zusammen
+    await B.renameNote(n, 'Dazu');
+    const p = __ctx.refresh();
+    while (performance.now() - t0 < 600) { look(); await new Promise(r => requestAnimationFrame(r)); }
+    await p;
+    return Math.max(...[...seen.values()].map(x => x.size));
+  });
+  assert.ok(samples > 2, `die Knoten gleiten an den neuen Platz (${samples} Stellungen)`);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  part('Mindmap: Knoten gleiten an ihren neuen Platz, wenn die Bewegung nicht reduziert ist');
+
+  // Als Bild in die Zwischenablage, ersatzweise herunterladen
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.click('#mapCopyBtn');
+  await page.waitForFunction(() => /Zwischenablage kopiert/.test(document.querySelector('#status').textContent));
+  const clip = await page.evaluate(async () => {
+    const items = await navigator.clipboard.read();
+    const blob = await items[0].getType('image/png');
+    return [...new Uint8Array(await blob.arrayBuffer()).slice(0, 8)];
+  });
+  assert.deepEqual(clip, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 'ein PNG in der Zwischenablage');
+  await page.evaluate(() => { window.ClipboardItem = undefined; });
+  await page.focus('#mindmap');
+  const [download] = await Promise.all([page.waitForEvent('download'), page.keyboard.press('Control+c')]);
+  assert.match(download.suggestedFilename(), /\.png$/);
+  part('Mindmap als Bild: Knopf legt ein PNG in die Zwischenablage; ohne Bilder in der Zwischenablage (Ctrl+C) wird es heruntergeladen');
+
+  // ---------- Umstellung beim Öffnen: Sicherung herunterladen ----------
+  await page.evaluate(async () => {
+    const SQL = await window.initSqlJs();
+    const d = NoNotesDB.open(SQL, null);
+    const id = NoNotesDB.createNote(d, null);
+    d.run("UPDATE notes SET title = 'Aus 2.12', body = '- [ ] Offerte @anna @30.10.2030 @6.11.2030\n? Frage? @1.11.2030' WHERE id = ?", [id]);
+    d.exec("ALTER TABLE tasks DROP COLUMN reminders; ALTER TABLE questions DROP COLUMN reminders; ALTER TABLE notes DROP COLUMN side; UPDATE meta SET value = '16' WHERE key = 'schema_version'");
+    await NoNotesStorage.browserStore.saveDb(d.export());
+  });
+  await page.reload();
+  await page.waitForSelector('#migrateDialog[open]');
+  assert.match(await page.locator('#migrateText').innerText(), /stellt NoNotes jetzt 1 Notiz um/);
+  const [backup] = await Promise.all([page.waitForEvent('download'), page.locator('#migrateDialog button[value="backup"]').click()]);
+  assert.match(backup.suggestedFilename(), /^NoNotes-vor-3\.0\.0-.+\.sqlite$/);
+  await page.waitForSelector(READY);
+  const SQL = await initSqlJs();
+  const saved = new SQL.Database(fs.readFileSync(await backup.path()));
+  assert.equal(saved.exec("SELECT value FROM meta WHERE key = 'schema_version'")[0].values[0][0], '16', 'die Sicherung ist der alte Stand');
+  saved.close();
+  const migrated = await page.evaluate(async () => {
+    const B = __ctx.backend;
+    const row = (await B.getTree({})).find(r => r.title === 'Aus 2.12');
+    const tasks = await B.listTasks({ status: 'open' });
+    return { body: (await B.getNote(row.id)).body, task: tasks.find(t => t.note_id === row.id) };
+  });
+  assert.equal(migrated.body, '- [ ] Offerte @anna >30.10.2030 >6.11.2030\n? Frage? >1.11.2030');
+  assert.deepEqual([migrated.task.due, migrated.task.reminders], ['2030-11-06', ['2030-10-30']]);
+  await page.waitForFunction(SAVED);
+  await page.reload();
+  await page.waitForSelector(READY);
+  assert.equal(await page.locator('#migrateDialog[open]').count(), 0, 'nur einmal');
+  part('Umstellung beim Öffnen: einmal fragen, Sicherung des alten Stands herunterladen, Termine mit «>», Frist und Erinnerung im Index');
+
+  assert.deepEqual(errors, []);
+  await ctx.close();
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 suite('Erweiterungs-Test', [
   { name: 'Erweiterungen: Lader, Dialog, Schnittstelle 1, Menü, Toolleiste, Ereignisse, Hilfe, Designs, Ein- und Ausschalten zur Laufzeit, Verzeichnis, Beispiele, Pseudo-Sprache', run: runPlugins },
   { name: 'Hauptfarbe: Palette, Auswahl, Datei, Export und Druck, hell und dunkel', run: runPalette },
@@ -2980,6 +3297,7 @@ suite('Erweiterungs-Test', [
   { name: 'Ausfüllbare Platzhalter: Titel zuerst, Tab, Beschreibung, gleiche Namen, behalten, Klick hinein, auflösen, Unternotizen, einfügen', run: runPlaceholdersUi },
   { name: 'Tabellen: Raster in der Toolleiste, Tab und Enter, Titelzeile oben, Rechtsklick, Schnittstelle für Erweiterungen, Druck, Lesemodus', run: runTablesUi },
   { name: 'Personen an Aufgaben und Tabellenfelder: Aufgaben-Ansicht (Filter, nach Person, geerbt), Druck, Kästchen und Knöpfe im Feld, Knopf und Element über der Mindmap, Abschnitt im Druck', run: runCellsPeopleUi },
+  { name: 'Termine mit «>» (v3.0.0): Datumsauswahl, Knopf, Strg+Leertaste, Abzeichen, alte @Datum, Aufgabenliste, Vorlagen im Ordner, Mindmap-Seiten, Gleiten, Bild kopieren, Umstellung mit Sicherung', run: runDatesUi },
   { name: 'Sprachen: Pseudo-Sprache durch alle Ansichten, Englisch, Browsersprache, Mehrzahl, Testpaket, Wechsel', run: runI18n },
   { name: 'WebMCP: Werkzeuge für den Agenten des Browsers, Aufrufe ändern Daten und Oberfläche, gespeichert, Lesemodus, ohne Schnittstelle nichts', run: runWebMcp },
 ], { browser: true });

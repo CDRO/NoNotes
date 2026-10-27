@@ -57,7 +57,7 @@ module.exports = {
   plugins: ['tag-colors/tag-colors.js'],      // fest eingeschaltete Erweiterungen
   async run(s) {
     await s.newNote('Projekt Süd');
-    await s.edit('Projekt Süd', { body: '- [ ] Angebot einholen @anna @03.11.2026', mode: 'preview' });
+    await s.edit('Projekt Süd', { body: '- [ ] Angebot einholen @anna >03.11.2026', mode: 'preview' });
     await s.shot('aufgaben-in-der-vorschau');
     await s.back();
     await s.view('tasks');

@@ -10,6 +10,8 @@
      closeMenu()             renderAll()        onDatabaseReplaced()  (die Oberfläche setzt ihren Zustand zurück)
      showMenu(items, x, y, { above })          kleines Menü (Einträge wie im Kontextmenü der Mindmap)
      ensureSaved()           schreibt die offene Notiz; false, wenn die Person bei einem Konflikt erst entscheiden muss
+     confirmMigration({ area, notes })  vor der Umstellung auf v3.0.0 (Termine «>» statt «@»): 'backup' (Sicherung herunterladen) oder
+                             'skip'; ohne die Funktion wird die Sicherung heruntergeladen
 
    Bereiche (ab v2.3.0): mehrere Datenbanken, je mit eigener Browser-Kopie und eigener Datei. Bearbeitet wird immer nur der
    aktive Bereich; gewechselt wird über die Statusleiste, «Bereiche…» im Menü, Alt+1 … 9 oder die Adresse (index.html#w=<bereich>;
@@ -280,6 +282,7 @@
         else bytes = await Store.browserStore.loadDb(s.area.id);
         s.pendingFileBytes = null;
         if (!bytes || !bytes.length) { s.external = null; host.hideBanner(); return; }
+        await beforeMigration(bytes); // etwa von NoNotes 2.x geschrieben: vor der Umstellung fragen
         replaceDb(DB.open(s.SQL, bytes));
         s.baseSnap = snapshot(s.db);
         if (kind === 'file') await rememberFile(bytes);
@@ -466,7 +469,7 @@
           s.editSeq++;
         } else if (!s.editedSinceStart || fileUnchanged) {
           // Nichts Eigenes verloren: Datei ist massgebend bzw. identisch, aktueller Stand gewinnt bei Änderungen.
-          if (!s.editedSinceStart) replaceDb(DB.open(s.SQL, fileBytes));
+          if (!s.editedSinceStart) { await beforeMigration(fileBytes); replaceDb(DB.open(s.SQL, fileBytes)); }
           s.editSeq++;
         } else {
           const loadFile = confirm(
@@ -474,7 +477,7 @@
             t('OK: Datei laden und die Änderungen dieser Sitzung verwerfen.') + '\n' +
             t('Abbrechen: Datei mit dem aktuellen Stand überschreiben.')
           );
-          if (loadFile) replaceDb(DB.open(s.SQL, fileBytes));
+          if (loadFile) { await beforeMigration(fileBytes); replaceDb(DB.open(s.SQL, fileBytes)); }
           s.editSeq++;
         }
         s.editedSinceStart = false;
@@ -546,6 +549,7 @@
           tn('Die aktuell angezeigte Notiz wird durch den Inhalt der Datei ersetzt.', 'Die aktuell angezeigten {n} Notizen werden durch den Inhalt der Datei ersetzt.', n) + ' ' +
           t('Bei Bedarf vorher „Kopie herunterladen“.')
         )) { newDb.close(); return; }
+        await beforeMigration(bytes); // Datei von NoNotes 2.x: vor dem Schreiben der umgestellten Fassung sichern
         replaceDb(newDb);
         await adoptHandle(handle);
         if (!isDirty()) setStatus(t('„{name}“ geöffnet', { name: handle.name }), 'saved');
@@ -657,6 +661,16 @@
       return n;
     }
 
+    /** Vor der Umstellung auf v3.0.0 (Termine mit «>» statt «@»): nur wenn sie Notizen ändert, einmal fragen und auf Wunsch den alten
+     *  Stand herunterladen (NoNotes-vor-3.0.0-<Bereich>.sqlite). Gibt true zurück, wenn umgestellt wird. */
+    async function beforeMigration(bytes) {
+      const info = bytes && DB.inspect ? DB.inspect(s.SQL, bytes) : null;
+      if (!info || info.version >= DB.SCHEMA_VERSION || !info.legacyNotes) return false;
+      const choice = host.confirmMigration ? await host.confirmMigration({ area: s.area.name, notes: info.legacyNotes }) : 'backup';
+      if (choice !== 'skip') Store.download(bytes, `NoNotes-vor-3.0.0-${String(s.area.name || 'NoNotes').replace(/[\\/:*?"<>|]+/g, '-')}.sqlite`);
+      return true;
+    }
+
     /** Lädt einen Bereich: Datei, wenn sie freigegeben ist (interactive: bei Bedarf nachfragen, braucht einen Klick), sonst die Browser-Kopie. */
     async function openArea(area, interactive) {
       s.area = { id: area.id, name: area.name };
@@ -674,6 +688,8 @@
       catch (e) { console.warn('Browser-Speicher nicht lesbar', e); }
       s.mirrorAtStart = mirror;
       let db = null;
+      let migrated = false; // auf ein neues Schema angeglichen: gleich wieder sichern, damit die Umstellung nur einmal läuft
+      const opened = bytes => { const info = {}; const d = DB.open(s.SQL, bytes, info); if (info.upgradedFrom) migrated = true; return d; };
       if (Store.fileAccess.supported) {
         let handle = s.sessionHandles.get(area.id) || null;
         if (!handle) { handle = await Store.browserStore.loadHandle(area.id); s.handleRemembered = !!handle; }
@@ -684,7 +700,8 @@
           if (s.filePermission === 'granted') {
             try {
               const bytes = await Store.fileAccess.read(handle);
-              db = DB.open(s.SQL, bytes);
+              await beforeMigration(bytes);
+              db = opened(bytes);
               s.openedFromFile = true;
               await rememberFile(bytes);
             } catch (e) {
@@ -695,12 +712,16 @@
         }
       }
       if (!db) {
-        try { db = DB.open(s.SQL, mirror); }
+        try { await beforeMigration(mirror); db = opened(mirror); }
         catch (e) { console.warn('Browser-Kopie unbrauchbar, starte mit leerer Datenbank', e); db = DB.open(s.SQL, null); }
       }
       if (s.db) replaceDb(db); else s.db = db;
       s.baseSnap = snapshot(s.db);
       s.savedSeq = s.editSeq;
+      if (migrated) { // die umgestellte Fassung gleich sichern, damit die Umstellung (und die Frage davor) nur einmal kommt
+        s.editSeq++;
+        try { await persistNow(); } catch (e) { console.warn('Speichern nach der Umstellung', e); scheduleSave(); }
+      }
     }
 
     /** Vor dem Wechsel: alles Ungesicherte schreiben. false, wenn die Person lieber bleibt. */

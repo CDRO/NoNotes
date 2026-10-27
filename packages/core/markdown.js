@@ -367,15 +367,26 @@
     return { decisions: of('decision').length, decisionsOpen: of('decision').filter(c => !c.answer).length, questions: of('question').length, questionsOpen: of('question').filter(c => !c.answer).length };
   }
 
+  /** Abzeichen der Termine einer Zeile (v3.0.0): die Erinnerungen klein mit Glocke, dann die Frist. done: erledigt oder beantwortet
+   *  (ohne Dringlichkeit). data-date trägt den Termin (die Oberfläche öffnet bei einem Klick die Datumsauswahl). */
+  function dueBadges(due, reminders, done) {
+    const D = global.NoNotesDates;
+    if (!D || !due) return '';
+    const today = D.todayIso();
+    const rem = (reminders || []).map(r => {
+      const u = done || D.datePart(r) < today ? 'past' : D.urgency(r);
+      return `<span class="md-due md-reminder due ${u}" data-date="${escapeHtml(r)}" title="${escapeHtml(t('Erinnerung {datum}', { datum: D.formatDue(r) }))}">${escapeHtml(D.formatDue(r))}</span>`;
+    }).join('');
+    return rem + `<span class="md-due due ${done ? 'none' : D.urgency(due)}" data-date="${escapeHtml(due)}"${rem ? ` title="${escapeHtml(t('Frist {datum}', { datum: D.formatDue(due) }))}"` : ''}>${escapeHtml(done ? D.formatDue(due) : D.dueLabel(due))}</span>`;
+  }
+
   /** Kasten für eine Frage oder einen Entscheid (einzeilig, in einer Liste oder als Block); lines ist der Text, in dem qb steht. */
   function entryHtml(qb, lines, ctx, lineAttr) {
     const answered = !!qb.answer;
     const decision = qb.kind === 'decision';
     const D = global.NoNotesDates;
     const options = ctx.options || {};
-    const dueHtml = qb.due && D
-      ? `<span class="md-due due ${answered ? 'none' : D.urgency(qb.due)}">${escapeHtml(answered ? D.formatDue(qb.due) : D.dueLabel(qb.due))}</span>`
-      : '';
+    const dueHtml = dueBadges(qb.due, qb.reminders, answered);
     const decidedHtml = decision && answered && qb.decided && D
       ? `<div class="md-decided">${escapeHtml(t('Entschieden {datum}', { datum: D.formatDue(qb.decided) }))}</div>`
       : '';
@@ -431,7 +442,7 @@
     const parts = (Tb ? Tb.splitParts(text).map(p => p.text) : [text]).map(unescapePipe);
     if (r === 'h') return parts.map(p => renderInline(p, ctx)).join('<br>');
     const withPeople = Object.assign({}, ctx, { people: true });
-    const badge = (due, quiet) => (due && D ? `<span class="md-due due ${quiet ? 'none' : D.urgency(due)}">${escapeHtml(quiet ? D.formatDue(due) : D.dueLabel(due))}</span>` : '');
+    const badge = (split, quiet) => dueBadges(split.due, split.reminders, quiet);
     const out = [];
     for (let k = 0; k < parts.length; k++) {
       const p = parts[k];
@@ -441,11 +452,11 @@
         const done = tm[1] !== ' ';
         const slot = slots.n++;
         const src = line != null ? ` data-line="${line}" data-slot="${slot}"` : '';
-        out.push(`<span class="md-cell-task task${done ? ' done' : ''}"${src}><input type="checkbox"${ctx.interactiveTasks && src ? '' : ' disabled'}${done ? ' checked' : ''} aria-label="${escapeHtml(done ? t('erledigt') : t('offen'))}"><span class="task-text">${renderInline(task.text, withPeople)}</span>${badge(task.due, done)}</span>`);
+        out.push(`<span class="md-cell-task task${done ? ' done' : ''}"${src}><input type="checkbox"${ctx.interactiveTasks && src ? '' : ' disabled'}${done ? ' checked' : ''} aria-label="${escapeHtml(done ? t('erledigt') : t('offen'))}"><span class="task-text">${renderInline(task.text, withPeople)}</span>${badge(task, done)}</span>`);
         continue;
       }
       const qm = Q ? Q.QUESTION_RE.exec(p) : null;
-      const head = qm && !/^`{3}/.test(qm[2]) ? (D ? D.splitDue(qm[2]) : { text: qm[2].trim(), due: null }) : null;
+      const head = qm && !/^`{3}/.test(qm[2]) ? (D ? D.splitDue(qm[2]) : { text: qm[2].trim(), due: null, reminders: [] }) : null;
       if (head && head.text) {
         let j = k + 1;
         const answers = [];
@@ -453,7 +464,7 @@
         const answered = answers.some(a => a.trim());
         const decision = !!qm[1];
         const mark = answered ? '✓' : decision ? '?!' : '?';
-        out.push(`<span class="md-cell-q${decision ? ' md-decision' : ''} ${answered ? 'answered' : 'open'}"><span class="md-mark" aria-hidden="true">${mark}</span> ${renderInline(head.text, withPeople)}${badge(head.due, answered)}</span>`);
+        out.push(`<span class="md-cell-q${decision ? ' md-decision' : ''} ${answered ? 'answered' : 'open'}"><span class="md-mark" aria-hidden="true">${mark}</span> ${renderInline(head.text, withPeople)}${badge(head, answered)}</span>`);
         for (const a of answers) out.push(`<span class="md-cell-a">${renderInline(a, ctx)}</span>`);
         k = j - 1;
         continue;
@@ -645,7 +656,7 @@
           const split = D.splitDue(text);
           if (split.due) {
             text = split.text;
-            dueHtml = `<span class="md-due due ${task ? 'none' : D.urgency(split.due)}">${escapeHtml(task ? D.formatDue(split.due) : D.dueLabel(split.due))}</span>`;
+            dueHtml = dueBadges(split.due, split.reminders, task);
           }
         }
       }

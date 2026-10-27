@@ -15,7 +15,7 @@ const DIST = path.join(ROOT, 'dist', 'NoNotes');
 const APP_URL = 'file://' + path.join(DIST, 'index.html');
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '16'; // muss zu packages/data/db.js passen
+const SCHEMA_VERSION = '17'; // muss zu packages/data/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 // ============================================================
@@ -408,7 +408,7 @@ async function runDb(browser, part, step) {
     DB.updateNote(d, n1, 'Plan', [
       '? Wie hoch ist das Budget? @max1234',
       '! 20k',
-      '?! Variante B oder C? @lea5678 (@tom9012) @01.11.2026',
+      '?! Variante B oder C? @lea5678 (@tom9012) >01.11.2026',
       '!! 14.10.2026: Variante B',
       '!! weil billiger',
       '?! Lieferant wählen @max1234',
@@ -731,7 +731,7 @@ async function runAgent(browser, part, step) {
   part('Katalog: Beschreibungen vollständig, Namen eindeutig, leere Datenbank, Eingaben werden geprüft');
 
   // ---------- Notizen: anlegen, lesen, Baum, Suche ----------
-  r = ok(await call('create_note', { title: 'Projekt', body: '? Welche Bank?\n- [ ] Angebot einholen @2026-10-20\n  - [ ] Bank anrufen\n?! Variante A oder B? @anna (@ben)', tags: ['Arbeit', '#arbeit', 'Bank'] }));
+  r = ok(await call('create_note', { title: 'Projekt', body: '? Welche Bank?\n- [ ] Angebot einholen >2026-10-20\n  - [ ] Bank anrufen\n?! Variante A oder B? @anna (@ben)', tags: ['Arbeit', '#arbeit', 'Bank'] }));
   const pid = S(r).id;
   assert.ok(Number.isInteger(pid));
   assert.deepEqual(S(r).tags, ['Arbeit', 'Bank']);
@@ -1184,7 +1184,7 @@ async function runAgentProgram(browser, part, step) {
     rv = await c.request('tools/call', { name: 'create_note_from_template', arguments: { template_id: 'Aufgabe.md', values: { Beschreibung: 'Offerte einholen', wer: 'anna' } } });
     assert.match(rv.result.content[0].text, /^Created note \[4\] "Offerte einholen" from template "Aufgabe" at the root\.$/, 'Werte für die ausfüllbaren Platzhalter (v2.12.0)');
     rv = await c.request('tools/call', { name: 'get_note', arguments: { id: 4 } });
-    assert.match(JSON.stringify(rv.result.structuredContent), /- \[ \] Offerte einholen @anna @\{\{\?Bis wann: \d{1,2}\.\d{1,2}\.\d{4}\}\}/, 'nicht gegebene bleiben offen, mit Vorschlag');
+    assert.match(JSON.stringify(rv.result.structuredContent), /- \[ \] Offerte einholen @anna >\{\{\?Bis wann: \d{1,2}\.\d{1,2}\.\d{4}\}\}/, 'nicht gegebene bleiben offen, mit Vorschlag');
     assert.equal(await c.stop(), 0);
     const own = path.join(tmp, 'eigene');
     fs.mkdirSync(own);
@@ -1231,7 +1231,7 @@ async function runEntries(browser, part, step) {
 
   const BODY = [
     'Intro',                                                         // 0
-    '?!``` Ablage auf SharePoint umstellen @anna @15.11.2026',       // 1
+    '?!``` Ablage auf SharePoint umstellen @anna >15.11.2026',       // 1
     'Ab 1.11. liegen alle Projektordner auf SharePoint.',            // 2
     '- Altdaten bleiben bis Ende Jahr lesbar',                       // 3
     '?! Wer migriert die Altdaten? @ben',                            // 4
@@ -1427,7 +1427,7 @@ async function runEntries(browser, part, step) {
   // ---------- Blöcke in Listen (v2.6.0) ----------
   const LIST = [
     '- Projekt A',                                                   // 0
-    '  - ?!``` Welches Ticketsystem? @anna @15.11.2026',             // 1
+    '  - ?!``` Welches Ticketsystem? @anna >15.11.2026',             // 1
     '    Wir brauchen bis Ende Jahr eines.',                         // 2
     '    - Variante A: günstig',                                     // 3
     '    ?! Budget freigeben? @ben',                                 // 4
@@ -1588,13 +1588,13 @@ async function runTemplates(browser, part, step) {
   assert.equal(fill('{{datum:kurz}} | {{datum:mittel}} | {{datum:lang}} | {{datum:voll}} | {{datum:iso}} | {{datum+7:ISO}}'), '20.10.26 | 20.10.2026 | 20. Oktober 2026 | Dienstag, 20. Oktober 2026 | 2026-10-20 | 2026-10-27', 'Stile über Intl.DateTimeFormat');
   assert.equal(fill('{{datum:lang}}', { locale: 'fr-CH' }), '20 octobre 2026', 'Sprache aus dem Kontext');
   assert.equal(fill('{{datum:}} {{zeit:hh.mm}} {{ich:x}} {{unbekannt:x}} {{datum:x}}'), '20.10.2026 {{zeit:hh.mm}} {{ich:x}} {{unbekannt:x}} x', 'leeres Format: übliche Schreibweise; Format an anderen Platzhaltern lässt sie stehen; ohne Kürzel bleibt der Text');
-  assert.equal(fill('- [ ] Offerte @{{datum+7:JJJJ-MM-TT}}'), '- [ ] Offerte @2026-10-27', 'als Termin');
+  assert.equal(fill('- [ ] Offerte >{{datum+7:JJJJ-MM-TT}}'), '- [ ] Offerte >2026-10-27', 'als Termin');
   assert.equal(T.formatDate(new Date(2026, 0, 2), 'TTT, TT.MM.', 'en-GB'), 'Fri, 02.01.', 'formatDate einzeln, Namen in der angegebenen Sprache');
   part('Datumsformate: Kürzel deutsch und englisch, führende Nullen, Wochentag und Monat, Text in Hochkommas, Stile, Sprache, Fehlfälle');
 
   // ---------- Aus Notizen ----------
   const nodes = [
-    { depth: 2, title: 'Sitzung 20.10.2026', tags: ['sitzung'], body: '- [x] Protokoll genehmigt\n? Budget? @15.11.2026\n! 20k\n![Bild](att:3)\nText ![b](att:4) mehr\n```\n! bleibt im Code\n- [x] auch\n```' },
+    { depth: 2, title: 'Sitzung 20.10.2026', tags: ['sitzung'], body: '- [x] Protokoll genehmigt\n? Budget? >15.11.2026\n! 20k\n![Bild](att:3)\nText ![b](att:4) mehr\n```\n! bleibt im Code\n- [x] auch\n```' },
     { depth: 3, title: 'Beschlüsse', tags: [], body: '?! Variante? @anna\n!! 20.10.2026: B' },
     { depth: 4, title: 'Details', tags: ['x'], body: 'am 2026-10-20, nicht am 2026-10-21' },
     { depth: 3, title: 'Pendenzen', tags: [], body: '- [ ] {{ich}} bis {{datum+7}}' },
@@ -1614,7 +1614,7 @@ async function runTemplates(browser, part, step) {
   assert.equal(r.template.name, 'Sitzung {{datum}}');
   r = json(T.fromNotes(nodes, { name: 'Nur oben', children: false, stripAnswers: false, reopenTasks: false }));
   assert.equal(r.template.notes.length, 1);
-  assert.match(r.template.notes[0].body, /^- \[x\] Protokoll genehmigt\n\? Budget\? @15\.11\.2026\n! 20k/, 'ohne Bereinigen bleibt alles');
+  assert.match(r.template.notes[0].body, /^- \[x\] Protokoll genehmigt\n\? Budget\? >15\.11\.2026\n! 20k/, 'ohne Bereinigen bleibt alles');
   assert.throws(() => T.fromNotes([], {}), e => e.code === 'TEMPLATE_EMPTY');
   const one = body => json(T.fromNotes([{ depth: 0, title: 'X', tags: [], body }], {})).template.notes[0].body;
   assert.equal(one('?!``` Block\n- [x] Im Block\n?! Unter\n!! Ja\n```\n!! Antwort des Blocks\n- [x] Danach'), '?!``` Block\n- [ ] Im Block\n?! Unter\n```\n- [ ] Danach', 'das "```" eines Blocks öffnet keinen Code: seine Antwort fällt weg (v2.6.0)');
@@ -1651,7 +1651,7 @@ async function runTemplates(browser, part, step) {
   assert.deepEqual(tree.filter(n => n.parent_id === id).map(n => n.title), ['Entscheide', 'Offene Fragen'], 'Unternotizen in ihrer Reihenfolge');
   assert.deepEqual(json(await B.getTags(id)), ['sitzung']);
   const created = json(await B.getNote(id));
-  assert.ok(created.body.includes('**Protokoll:** @anna1234') && created.body.includes('- [ ] … @27.10.2026') && created.body.includes('**Datum:** Dienstag, 20. Oktober 2026, 09:05'), created.body);
+  assert.ok(created.body.includes('**Protokoll:** @anna1234') && created.body.includes('- [ ] … >27.10.2026') && created.body.includes('**Datum:** Dienstag, 20. Oktober 2026, 09:05'), created.body);
   assert.equal(json(await B.listTasks({ status: 'open' })).find(tk => tk.note_id === id).due, '2026-10-27', 'Termin aus {{datum+7}} zählt');
   const deep = { name: 'Tief', notes: [{ depth: 0, title: 'A', tags: [], body: 'Oben' }, { depth: 1, title: 'B', tags: [], body: '' }, { depth: 2, title: 'C', tags: [], body: '' }, { depth: 1, title: 'D', tags: [], body: '' }] };
   const ins = await T.insert(B, deep, parent, 'Hier: X', 6, { now }, {});
@@ -1921,7 +1921,7 @@ async function runCellsPeople(browser, part, step) {
 
   // ---------- Personen an Aufgaben ----------
   const LIST = [
-    '- [ ] Offerte einholen @anna (@ben) @15.11.2026', // 0
+    '- [ ] Offerte einholen @anna (@ben) >15.11.2026', // 0
     '  - [ ] Preise vergleichen',                      // 1: erbt anna und ben
     '    - [ ] Tabelle machen',                        // 2: erbt (über 1) von 0
     '  - [x] Lieferant fragen @cem',                   // 3: eigene Person
@@ -1946,7 +1946,7 @@ async function runCellsPeople(browser, part, step) {
     '',                                                                                      // 1
     '| Thema | Aufgaben | Klärung |',                                                        // 2
     '|---|---|---|',                                                                         // 3
-    '| Lieferant | [ ] Offerten @anna @20.11.2026<br>[x] Liste erstellt | ?! Wer liefert? @ben<br>!! 14.10.2026: Müller |', // 4
+    '| Lieferant | [ ] Offerten @anna >20.11.2026<br>[x] Liste erstellt | ?! Wer liefert? @ben<br>!! 14.10.2026: Müller |', // 4
     '| Budget | [ ] Antrag schreiben (@cem) | ? Reicht 5000?<br>? Wer zahlt? |',            // 5
     '| Text | nur Text<br>zweite Zeile | |',                                                // 6
     '',                                                                                      // 7
@@ -1972,9 +1972,9 @@ async function runCellsPeople(browser, part, step) {
   ], 'Fragen und Entscheide in Feldern, Antwort im selben Feld');
   // abhaken nach slot, nur das richtige Kästchen
   let b = T.setDone(TABLE, 4, true, 0);
-  assert.equal(b.split('\n')[4], '| Lieferant | [x] Offerten @anna @20.11.2026<br>[x] Liste erstellt | ?! Wer liefert? @ben<br>!! 14.10.2026: Müller |');
+  assert.equal(b.split('\n')[4], '| Lieferant | [x] Offerten @anna >20.11.2026<br>[x] Liste erstellt | ?! Wer liefert? @ben<br>!! 14.10.2026: Müller |');
   b = T.reopen(b, 4, 1);
-  assert.equal(b.split('\n')[4], '| Lieferant | [x] Offerten @anna @20.11.2026<br>[ ] Liste erstellt | ?! Wer liefert? @ben<br>!! 14.10.2026: Müller |');
+  assert.equal(b.split('\n')[4], '| Lieferant | [x] Offerten @anna >20.11.2026<br>[ ] Liste erstellt | ?! Wer liefert? @ben<br>!! 14.10.2026: Müller |');
   assert.equal(T.openSubtasks(TABLE, 4, 0), 0, 'keine Unteraufgaben in Feldern');
   assert.equal(T.doubleClick(TABLE, 5, 0).body.split('\n')[5], '| Budget | [x] Antrag schreiben (@cem) | ? Reicht 5000?<br>? Wer zahlt? |');
   // Antwort ins Feld, Tabelle neu ausgerichtet
@@ -2218,7 +2218,7 @@ async function runReleaseNotes(browser, part, step) {
       date: '2026-11-02T09:00:00+01:00',
       async run(s) {
         await s.newNote('Projekt Süd');
-        await s.edit('Projekt Süd', { body: '- [ ] Angebot einholen @anna @03.11.2026', mode: 'preview' });
+        await s.edit('Projekt Süd', { body: '- [ ] Angebot einholen @anna >03.11.2026', mode: 'preview' });
         await s.shot('vorschau');
         await s.shot('aufgabe', { locator: '.preview li', pad: 4 });
         await s.back();
@@ -2332,7 +2332,7 @@ async function runPlaceholdersCore(browser, part, step) {
   part('Beschreibungen: sammeln (nicht aus anderem Code), anhängen nur für vorkommende Namen, wegräumen ohne Platzhalter, Druck und Export');
 
   // Vorschau und Druck
-  const html = M.render('- [ ] {{?Was: Offerte}} @{{?Wer: anna}} @{{?Bis: 31.10.2026}}\n\nZiel: {{?Ziel}}\n\n```template-description Ziel\ngeheim\n```');
+  const html = M.render('- [ ] {{?Was: Offerte}} @{{?Wer: anna}} >{{?Bis: 31.10.2026}}\n\nZiel: {{?Ziel}}\n\n```template-description Ziel\ngeheim\n```');
   assert.ok(html.includes('<span class="md-ph" data-ph="Was"'), 'frei stehend: Platzhalter');
   assert.ok(html.includes('class="md-person" data-handle="anna"') && /md-due[^>]*>31\.10\.2026/.test(html), 'Person und Termin wirken');
   assert.ok(html.includes('<span class="md-ph open" data-ph="Ziel"') && !html.includes('geheim'), 'offen gelb, Beschreibung unsichtbar');
@@ -2345,7 +2345,7 @@ async function runPlaceholdersCore(browser, part, step) {
   const db = sandbox.NoNotesDB.open(SQL, null);
   const B = sandbox.NoNotesBackendLocal.create({ getDb: () => db, onChange: () => {} });
   const id = await B.createNote(null);
-  await B.updateNote(id, 'Aufgabe', '- [ ] {{?Was: Offerte}} @{{?Wer: anna}} @{{?Bis: 31.10.2026}}\n? {{?Frage: Budget?}} @{{?An: ben}}\n- [ ] {{?Offen}}', {});
+  await B.updateNote(id, 'Aufgabe', '- [ ] {{?Was: Offerte}} @{{?Wer: anna}} >{{?Bis: 31.10.2026}}\n? {{?Frage: Budget?}} @{{?An: ben}}\n- [ ] {{?Offen}}', {});
   const tasks = json(await B.listTasks({ status: 'all' }));
   assert.deepEqual(tasks.map(t => [t.text, t.due, t.people.map(p => p.handle)]), [['Offerte @anna', '2026-10-31', ['anna']], ['[Offen]', null, []]]);
   const qs = json(await B.listQuestions({ status: 'all' }));
@@ -2362,18 +2362,18 @@ async function runPlaceholdersCore(browser, part, step) {
   part('Export: Werte, offene als [Name], ohne Beschreibungen');
 
   // Vorlagen: Kopf, Beschreibungen an jede Notiz, die den Platzhalter hat; Einfügen hängt sie ans Ende
-  const tpl = T.parse('---\nnonotes: 1\nname: "P"\ntitle: "Projekt {{?Kunde}}"\nplaceholders: "behalten"\n---\nKunde {{?Kunde}}, Termin @{{?Bis: {{datum+7}}}}\n```template-description Kunde\nFirma\n```\n```template-description Bis\nDatum\n```\n<!-- nonotes:note {"depth":1,"title":"Offerte","tags":[]} -->\nFür {{?Kunde}}\n<!-- nonotes:note {"depth":1,"title":"Leer","tags":[]} -->\nnichts', 'p.md');
+  const tpl = T.parse('---\nnonotes: 1\nname: "P"\ntitle: "Projekt {{?Kunde}}"\nplaceholders: "behalten"\n---\nKunde {{?Kunde}}, Termin >{{?Bis: {{datum+7}}}}\n```template-description Kunde\nFirma\n```\n```template-description Bis\nDatum\n```\n<!-- nonotes:note {"depth":1,"title":"Offerte","tags":[]} -->\nFür {{?Kunde}}\n<!-- nonotes:note {"depth":1,"title":"Leer","tags":[]} -->\nnichts', 'p.md');
   assert.equal(tpl.placeholders, 'keep', 'behalten/keep');
   assert.match(T.toMarkdown(tpl), /\nplaceholders: "keep"\n---\n/);
   const now = new Date(2026, 9, 20, 9, 5);
   const ids = await T.create(B, tpl, null, { now });
   const n0 = json(await B.getNote(ids[0])), n1 = json(await B.getNote(ids[1])), n2 = json(await B.getNote(ids[2]));
   assert.equal(n0.title, 'Projekt {{?Kunde}}');
-  assert.equal(n0.body, 'Kunde {{?Kunde}}, Termin @{{?Bis: 27.10.2026}}\n\n```template-description Kunde\nFirma\n```\n```template-description Bis\nDatum\n```\n', 'automatischer Vorschlag, Beschreibungen am Ende');
+  assert.equal(n0.body, 'Kunde {{?Kunde}}, Termin >{{?Bis: 27.10.2026}}\n\n```template-description Kunde\nFirma\n```\n```template-description Bis\nDatum\n```\n', 'automatischer Vorschlag, Beschreibungen am Ende');
   assert.equal(n1.body, 'Für {{?Kunde}}\n\n```template-description Kunde\nFirma\n```\n', 'die Unternotiz hat ihre Beschreibung');
   assert.equal(n2.body, 'nichts', 'ohne Platzhalter keine Beschreibung');
   const ins = await T.insert(B, tpl, id, 'Oben\nUnten', 5, { now });
-  assert.equal(ins.body.slice(ins.start, ins.caret), 'Kunde {{?Kunde}}, Termin @{{?Bis: 27.10.2026}}', 'start und caret umfassen das Eingefügte');
+  assert.equal(ins.body.slice(ins.start, ins.caret), 'Kunde {{?Kunde}}, Termin >{{?Bis: 27.10.2026}}', 'start und caret umfassen das Eingefügte');
   assert.ok(ins.body.endsWith('Unten\n\n```template-description Kunde\nFirma\n```\n```template-description Bis\nDatum\n```\n'), 'Beschreibungen am Ende der Notiz');
   const filled = await T.create(B, tpl, null, { now }, { values: { kunde: 'Muster AG' }, keep: true });
   assert.equal(json(await B.getNote(filled[0])).title, 'Projekt Muster AG');
@@ -2391,13 +2391,223 @@ async function runPlaceholdersCore(browser, part, step) {
   assert.ok(!res.isError, res.content[0].text);
   let made = json(await B.getNote(json(res.structuredContent).id));
   assert.equal(made.title, 'Projekt Beta GmbH');
-  assert.equal(made.body.split('\n')[0], 'Kunde Beta GmbH, Termin @1.12.2026', 'ohne Einstellung: nur die Werte');
+  assert.equal(made.body.split('\n')[0], 'Kunde Beta GmbH, Termin >1.12.2026', 'ohne Einstellung: nur die Werte');
   await B.setMeta('templates.keepPlaceholders', '1');
   res = await cat.call('create_note_from_template', { template_id: 'q', values: { Kunde: 'Gamma' } });
   made = json(await B.getNote(json(res.structuredContent).id));
-  assert.equal(made.body.split('\n')[0], 'Kunde {{?Kunde: Gamma}}, Termin @{{?Bis: 27.10.2026}}', 'mit Einstellung: behalten; ohne Wert bleibt der Vorschlag');
+  assert.equal(made.body.split('\n')[0], 'Kunde {{?Kunde: Gamma}}, Termin >{{?Bis: 27.10.2026}}', 'mit Einstellung: behalten; ohne Wert bleibt der Vorschlag');
   assert.match(sandbox.NoNotesAgent.INSTRUCTIONS, /"\{\{\?Name\}\}" is a fill-in placeholder/);
   part('Agenten: Felder mit Vorschlag und Beschreibung, Werte beim Anlegen, «behalten» aus der Einstellung, Hinweis in den Anweisungen');
+}
+
+// ============================================================
+/* Termine mit «>» (v3.0.0): Schreibweise, Frist und Erinnerungen, Umstellung alter Texte (gleiche Länge, nicht in Code), Schema 17
+   mit Sicherungsangaben, Umschreiben beim Speichern, Index, Kalender (VALARM), Agenten, Programm mit Sicherung, Seiten der Hauptäste. */
+async function runDatesV3(browser, part, step) {
+  const sandbox = { console, TextEncoder, crypto: globalThis.crypto };
+  sandbox.window = sandbox;
+  const context = vm.createContext(sandbox);
+  for (const f of ['packages/core/i18n.js', 'packages/core/placeholders.js', 'packages/core/history.js', 'packages/core/dates.js', 'packages/core/questions.js',
+    'packages/core/tables.js', 'packages/core/tasks.js', 'packages/core/links.js', 'packages/core/embeds.js', 'packages/core/markdown.js', 'packages/core/backend.js',
+    'packages/core/merge.js', 'packages/core/templates.js', 'packages/core/ical.js', 'packages/data/db.js', 'packages/store-local/backend-local.js', 'packages/agent/catalog.js']) {
+    vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
+  }
+  const D = sandbox.NoNotesDates, DB = sandbox.NoNotesDB, M = sandbox.NoNotesMarkdown;
+  const json = v => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
+  const SQL = await initSqlJs();
+
+  // ---------- Schreibweise ----------
+  const sd = t => json(D.splitDue(t));
+  assert.deepEqual(sd('Offerte einholen @anna >30.10.2026 >6.11.2026'), { text: 'Offerte einholen @anna', due: '2026-11-06', reminders: ['2026-10-30'], legacy: false });
+  assert.deepEqual(sd('Offerte >6.11.2026 >30.10.2026 14:00'), { text: 'Offerte', due: '2026-11-06', reminders: ['2026-10-30T14:00'], legacy: false }, 'der späteste ist die Frist, gleich wo er steht');
+  assert.deepEqual(sd('Termin >2026-11-06 14:30'), { text: 'Termin', due: '2026-11-06T14:30', reminders: [], legacy: false });
+  assert.deepEqual(sd('Doppelt >6.11.2026 >06.11.2026'), { text: 'Doppelt', due: '2026-11-06', reminders: [], legacy: false }, 'gleiche Termine einmal');
+  assert.deepEqual(sd('Alt @anna @6.11.2026'), { text: 'Alt @anna', due: '2026-11-06', reminders: [], legacy: true }, '@Datum gilt weiter');
+  for (const t of ['a > b', 'Pfeil ->6.11.2026', 'Doppelpfeil =>6.11.2026', 'mitten >6.11.2026 im Satz', 'kein Datum >morgen']) {
+    assert.equal(sd(t).due, null, `kein Termin: ${t}`);
+  }
+  assert.equal(D.toText('2026-11-06'), '06.11.2026');
+  assert.equal(D.toText('2026-11-06T09:05'), '06.11.2026 09:05');
+  assert.equal(D.nextReminder(['2026-10-20', '2026-10-30'], '2026-10-27T08:00'), '2026-10-30');
+  assert.equal(D.nextReminder(['2026-10-20'], '2026-10-27T08:00'), null);
+  part('Schreibweise: >Datum am Zeilenende, mehrere, der späteste ist die Frist, Uhrzeit, @Datum gilt weiter, kein Termin bei a > b, -> und mitten im Satz');
+
+  // ---------- Umschreiben ----------
+  const before = [
+    '- [ ] Offerte @anna @30.10.2026 @6.11.2026 14:00',
+    '? Budget? @2026-11-01',
+    'Mail an anna@6.11.2026 bleibt',
+    'Text @6.11.2026 mitten',
+    '`- [ ] im Code @6.11.2026`',
+    '```',
+    '- [ ] im Block @6.11.2026',
+    '```',
+    '| Wer | Was |',
+    '|---|---|',
+    '| anna | [ ] Plan @6.11.2026<br>[ ] Liste @7.11.2026 |',
+    '- [ ] Vorlage @{{datum+7}} und @{{?Bis wann: {{datum+7}}}}',
+    '- [ ] Person bleibt @{{?Wer: anna}}',
+    'Satz endet @6.11.2026',
+  ].join('\n');
+  const after = D.rewriteLegacy(before);
+  assert.equal(after.length, before.length, 'gleiche Länge (die Fassungen im Verlauf passen weiter)');
+  assert.deepEqual(after.split('\n'), [
+    '- [ ] Offerte @anna >30.10.2026 >6.11.2026 14:00',
+    '? Budget? >2026-11-01',
+    'Mail an anna@6.11.2026 bleibt',
+    'Text @6.11.2026 mitten',
+    '`- [ ] im Code @6.11.2026`',
+    '```',
+    '- [ ] im Block @6.11.2026',
+    '```',
+    '| Wer | Was |',
+    '|---|---|',
+    '| anna | [ ] Plan >6.11.2026<br>[ ] Liste >7.11.2026 |',
+    '- [ ] Vorlage @{{datum+7}} und >{{?Bis wann: {{datum+7}}}}',
+    '- [ ] Person bleibt @{{?Wer: anna}}',
+    'Satz endet >6.11.2026',
+  ]);
+  assert.equal(D.rewriteLegacy('- [ ] Vorlage @{{datum+7}}'), '- [ ] Vorlage >{{datum+7}}', 'automatischer Platzhalter am Ende');
+  assert.equal(D.rewriteLegacy(after), after, 'ein zweites Mal ändert nichts');
+  assert.ok(D.hasLegacy(before) && !D.hasLegacy(after));
+  part('Umschreiben: @Datum am Zeilenende zu >Datum, auch mehrere, in Tabellenfeldern und Vorlagen; gleiche Länge; nicht in Code, nicht mitten im Text, nicht an Wörtern');
+
+  // ---------- Umstellung einer Datei von v2.x (Schema 16) ----------
+  {
+    const d = DB.open(SQL, null);
+    const id = DB.createNote(d, null);
+    const body16 = '- [ ] Offerte @anna @30.10.2026 @6.11.2026\n? Budget? @1.11.2026 09:00\n```\n@6.11.2026\n```';
+    const rewrite = D.rewriteLegacy;
+    D.rewriteLegacy = x => x; // speichern wie v2.12, mit einer älteren Fassung im Verlauf
+    DB.updateNote(d, id, 'Projekt', '- [ ] Erst @anna @1.11.2026');
+    DB.updateNote(d, id, 'Projekt', body16, { newVersion: true });
+    D.rewriteLegacy = rewrite;
+    const plain = DB.createNote(d, null);
+    d.run("UPDATE notes SET title = 'Ohne', body = 'nichts @ hier', updated_at = '2026-01-01T00:00:00.000Z' WHERE id = ?", [plain]);
+    d.exec("ALTER TABLE tasks DROP COLUMN reminders; ALTER TABLE questions DROP COLUMN reminders; ALTER TABLE notes DROP COLUMN side; UPDATE meta SET value = '16' WHERE key = 'schema_version'; DELETE FROM meta WHERE key = 'dates_migrated_at'");
+    const bytes = d.export();
+    const updatedBefore = d.exec('SELECT updated_at FROM notes WHERE id = ' + id)[0].values[0][0];
+    d.close();
+    assert.deepEqual(json(DB.inspect(SQL, bytes)), { version: 16, legacyNotes: 1 }, 'inspect zählt die Notizen mit @Datum, ohne zu ändern');
+    const info = {};
+    const m = DB.open(SQL, bytes, info);
+    assert.deepEqual(json(info), { upgradedFrom: 16, rewritten: 1 });
+    assert.equal(DB.getMeta(m, 'schema_version'), SCHEMA_VERSION);
+    const note = DB.getNote(m, id);
+    assert.equal(note.body, '- [ ] Offerte @anna >30.10.2026 >6.11.2026\n? Budget? >1.11.2026 09:00\n```\n@6.11.2026\n```');
+    assert.equal(note.updated_at, updatedBefore, '«Geändert» bleibt');
+    assert.ok(DB.getMeta(m, 'dates_migrated_at'), 'Zeitpunkt der Umstellung für den Verlauf');
+    assert.equal(String(DB.getMeta(m, 'dates_migrated_notes')), '1');
+    const task = json(DB.listTasks(m, { status: 'open' })).find(r => r.text.startsWith('Offerte'));
+    assert.equal(task.due, '2026-11-06');
+    assert.deepEqual(task.reminders, ['2026-10-30']);
+    const q = json(DB.listQuestions(m, { status: 'open' }))[0];
+    assert.equal(q.due, '2026-11-01T09:00');
+    assert.deepEqual(q.reminders, []);
+    const versions = json(DB.listHistory(m, id));
+    assert.ok(versions.length >= 1, 'Verlauf bleibt');
+    assert.ok(DB.getHistoryVersion(m, id, versions[0].id).body.includes('Erst @anna'), 'ältere Fassung lässt sich weiter herstellen');
+    assert.equal(json(DB.inspect(SQL, DB.exportBytes(m))).version, 17);
+    m.close();
+  }
+  part('Umstellung Schema 16 → 17: inspect vorher, alle @Datum zu >Datum, nicht in Code, «Geändert» und Verlauf bleiben, Zeitpunkt in meta, Index mit Frist und Erinnerungen');
+
+  // ---------- Speichern, Index, Vorschau, Kalender ----------
+  const d = DB.open(SQL, null);
+  const B = sandbox.NoNotesBackendLocal.create({ getDb: () => d });
+  const id = await B.createNote(null);
+  await B.updateNote(id, 'Plan', '- [ ] Offerte @anna @6.11.2026 >30.10.2026\n? Lieferant? >3.11.2026 >10.11.2026 14:00', {});
+  assert.equal(json(await B.getNote(id)).body, '- [ ] Offerte @anna >6.11.2026 >30.10.2026\n? Lieferant? >3.11.2026 >10.11.2026 14:00', 'Speichern schreibt @Datum still zu >Datum um');
+  const tasks = json(await B.listTasks({ status: 'open' }));
+  assert.deepEqual([tasks[0].due, tasks[0].reminders], ['2026-11-06', ['2026-10-30']]);
+  const gt = json(await B.getTask(tasks[0].id));
+  assert.deepEqual(gt.reminders, ['2026-10-30']);
+  const qs = json(await B.listQuestions({ status: 'open' }));
+  assert.deepEqual([qs[0].due, qs[0].reminders], ['2026-11-10T14:00', ['2026-11-03']]);
+  const html = M.render(json(await B.getNote(id)).body);
+  assert.equal((html.match(/md-reminder/g) || []).length, 2, 'je Erinnerung ein kleines Abzeichen');
+  assert.ok(html.includes('data-date="2026-11-06"') && html.includes('data-date="2026-10-30"'), 'Abzeichen anklickbar (Datum dabei)');
+  assert.ok(!html.includes('&gt;30.10.2026') && !html.includes('@6.11.2026'), 'die Termine stehen nicht als Text in der Vorschau');
+  const { ics } = await sandbox.NoNotesCalendar.build(B, { dryRun: true, now: '2026-10-27T08:00:00Z' });
+  const alarms = ics.split('\r\n').filter(l => l.startsWith('TRIGGER;VALUE=DATE-TIME:'));
+  assert.equal(alarms.length, 2, 'je Erinnerung ein Alarm zum festen Zeitpunkt');
+  assert.ok(alarms.some(l => /:20261030T\d{4}00Z$/.test(l)) && alarms.some(l => /:20261103T\d{4}00Z$/.test(l)), alarms.join(' | '));
+  part('Speichern: @Datum wird >Datum; Index, Aufgabe und Frage mit Frist und Erinnerungen; Vorschau mit Abzeichen und Glocke; Kalender mit VALARM');
+
+  // ---------- Agenten ----------
+  const A = sandbox.NoNotesAgent;
+  assert.match(A.INSTRUCTIONS, /after ">"/);
+  assert.match(A.INSTRUCTIONS, /latest is the deadline/);
+  const agent = A.create(B);
+  let r = await agent.call('list_tasks', {});
+  assert.deepEqual(json(r.structuredContent.items[0].reminders), ['2026-10-30']);
+  assert.match(r.content[0].text, /due 2026-11-06 — reminders 2026-10-30/);
+  r = await agent.call('list_questions', {});
+  assert.deepEqual(json(r.structuredContent.items[0].reminders), ['2026-11-03']);
+  r = await agent.call('append_to_note', { id, text: '- [ ] Von Claude @ben @1.12.2026' });
+  assert.ok(!r.isError, JSON.stringify(r));
+  assert.ok(json(await B.getNote(id)).body.endsWith('- [ ] Von Claude @ben >1.12.2026'), 'auch ein Agent mit alter Anleitung schreibt am Ende >Datum');
+  part('Agenten: Anleitung erklärt >, Frist und Erinnerungen; list_tasks und list_questions liefern reminders; @Datum vom Agenten wird >Datum');
+
+  // ---------- Seiten der Hauptäste in der Mindmap ----------
+  const a1 = await B.createNote(null), a2 = await B.createNote(null), child = await B.createNote(a1);
+  const side = async nid => json(await B.getTree({})).find(x => x.id === nid).side;
+  assert.equal(await side(a1), null, 'neu ohne Seite: die Mindmap wählt sie');
+  await B.setSides({ [a1]: 'left', [a2]: 'right', [id]: 'bogus' });
+  assert.deepEqual([await side(a1), await side(a2), await side(id)], ['left', 'right', null]);
+  await B.moveNote(child, a2, 'after');
+  assert.equal(await side(child), 'right', 'neben einen Hauptast: auf seine Seite');
+  await B.setParent(child, a1);
+  assert.equal(await side(child), null, 'unter einer Notiz gilt keine Seite');
+  await B.deleteNote(a1);
+  assert.equal(await side(child), 'left', 'rückt an die Wurzel: auf die Seite des gelöschten Hauptasts');
+  part('Seiten der Hauptäste: setSides, getTree, neben einen Hauptast, unter eine Notiz, nach dem Löschen des Elternknotens');
+
+  // ---------- Programm: Sicherung vor dem ersten Schreiben einer Datei von v2.x ----------
+  {
+    const { spawn } = require('node:child_process');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nonotes-v3-'));
+    const file = path.join(tmp, 'Team.sqlite');
+    const old = DB.open(SQL, null);
+    const nid = DB.createNote(old, null);
+    old.run("UPDATE notes SET title = 'Alt', body = '- [ ] Alt @1.12.2026' WHERE id = ?", [nid]);
+    old.exec("ALTER TABLE notes DROP COLUMN side; UPDATE meta SET value = '16' WHERE key = 'schema_version'");
+    const oldBytes = Buffer.from(old.export());
+    old.close();
+    fs.writeFileSync(file, oldBytes);
+    const p = spawn(process.execPath, [path.join(DIST, 'agent', 'nonotes-mcp.cjs'), '--file', file], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '';
+    p.stdout.on('data', x => { out += x; });
+    const answer = n => new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      const look = () => {
+        const line = out.split('\n').find(l => l.includes(`"id":${n}`));
+        if (line) resolve(JSON.parse(line));
+        else if (Date.now() - t0 > 20000) reject(new Error('keine Antwort: ' + out));
+        else setTimeout(look, 30);
+      };
+      look();
+    });
+    const send = (n, method, params) => p.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: n, method, params }) + '\n');
+    send(1, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
+    await answer(1);
+    send(2, 'tools/call', { name: 'list_tasks', arguments: {} });
+    const listed = await answer(2);
+    assert.equal(listed.result.structuredContent.items[0].due, '2026-12-01', 'liest die alte Datei');
+    assert.ok(!fs.existsSync(path.join(tmp, 'Team-vor-3.0.0.sqlite')), 'Lesen allein schreibt nichts');
+    send(3, 'tools/call', { name: 'append_to_note', arguments: { id: nid, text: 'Neu' } });
+    await answer(3);
+    await new Promise(resolve => { p.on('exit', resolve); p.stdin.end(); });
+    const backup = path.join(tmp, 'Team-vor-3.0.0.sqlite');
+    assert.ok(fs.existsSync(backup), 'Sicherung neben der Datei');
+    assert.deepEqual(fs.readFileSync(backup), oldBytes, 'die Sicherung ist der alte Stand');
+    const now = new SQL.Database(fs.readFileSync(file));
+    assert.equal(now.exec("SELECT value FROM meta WHERE key = 'schema_version'")[0].values[0][0], SCHEMA_VERSION);
+    assert.equal(now.exec('SELECT body FROM notes WHERE id = ' + nid)[0].values[0][0], '- [ ] Alt >1.12.2026\nNeu');
+    now.close();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  part('Programm: eine Datei von v2.x wird gelesen; vor dem ersten Schreiben liegt der alte Stand als …-vor-3.0.0.sqlite daneben');
 }
 
 suite('Kern-Test', [
@@ -2413,5 +2623,6 @@ suite('Kern-Test', [
   { name: 'Personen an Aufgaben und Tabellenfelder: Parser, Editor, Vorschau, Index (Schema 16), Abhaken, Antwort ins Feld, Agenten, Export-Abschnitte', run: runCellsPeople },
   { name: 'Agenten: Werkzeugkatalog (Notizen, Fragen, Entscheide, Aufgaben, Verlauf, Archiv, Papierkorb, Lesemodus, Ressourcen) und MCP-Protokoll aller Fassungen', run: runAgent },
   { name: 'Programm für den eigenen Rechner: Einträge für Claude Code und andere, Datei, MCP über die Standardeingabe, Änderungen von aussen, zwei Prozesse mit Sperre, Lesemodus', run: runAgentProgram },
+  { name: 'Termine mit «>» (v3.0.0): Schreibweise, Frist und Erinnerungen, Umstellung alter Dateien, Speichern, Index, Vorschau, Kalender, Agenten, Programm mit Sicherung, Seiten der Mindmap', run: runDatesV3 },
   { name: 'Release-Notizen: Pflicht ab v2.12.0, Prüfung, Beschreibung für GitHub, Screenshots aus einem Drehbuch, alle Ordner im Repository', run: runReleaseNotes },
 ]);

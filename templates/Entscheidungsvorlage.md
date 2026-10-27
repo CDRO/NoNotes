@@ -5,7 +5,7 @@ description: "Mehrzeiliger Entscheid mit Ausgangslage, Varianten, Empfehlung und
 title: "Entscheid: …"
 tags: ["entscheid"]
 ---
-?!``` Entscheid: … @{{datum+14}}
+?!``` Entscheid: … >{{datum+14}}
 **Ausgangslage:** …
 
 **Varianten**

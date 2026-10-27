@@ -15,12 +15,22 @@ const state = { part: null };
 const step = name => console.log('  ✓ ' + name);
 const part = name => { state.part = name; if (process.env.NONOTES_TEST_VERBOSE) console.log('      · ' + name); };
 
+/** Seit v3.0.0 gleiten Knoten der Mindmap kurz an ihren neuen Platz. Die Tests messen Positionen gleich nach dem Zeichnen; darum
+ *  laufen alle Seiten mit «Bewegung reduzieren» (ohne Gleiten), ausser ein Test verlangt ausdrücklich etwas anderes. */
+function calm(browser) {
+  const newContext = browser.newContext.bind(browser);
+  const newPage = browser.newPage.bind(browser);
+  browser.newContext = options => newContext(Object.assign({ reducedMotion: 'reduce' }, options));
+  browser.newPage = options => newPage(Object.assign({ reducedMotion: 'reduce' }, options));
+  return browser;
+}
+
 /** Führt die Abschnitte eines Laufs aus: { name, run(browser, part, step) }. Mit browser: true teilt sich der Lauf ein Chromium. */
 async function suite(title, sections, options) {
   let browser = null;
   const started = Date.now();
   try {
-    if (options && options.browser) browser = await loadPlaywright().chromium.launch();
+    if (options && options.browser) browser = calm(await loadPlaywright().chromium.launch());
     const only = process.env.NONOTES_TEST_ONLY; // nur Abschnitte, deren Name das Wort enthält (Entwicklung)
     for (const s of sections) {
       if (only && !(s.name || '').includes(only)) continue;

@@ -115,9 +115,19 @@ class FileStore {
 
   _open(bytes) {
     const { DB, SQL } = this.core;
-    const db = DB.open(SQL, new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+    const info = {};
+    const db = DB.open(SQL, new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength), info);
     if (this.db) { try { this.db.close(); } catch (e) { /* egal */ } }
     this.db = db;
+    // Eine Datei von NoNotes 2.x (Schema bis 16) stellt das Öffnen auf 3.0.0 um (Termine mit «>»). Vor dem ersten Schreiben kommt
+    // der alte Stand als Sicherung daneben, wie in der App; ältere Versionen öffnen die umgestellte Datei nicht mehr.
+    this.legacy = info.upgradedFrom != null && info.upgradedFrom < 17 ? Buffer.from(bytes) : null;
+  }
+
+  /** Pfad der Sicherung vor der Umstellung auf 3.0.0: NoNotes.sqlite → NoNotes-vor-3.0.0.sqlite (gleicher Ordner). */
+  backupFile() {
+    const ext = path.extname(this.file);
+    return path.join(path.dirname(this.file), `${path.basename(this.file, ext)}-vor-3.0.0${ext || '.sqlite'}`);
   }
 
   async open() {
@@ -160,6 +170,12 @@ class FileStore {
   write() {
     if (this.readOnly) throw Object.assign(new Error('Nur lesen.'), { code: 'READ_ONLY' });
     const bytes = Buffer.from(this.core.DB.exportBytes(this.db));
+    if (this.legacy) {
+      const backup = this.backupFile();
+      fs.writeFileSync(backup, this.legacy); // der letzte Stand vor der Umstellung
+      this.log(`Sicherung vor der Umstellung auf 3.0.0: ${backup}`);
+      this.legacy = null;
+    }
     const tmp = `${this.file}.${process.pid}.tmp`;
     try {
       fs.writeFileSync(tmp, bytes);
@@ -304,7 +320,8 @@ async function main() {
     if (src.file) { files.push(path.resolve(src.file)); continue; }
     let names;
     try { names = fs.readdirSync(src.dir); } catch (e) { console.error(`Ordner nicht lesbar: ${path.resolve(src.dir)}`); return 2; }
-    for (const n of names.filter(n => /\.(sqlite3?|db)$/i.test(n) && !n.startsWith('.')).sort((a, b) => a.localeCompare(b))) files.push(path.resolve(src.dir, n));
+    // ohne die Sicherungen vor der Umstellung auf 3.0.0 (…-vor-3.0.0.sqlite): sie sind kein eigener Bereich
+    for (const n of names.filter(n => /\.(sqlite3?|db)$/i.test(n) && !n.startsWith('.') && !/-vor-3\.0\.0\.[^.]+$/i.test(n)).sort((a, b) => a.localeCompare(b))) files.push(path.resolve(src.dir, n));
   }
   const unique = [...new Set(files)];
   if (!unique.length) { console.error(`${args.dirs.length ? 'Keine .sqlite-Datei im Ordner.' : '--file fehlt.'}\n\n${usage()}`); return 2; }

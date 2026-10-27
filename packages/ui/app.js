@@ -92,7 +92,7 @@
     exportBtn: $('#exportBtn'), exportDialog: $('#exportDialog'), exportForm: $('#exportForm'),
     exportDirBtn: $('#exportDirBtn'), exportZipBtn: $('#exportZipBtn'), exportHint: $('#exportHint'),
     attachBtn: $('#attachBtn'), attachInput: $('#attachInput'), attachments: $('#attachments'),
-    mapPrintBtn: $('#mapPrintBtn'), qPrintBtn: $('#qPrintBtn'), printBtn: $('#printBtn'), copyLinkBtn: $('#copyLinkBtn'),
+    mapPrintBtn: $('#mapPrintBtn'), mapCopyBtn: $('#mapCopyBtn'), qPrintBtn: $('#qPrintBtn'), printBtn: $('#printBtn'), copyLinkBtn: $('#copyLinkBtn'),
     multiBar: $('#multiBar'), multiCount: $('#multiCount'), multiPrintBtn: $('#multiPrintBtn'), multiClearBtn: $('#multiClearBtn'),
     printDialog: $('#printDialog'), printForm: $('#printForm'), printGoBtn: $('#printGoBtn'),
     printScopeCurrent: $('#printScopeCurrent'), printScopeSubtree: $('#printScopeSubtree'),
@@ -172,6 +172,7 @@
     qTag: '',
     qPerson: '',          // Filter «an @kürzel» in Fragen und Entscheiden
     mention: null,        // offene Vervollständigung @kürzel: { start, items, index }
+    dp: null,             // offene Datumsauswahl (v3.0.0): { start, end, edit }
     mentionSeq: 0,
     wiki: null,           // offene Vorschläge für [[Verweise]] (v2.9.0): { start, end, close, query, star, items, index, shown }
     wikiSeq: 0,
@@ -341,6 +342,18 @@
     replaceNav(); // keine Notiz mehr offen
   }
 
+  /** Vor der Umstellung auf v3.0.0 (Termine mit «>» statt «@», lokale Hülle): einmal fragen, ob vorher eine Sicherung des alten
+   *  Stands heruntergeladen werden soll. 'backup' (auch bei Esc) oder 'skip'. */
+  function confirmMigration(info) {
+    const d = $('#migrateDialog');
+    $('#migrateText').textContent = tn('Im Bereich «{bereich}» stellt NoNotes jetzt {n} Notiz um.', 'Im Bereich «{bereich}» stellt NoNotes jetzt {n} Notizen um.', info.notes, { bereich: info.area });
+    return new Promise(resolve => {
+      d.returnValue = '';
+      d.addEventListener('close', () => resolve(d.returnValue === 'skip' ? 'skip' : 'backup'), { once: true });
+      d.showModal();
+    });
+  }
+
   function shellHost() {
     return {
       el: {
@@ -353,6 +366,7 @@
       ensureSaved: () => ensureSaved(),
       renderAll: () => renderAll(),
       onDatabaseReplaced,
+      confirmMigration,
       // Adresse nachführen (v2.7.0); false, solange die Navigation noch nicht läuft (dann setzt die Hülle die Adresse selbst)
       replaceNav: () => { if (!state.navReady) return false; replaceNav(); return true; },
     };
@@ -385,7 +399,8 @@
       onSelectionChange: id => emitPlugins('mindmap:select', { id }),
       onOpen: id => openNote(id),
       onOpenRoot: () => beginRename('root'),
-      onReparent: (id, parentId, where) => moveNoteTo(id, parentId, where),
+      onReparent: (id, parentId, where, side) => moveNoteTo(id, parentId, where, side),
+      onSides: sides => keepSides(sides),
       onToggleCollapse: id => toggleCollapse(id),
       onContextMenu: (id, x, y) => showNodeMenu(id, x, y),
     });
@@ -560,7 +575,7 @@
     el.exportZipBtn.disabled = true;
     try {
       const archived = el.exportArchive.checked;
-      const svg = await Exporter.renderSvg(B, { archived });
+      const svg = await Exporter.renderSvg(B, { archived, sides: state.map.sides() });
       let png = null;
       try { png = await Exporter.svgToPng(svg, 2); }
       catch (e) { console.warn('PNG', e); }
@@ -780,7 +795,17 @@
       el.historyLegend.textContent = '';
       return;
     }
+    // Vermerk: an dieser Stelle hat die Umstellung auf v3.0.0 die Termine von «@» auf «>» umgeschrieben (meta dates_migrated_at)
+    let migratedAt = null;
+    try { migratedAt = await B.getMeta('dates_migrated_at'); } catch (e) { /* ohne Vermerk */ }
     for (const item of h.items) {
+      if (migratedAt && item.at < migratedAt) {
+        const mark = document.createElement('li');
+        mark.className = 'history-mark';
+        mark.textContent = t('{datum}: Umstellung auf v3.0.0, Termine mit «>» statt «@». Ältere Fassungen zeigen sie teils noch mit «@».', { datum: fmtDate(migratedAt) });
+        el.historyList.appendChild(mark);
+        migratedAt = null;
+      }
       const li = document.createElement('li');
       const b = document.createElement('button');
       b.type = 'button';
@@ -1373,6 +1398,7 @@
     const ids = new Set(rows.map(r => r.id));
     const shown = links.filter(l => ids.has(l.from_id) && ids.has(l.to_id)); // Querverweise, deren beide Enden in dieser Karte sind
     state.map.render(rows, { mapTitle, matchIds, links: state.showLinks ? shown : [] });
+    state.mapShown = { rows, mapTitle, links: state.showLinks ? shown : [] }; // für «Als Bild kopieren»
     await renderArchiveButton();
     renderLinksButton(shown.length);
     state.map.setSelected(state.mapSelection);
@@ -1995,6 +2021,8 @@
   }
 
   async function onPreviewClick(e) {
+    const badge = e.target.closest('[data-date]');
+    if (badge && !e.target.closest('a')) { await openDateFromBadge(badge); return; }
     const phSpan = PH && e.target.closest('.md-ph[data-ph]');
     if (phSpan && !e.target.closest('a')) { await onPreviewPlaceholderClick(phSpan); return; }
     const load = e.target.closest('.md-embed-load');
@@ -3114,6 +3142,7 @@
   async function runCommand(cmd) {
     if (state.currentId == null || el.body.readOnly) return;
     if (cmd === 'table') { openTablePicker(el.mdToolbar.querySelector('[data-cmd="table"]')); return; }
+    if (cmd === 'date') { await insertDateAtLineEnd(); return; }
     const text = el.body.value;
     const s = el.body.selectionStart || 0;
     const e = el.body.selectionEnd || s;
@@ -3481,6 +3510,20 @@
     } else if (f.permission === 'granted') {
       text.textContent = t('Verbunden mit dem Ordner «{ordner}».', { ordner: f.name });
       row.append(smallButton(t('Anderen Ordner wählen…'), act(() => p.connectFolder())), smallButton(t('Trennen'), act(() => p.disconnectFolder()), 'ghost'));
+      // Termine mit «>» (v3.0.0): Dateien mit alten «@Datum» auf Knopfdruck umstellen
+      const old = p.legacyFiles ? await p.legacyFiles().catch(() => []) : [];
+      if (old.length && !readOnly()) {
+        const info = document.createElement('p');
+        info.className = 'dialog-lead templates-legacy';
+        info.textContent = tn('{n} Vorlage im Ordner schreibt Termine noch mit «@» (vor v3.0.0): {dateien}. NoNotes liest sie richtig; umgestellt steht in der Datei «>».',
+          '{n} Vorlagen im Ordner schreiben Termine noch mit «@» (vor v3.0.0): {dateien}. NoNotes liest sie richtig; umgestellt steht in der Datei «>».', old.length, { dateien: old.join(', ') });
+        row.append(smallButton(t('Auf «>» umstellen'), act(async () => {
+          const n = await p.convertLegacy();
+          hint(tn('{n} Vorlage umgestellt.', '{n} Vorlagen umgestellt.', n));
+        }), 'primary'));
+        el.templatesFolder.append(text, info, row);
+        return;
+      }
     } else if (f.permission === 'prompt') {
       text.textContent = t('Verbunden mit dem Ordner «{ordner}». Der Browser braucht noch deine Erlaubnis, ihn zu lesen.', { ordner: f.name });
       row.append(smallButton(t('Zugriff erlauben'), act(() => p.grant()), 'primary'), smallButton(t('Trennen'), act(() => p.disconnectFolder()), 'ghost'));
@@ -3716,12 +3759,12 @@
         ? (state.qStatus === 'open' ? t('Keine offenen Entscheide. Eine Zeile, die mit „?!“ beginnt, wird zum Entscheid; „@kürzel“ nennt, wer entscheiden soll.')
           : state.qStatus === 'answered' ? t('Noch keine getroffenen Entscheide.')
           : t('Noch keine Entscheide. Eine Zeile, die mit „?!“ beginnt, wird zum Entscheid.'))
-        : (state.qStatus === 'open' ? t('Keine offenen Fragen. Eine Zeile, die mit „?“ beginnt, wird zur Frage, optional mit „@15.10.2026“ am Ende.')
+        : (state.qStatus === 'open' ? t('Keine offenen Fragen. Eine Zeile, die mit „?“ beginnt, wird zur Frage, optional mit „>15.10.2026“ am Ende.')
           : state.qStatus === 'answered' ? t('Noch keine beantworteten Fragen.')
           : t('Noch keine Fragen. Eine Zeile, die mit „?“ beginnt, wird zur Frage.'));
     emitPlugins('questions:rendered', {
       kind,
-      items: rows.map(r => ({ id: r.id, noteId: r.note_id, kind: r.kind, text: r.text, answer: r.answer, decided: r.decided || null, due: r.due || null, people: r.people || [], details: r.details || null, parentId: r.parent_id == null ? null : r.parent_id, element: el.qList.querySelector(`.q-item[data-id="${r.id}"]`) })),
+      items: rows.map(r => ({ id: r.id, noteId: r.note_id, kind: r.kind, text: r.text, answer: r.answer, decided: r.decided || null, due: r.due || null, reminders: r.reminders || [], people: r.people || [], details: r.details || null, parentId: r.parent_id == null ? null : r.parent_id, element: el.qList.querySelector(`.q-item[data-id="${r.id}"]`) })),
     });
   }
 
@@ -3742,6 +3785,7 @@
     text.innerHTML = M.inline(r.text, { highlight: state.qQuery.trim() || null, resolveRef: resolve, noteLink, people: true });
     head.append(mark, text);
     if (r.due) {
+      if (!r.answer) appendReminder(head, r.reminders);
       const due = document.createElement('span');
       const u = r.answer ? 'none' : Dates.urgency(r.due, today || Dates.nowIso());
       due.className = 'due ' + u;
@@ -3891,6 +3935,197 @@
     }
   }
 
+  // ---------- Datumsauswahl (v3.0.0) ----------
+  // Termine stehen hinter «>» am Zeilenende. «>» nach einem Leerzeichen (nicht am Zeilenanfang, nicht in Code) öffnet die Auswahl
+  // (packages/ui/datepicker.js); Ziffern, «.» und «-» schreiben weiter, und der Kalender folgt, jedes andere Zeichen schliesst sie.
+  // Strg+Leertaste auf einem Termin, ein Klick auf sein Abzeichen in der Vorschau oder der Knopf «Termin» öffnen sie ebenfalls.
+  // state.dp: { start (Stelle des «>»), end (Ende des Termins dahinter), edit (ein bestehender Termin wird geändert) }
+  let datePick = null;
+  function datePicker() {
+    if (!datePick && window.NoNotesDatePicker) {
+      datePick = window.NoNotesDatePicker.create(el.body.parentElement, {
+        onPick: value => { insertPickedDate(value); },
+        onClose: () => { state.dp = null; },
+        refocus: () => el.body.focus(),
+      });
+    }
+    return datePick;
+  }
+
+  function closeDatePicker() {
+    state.dp = null;
+    if (datePick) datePick.close();
+  }
+
+  function placeDatePicker() {
+    if (state.dp && datePick && datePick.isOpen()) placePopupAt(datePick.el, state.dp.start);
+  }
+
+  /** Zeile um die Stelle pos: { start, end, text }. */
+  function lineAround(v, pos) {
+    const start = v.lastIndexOf('\n', pos - 1) + 1;
+    let end = v.indexOf('\n', pos);
+    if (end < 0) end = v.length;
+    return { start, end, text: v.slice(start, end) };
+  }
+
+  /** Alle Termine einer Zeile, auch in Tabellenfeldern: [{ iso, start (das «>»), end }], Stellen in der Zeile. */
+  const DATE_TOKEN_RE = new RegExp(String.raw`(^|[\s|>])([>@])(` + Dates.DATE_SRC.replace(/\((?!\?)/g, '(?:') + String.raw`)(?=\s|$|\||<)`, 'g');
+  function lineDates(line) {
+    const out = [];
+    DATE_TOKEN_RE.lastIndex = 0;
+    for (let m; (m = DATE_TOKEN_RE.exec(line));) {
+      const start = m.index + m[1].length;
+      const iso = Dates.splitDue('x >' + m[3]).due;
+      out.push({ iso, start, end: start + 1 + m[3].length });
+      DATE_TOKEN_RE.lastIndex = start + 1;
+    }
+    return out;
+  }
+
+  /** Öffnet die Auswahl für dp; vorgewählt ist der Termin selbst (beim Ändern), sonst die Frist der Zeile, sonst heute. */
+  function openDatePicker(dp) {
+    const p = datePicker();
+    if (!p || el.body.readOnly) return;
+    closeMentionPopup();
+    state.dp = dp;
+    const l = lineAround(el.body.value, dp.start);
+    const dates = lineDates(l.text);
+    let day = null, time = '';
+    const own = dp.edit ? dates.find(d => l.start + d.start === dp.start) : null;
+    if (own && own.iso) { day = own.iso; time = Dates.timePart(own.iso) || ''; }
+    else { const all = dates.map(d => d.iso).filter(Boolean).sort(); day = all.length ? all[all.length - 1] : null; }
+    p.open(day, time);
+    placeDatePicker();
+  }
+
+  /** Die Termine am Zeilenende nach dem Datum ordnen (der letzte ist die Frist); null, wenn nichts zu tun ist. */
+  function sortLineDates(line) {
+    const tl = Dates.tail(line);
+    if (tl.dates.length < 2) return null;
+    const keyed = tl.dates.map(d => ({ key: d.iso || '9999', text: line.slice(d.start, d.end) }));
+    if (keyed.every((x, i) => !i || keyed[i - 1].key <= x.key)) return null;
+    keyed.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+    return line.slice(0, tl.dates[0].start) + keyed.map(x => x.text).join(' ') + line.slice(tl.dates[tl.dates.length - 1].end);
+  }
+
+  /** Setzt das gewählte Datum ein (immer «TT.MM.JJJJ», mit Uhrzeit «TT.MM.JJJJ HH:MM») und ordnet die Termine der Zeile. */
+  async function insertPickedDate(value) {
+    const dp = state.dp;
+    state.dp = null;
+    if (!dp || state.currentId == null) return;
+    const text = Dates.toText(value);
+    if (!text) return;
+    let v = el.body.value.slice(0, dp.start) + '>' + text + el.body.value.slice(dp.end);
+    let caret = dp.start + 1 + text.length;
+    const l = lineAround(v, dp.start);
+    const sorted = sortLineDates(l.text);
+    if (sorted != null) { // geordnet: der Cursor ans Ende der Termine (Enter danach trennt sie nicht)
+      v = v.slice(0, l.start) + sorted + v.slice(l.end);
+      const dates = Dates.tail(sorted).dates;
+      caret = l.start + (dates.length ? dates[dates.length - 1].end : sorted.length);
+    }
+    await applyEdit({ text: v, selStart: caret, selEnd: caret });
+  }
+
+  /** Nach einer Eingabe im Text: «>» nach einem Leerzeichen öffnet die Auswahl, danach folgt sie dem Getippten. */
+  function onDateInput(e) {
+    if (modernizing || !window.NoNotesDatePicker || el.body.readOnly || state.currentId == null) return;
+    const v = el.body.value;
+    const caret = el.body.selectionStart || 0;
+    if (state.dp) {
+      const typed = v.slice(state.dp.start + 1, caret);
+      if (v[state.dp.start] !== '>' || caret <= state.dp.start || !/^[\d.\-]*$/.test(typed)) { closeDatePicker(); return; }
+      state.dp.end = Math.max(caret, state.dp.start + 1);
+      datePicker().follow(typed);
+      placeDatePicker();
+      return;
+    }
+    if (!e || e.inputType !== 'insertText' || e.data !== '>' || caret !== (el.body.selectionEnd || 0)) return;
+    const at = caret - 1;
+    if (v[at] !== '>') return;
+    const l = lineAround(v, at);
+    const before = v.slice(l.start, at);
+    if (!/\S/.test(before) || !/\s$/.test(before)) return; // nach einem Leerzeichen, nicht am Zeilenanfang
+    if (Tables && Tables.inCode && Tables.inCode(v.split('\n'), v.slice(0, at).split('\n').length - 1)) return;
+    if (/`[^`]*$/.test(before) && (before.match(/`/g) || []).length % 2) return; // in `Code`
+    openDatePicker({ start: at, end: caret });
+  }
+
+  /** Strg+Leertaste: steht der Cursor auf einem Termin, ihn mit der Auswahl ändern. */
+  function openDateAtCaret() {
+    const v = el.body.value;
+    const c = el.body.selectionStart || 0;
+    const l = lineAround(v, c);
+    const tok = lineDates(l.text).find(d => c >= l.start + d.start && c <= l.start + d.end);
+    if (!tok) return false;
+    openDatePicker({ start: l.start + tok.start, end: l.start + tok.end, edit: true });
+    return true;
+  }
+
+  /** Klick auf ein Termin-Abzeichen in der Vorschau: zum Termin im Text und die Auswahl öffnen. */
+  async function openDateFromBadge(badge) {
+    const holder = badge.closest('[data-line]');
+    if (!holder || state.currentId == null || el.body.readOnly || readOnly()) return;
+    const L = Number(holder.dataset.line);
+    const lines = el.body.value.split('\n');
+    if (!Number.isInteger(L) || lines[L] == null) return;
+    const ls = lines.slice(0, L).reduce((n, x) => n + x.length + 1, 0);
+    const tok = lineDates(lines[L]).find(d => d.iso === badge.dataset.date);
+    if (!tok) return;
+    if (state.editorMode === 'preview') await setEditorMode('split');
+    el.body.focus();
+    el.body.setSelectionRange(ls + tok.end, ls + tok.end);
+    scrollBodyTo(ls + tok.start);
+    openDatePicker({ start: ls + tok.start, end: ls + tok.end, edit: true });
+  }
+
+  /** Knopf «Termin»: « >» ans Ende der Zeile (in einer Tabelle ans Ende des Felds) und die Auswahl öffnen. */
+  async function insertDateAtLineEnd() {
+    const v = el.body.value;
+    const s0 = el.body.selectionStart || 0;
+    const l = lineAround(v, s0);
+    let end = l.end;
+    if (/^\s*\|/.test(l.text)) { // in einem Tabellenfeld: bis zum nächsten «|» oder «<br>» nach dem Cursor
+      const rest = l.text.slice(s0 - l.start);
+      const m = /(?:^|[^\\])(?:\||<br\s*\/?>)/i.exec(rest);
+      if (m) end = s0 + m.index + (m[0][0] === '|' || m[0][0] === '<' ? 0 : 1);
+    }
+    const head = v.slice(l.start, end).replace(/\s+$/, '');
+    if (!/\S/.test(head) || /^\s*\|$/.test(head)) {
+      hint(t('Termine stehen am Ende einer Zeile mit Text, etwa einer Aufgabe: «- [ ] Offerte einholen >30.10.2026».'));
+      el.body.focus();
+      return;
+    }
+    const at = l.start + head.length + 1;
+    await applyEdit({ text: v.slice(0, l.start) + head + ' >' + v.slice(end).replace(/^[ \t]+(?=\||<br)/i, ' '), selStart: at + 1, selEnd: at + 1 });
+    openDatePicker({ start: at, end: at + 1 });
+  }
+
+  /** Alte Termine «@Datum» im Editor zu «>Datum», ausser in der Zeile mit dem Cursor (dort erst, wenn er sie verlässt). Die Länge
+   *  bleibt gleich; ersetzt wird Zeichen für Zeichen, damit Rückgängig weiter geht. true, wenn sich etwas geändert hat. */
+  let modernizing = false;
+  function modernizeDates() {
+    const v = el.body.value;
+    if (modernizing || !v.includes('@') || el.body.readOnly || state.currentId == null) return false;
+    const s0 = el.body.selectionStart || 0, e0 = el.body.selectionEnd || 0;
+    const next = Dates.rewriteLegacy(v, v.slice(0, s0).split('\n').length - 1);
+    if (next === v) return false;
+    const focused = document.activeElement === el.body;
+    modernizing = true;
+    try {
+      for (let i = 0; i < v.length; i++) {
+        if (v[i] === next[i]) continue;
+        el.body.setSelectionRange(i, i + 1);
+        if (!(focused && document.execCommand && document.execCommand('insertText', false, next[i]))) { el.body.value = next; break; }
+      }
+      el.body.setSelectionRange(s0, e0);
+    } finally {
+      modernizing = false;
+    }
+    return true;
+  }
+
   // ---------- Vervollständigung @kürzel im Editor ----------
 
   // Ein begonnenes Kürzel direkt vor dem Cursor: "@" am Wortanfang (auch nach "("), dahinter nichts oder ein Buchstabe und mehr.
@@ -3958,6 +4193,19 @@
   /** Setzt die Liste unter das begonnene Kürzel: ein unsichtbarer Spiegel des Textfelds misst die Cursorposition. */
   function placeMentionPopup() {
     if (state.mention) placePopupAt(el.mentionPopup, state.mention.start);
+  }
+
+  /** Die nächste Erinnerung (v3.0.0) als kleines Abzeichen mit Glocke vor der Frist, in den Listen der Aufgaben und Fragen. */
+  function appendReminder(head, reminders) {
+    const next = Dates.nextReminder(reminders);
+    if (!next) return;
+    const b = document.createElement('span');
+    const u = Dates.urgency(next);
+    b.className = 'due reminder ' + (u === 'today' ? 'today' : 'none');
+    b.textContent = Dates.formatDue(next);
+    b.title = (reminders.length > 1 ? tn('{n} Erinnerung, die nächste {datum}', '{n} Erinnerungen, die nächste {datum}', reminders.length, { datum: Dates.formatDue(next) })
+      : t('Erinnerung {datum}', { datum: Dates.formatDue(next) }));
+    head.appendChild(b);
   }
 
   /** Lage der Textstelle start im Editor, ohne Scrollen gerechnet: { top, left } der Zeile im Textfeld und die Zeilenhöhe. */
@@ -4481,7 +4729,7 @@
     el.tList.replaceChildren(frag);
     el.tEmpty.hidden = rows.length > 0;
     el.tEmpty.textContent = state.tQuery || state.tTag || state.tPerson ? t('Keine Treffer.')
-      : state.tStatus === 'open' ? t('Keine offenen Aufgaben. Eine Zeile „- [ ] Text“ wird zur Aufgabe, optional mit „@15.10.2026“ am Ende.')
+      : state.tStatus === 'open' ? t('Keine offenen Aufgaben. Eine Zeile „- [ ] Text“ wird zur Aufgabe, optional mit „>15.10.2026“ am Ende.')
       : state.tStatus === 'done' ? t('Noch keine erledigten Aufgaben.')
       : t('Noch keine Aufgaben. Eine Zeile „- [ ] Text“ wird zur Aufgabe.');
   }
@@ -4535,6 +4783,7 @@
       head.appendChild(prog);
     }
     if (r.due) {
+      if (!r.done) appendReminder(head, r.reminders);
       const due = document.createElement('span');
       const u = r.done ? 'none' : T.urgency(r.due, today);
       due.className = 'due ' + u;
@@ -4806,10 +5055,27 @@
     await renderAll();
   }
 
-  /** Ablage aus der Mindmap: als Unternotiz des Ziels oder direkt vor/nach dem Ziel. */
-  async function moveNoteTo(id, targetId, where) {
+  /** Ablage aus der Mindmap: als Unternotiz des Ziels oder direkt vor/nach dem Ziel. side: auf der Wurzel abgelegt, auf diese Seite. */
+  async function moveNoteTo(id, targetId, where, side) {
     if (denyWrite()) return;
     try {
+      if (targetId == null && where === 'child' && side) { // auf die Wurzel: an die Wurzel, auf die Seite, wo losgelassen wurde
+        const note = await B.getNote(id);
+        if (note && note.parent_id == null) { // schon ein Hauptast: bleibt an seinem Platz, wechselt nur die Seite
+          if (note.side !== side) await B.setSides({ [id]: side });
+          state.mapSelection = id;
+          markEdited();
+          await renderMap();
+          return;
+        }
+        await B.setParent(id, null);
+        await B.setSides({ [id]: side });
+        state.mapSelection = id;
+        markEdited();
+        await renderMap();
+        if (state.currentId === id) await renderEditor();
+        return;
+      }
       if (where === 'before' || where === 'after') {
         if (targetId == null) return;
         await B.moveNote(id, targetId, where);
@@ -4833,6 +5099,66 @@
       setStatus(errorText(e), 'error');
       await renderMap();
     }
+  }
+
+  /** Seiten der Hauptäste in der Mindmap (v3.0.0): Die Mindmap meldet, welche Seite ein neuer Ast bekommen hat; festgehalten wird sie,
+   *  damit er beim nächsten Zeichnen nicht springt. Im Lesemodus nicht (dort verteilt die Mindmap jedes Mal gleich). */
+  function keepSides(sides) {
+    if (readOnly() || !Object.keys(sides || {}).length) return;
+    B.setSides(sides).catch(e => console.warn('Seiten der Mindmap', e));
+  }
+
+  /** Ein Hauptast auf die andere Seite (Kontextmenü). */
+  async function switchSide(id, side) {
+    hideContextMenu();
+    if (denyWrite()) return;
+    await B.setSides({ [id]: side });
+    state.mapSelection = id;
+    markEdited();
+    await renderMap();
+  }
+
+  /** Mindmap als Bild (PNG) in die Zwischenablage (v3.0.0), so wie sie zu sehen ist: eingeklappte Äste bleiben zu, Archiv und
+   *  Querverweise wie eingeblendet, ohne Hervorhebung der Suche. Nimmt der Browser kein Bild an, lädt er es herunter. Das Bild
+   *  entsteht in einem Promise, damit der Aufruf von clipboard.write noch zum Klick gehört (Safari verlangt das). */
+  function copyMapImage() {
+    hideContextMenu();
+    const shown = state.mapShown;
+    if (!shown) return;
+    const png = (async () => {
+      const svg = Mindmap.toSvgString(shown.rows, { mapTitle: shown.mapTitle, links: shown.links, accent: await Exporter.accentOf(B), sides: state.map.sides() });
+      const m = /width="(\d+)" height="(\d+)"/.exec(svg);
+      const side = m ? Math.max(Number(m[1]), Number(m[2])) : 0;
+      const bytes = await Exporter.svgToPng(svg, side ? Math.min(2, 8000 / side) : 2); // höchstens 8000 Pixel je Seite
+      return new Blob([bytes], { type: 'image/png' });
+    })();
+    const fallback = async e => {
+      if (e) console.warn('Zwischenablage', e);
+      let blob;
+      try { blob = await png; }
+      catch (e2) { console.error(e2); setStatus(t('Die Mindmap konnte nicht als Bild gerendert werden.'), 'error'); return; }
+      Store.download(new Uint8Array(await blob.arrayBuffer()), `${Exporter.slugify(shown.mapTitle || 'Mindmap')}.png`, 'image/png');
+      setStatus(t('Dieser Browser legt keine Bilder in die Zwischenablage; das Bild wurde heruntergeladen.'), saveState());
+    };
+    if (!navigator.clipboard || typeof navigator.clipboard.write !== 'function' || typeof window.ClipboardItem !== 'function') { fallback(); return; }
+    let item;
+    try { item = new ClipboardItem({ 'image/png': png }); }
+    catch (e) { fallback(e); return; }
+    navigator.clipboard.write([item])
+      .then(() => setStatus(t('Mindmap als Bild in die Zwischenablage kopiert'), saveState()))
+      .catch(fallback);
+  }
+
+  /** «Hauptäste neu verteilen»: alle Hauptäste ausgewogen auf beide Seiten, die grössten zuerst. */
+  async function rebalanceMap() {
+    hideContextMenu();
+    if (denyWrite()) return;
+    const sides = state.map.balancedSides();
+    if (!Object.keys(sides).length) return;
+    await B.setSides(sides);
+    markEdited();
+    await renderMap();
+    state.map.fit();
   }
 
   async function toggleCollapse(id) {
@@ -5060,6 +5386,9 @@
         'sep',
         { label: t('Alles ausklappen'), action: () => setAllCollapsed(false) },
         { label: t('Alles einklappen'), action: () => setAllCollapsed(true) },
+        { write: true, label: t('Hauptäste neu verteilen'), title: t('Verteilt die Hauptäste ausgewogen auf beide Seiten.'), action: () => rebalanceMap() },
+        'sep',
+        { label: t('Als Bild kopieren'), key: 'Ctrl+C', action: () => copyMapImage() },
       ], x, y);
       return;
     }
@@ -5072,7 +5401,9 @@
         { label: t('Alles ausklappen'), action: () => setAllCollapsed(false) },
         { label: t('Alles einklappen'), action: () => setAllCollapsed(true) },
         { label: t('Einpassen'), key: '0', action: () => state.map.fit() },
+        { write: true, label: t('Hauptäste neu verteilen'), title: t('Verteilt die Hauptäste ausgewogen auf beide Seiten.'), action: () => rebalanceMap() },
         'sep',
+        { label: t('Als Bild kopieren'), key: 'Ctrl+C', action: () => copyMapImage() },
         { label: t('Alles drucken…'), action: () => openPrintDialog({ scope: 'all' }) },
       ], x, y);
       return;
@@ -5106,6 +5437,11 @@
       { write: true, label: t('Nach oben'), key: 'Alt+↑', action: async () => { state.mapSelection = id; await moveSelected(-1); } },
       { write: true, label: t('Nach unten'), key: 'Alt+↓', action: async () => { state.mapSelection = id; await moveSelected(1); } },
     );
+    if (info && info.side) { // Hauptast: auf die andere Seite der Mindmap
+      items.push(info.side === 'left'
+        ? { write: true, label: t('Auf die rechte Seite'), action: () => switchSide(id, 'right') }
+        : { write: true, label: t('Auf die linke Seite'), action: () => switchSide(id, 'left') });
+    }
     // Einträge der Erweiterungen (seit 2.8.0): für die Mehrfachauswahl, wenn der Knoten dazugehört, sonst für ihn allein
     finishContextUse(); // ein noch offenes Menü (Rechtsklick auf einen anderen Knoten) zuerst abschliessen
     const multi = state.multi.has(id);
@@ -5181,6 +5517,8 @@
       e.preventDefault(); state.map.zoomOut();
     } else if (key === '0') {
       e.preventDefault(); state.map.fit();
+    } else if ((key === 'c' || key === 'C') && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+      e.preventDefault(); copyMapImage();
     } else if (key === 'Escape') {
       // Nur das Menü schliessen: ohne stopPropagation höbe das Dokument danach auch die Mehrfachauswahl auf
       if (!el.contextMenu.hidden) { e.stopPropagation(); hideContextMenu(); return; }
@@ -5277,6 +5615,8 @@
     el.body.addEventListener('keydown', async e => {
       const mod = e.ctrlKey || e.metaKey;
       if (e.isComposing || el.body.readOnly) return;
+      if (state.dp && datePick && datePick.isOpen() && datePick.key(e)) { e.preventDefault(); e.stopPropagation(); return; } // Datumsauswahl (v3.0.0)
+      if (mod && e.key === ' ' && !e.shiftKey && !e.altKey && openDateAtCaret()) { e.preventDefault(); return; }
       if (state.wiki && handleWikiKey(e)) return; // offene Vorschläge für [[Verweise]]
       if (state.ph && state.ph.field && state.mention && e.key === 'Tab' && !mod && !e.altKey) {
         // Kürzel in einem Platzhalter: Tab übernimmt den Vorschlag (falls einer passt) und springt weiter
@@ -5323,21 +5663,37 @@
       else if (k === 'k') { e.preventDefault(); await runCommand('link'); }
     });
 
-    el.body.addEventListener('input', () => { updateMentionPopup(); updateWikiPopup(); });
-    el.body.addEventListener('click', () => { if (state.mention) updateMentionPopup(); if (state.wiki) updateWikiPopup(); phCaretMoved(); });
+    el.body.addEventListener('input', e => { updateMentionPopup(); updateWikiPopup(); onDateInput(e); });
+    el.body.addEventListener('click', () => {
+      if (state.mention) updateMentionPopup();
+      if (state.wiki) updateWikiPopup();
+      if (state.dp) closeDatePicker();
+      phCaretMoved();
+      if (modernizeDates()) onEdit(); // alte «@Datum» in der Zeile, die der Cursor verlassen hat (v3.0.0)
+    });
     el.body.addEventListener('contextmenu', onPhContextMenu);
     el.body.addEventListener('keyup', e => {
-      if (/^(ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Home|End|PageUp|PageDown)$/.test(e.key) && !state.mention && !state.wiki) phCaretMoved();
+      if (/^(ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Home|End|PageUp|PageDown)$/.test(e.key) && !state.mention && !state.wiki && !state.dp) {
+        phCaretMoved();
+        if (/^(ArrowUp|ArrowDown|PageUp|PageDown)$/.test(e.key) && modernizeDates()) onEdit();
+      }
+      if (e.key === 'Enter' && !state.dp && modernizeDates()) onEdit(); // die Zeile davor ist verlassen
       if (e.key === 'Control') el.wikiPopup.classList.remove('with-path');
       else if (state.wiki && /^(ArrowLeft|ArrowRight|Home|End)$/.test(e.key)) updateWikiPopup(); // Cursor aus dem Verweis heraus: Liste zu
     });
     el.body.addEventListener('scroll', () => {
       if (state.mention) placeMentionPopup();
       if (state.wiki) placePopupAt(el.wikiPopup, Math.max(0, state.wiki.start - 2));
+      if (state.dp) placeDatePicker();
       const f = state.ph && state.ph.field;
       if (f && !f.title && !el.phHint.hidden) placePopupAt(el.phHint, f.start, el.body.value.length - f.tail);
     });
-    el.body.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== el.body) { closeMentionPopup(); closeWikiPopup(); } }, 0));
+    el.body.addEventListener('blur', () => setTimeout(() => {
+      if (document.activeElement === el.body) return;
+      closeMentionPopup();
+      closeWikiPopup();
+      if (state.dp && !(datePick && datePick.el.contains(document.activeElement))) closeDatePicker();
+    }, 0));
     el.wikiPopup.addEventListener('mousedown', e => e.preventDefault()); // der Fokus bleibt im Textfeld
     el.wikiPopup.addEventListener('click', async e => {
       const b = e.target.closest('button[data-index]');
@@ -5440,6 +5796,7 @@
     el.copyLinkBtn.addEventListener('click', () => copyNoteLink(state.currentId));
     el.preview.addEventListener('contextmenu', onPreviewContextMenu);
     el.mapPrintBtn.addEventListener('click', () => openPrintDialog({}));
+    el.mapCopyBtn.addEventListener('click', () => copyMapImage());
     el.multiPrintBtn.addEventListener('click', () => openPrintDialog({ scope: 'selection' }));
     el.multiClearBtn.addEventListener('click', clearMulti);
     el.printGoBtn.addEventListener('click', runPrint);

@@ -6,13 +6,18 @@
    wieder, auf einen Klick hin: grant()).
 
    Schnittstelle (shell.templates, auch die anderer Ausprägungen): list(), get(id), save(template, values), remove(id), download(id),
-   importFile(file), canSave(), saveFields(), context(); dazu lokal folder(), connectFolder(), grant(), disconnectFolder(). */
+   importFile(file), canSave(), saveFields(), context(); dazu lokal folder(), connectFolder(), grant(), disconnectFolder(),
+   legacyFiles() und convertLegacy() (v3.0.0).
+   Termine (v3.0.0): Vorlagen im Browser werden beim ersten Lesen von "@Datum" auf ">Datum" umgestellt; Dateien im Ordner liest die
+   App mit der neuen Schreibweise, ändert sie aber nur auf Knopfdruck (convertLegacy). */
 (function (global) {
   'use strict';
 
   const { t } = global.NoNotesI18n;
   const T = () => global.NoNotesTemplates;
   const Store = () => global.NoNotesStorage;
+  /** Text mit Terminen ">Datum" statt der alten "@Datum" (dates.js). */
+  const modern = text => (global.NoNotesDates && global.NoNotesDates.rewriteLegacy ? global.NoNotesDates.rewriteLegacy(text) : text);
 
   const KEY = 'templates';          // handle:templates (Ordner), value:templates (Vorlagen im Browser)
   const MAX_BYTES = 1024 * 1024;    // grössere Dateien sind keine Vorlagen
@@ -47,7 +52,12 @@
 
     async function browserList() {
       const v = await store().loadValue(KEY);
-      return Array.isArray(v) ? v.filter(x => x && typeof x.text === 'string') : [];
+      const all = Array.isArray(v) ? v.filter(x => x && typeof x.text === 'string') : [];
+      // Umstellung auf v3.0.0: alte Termine "@Datum" einmal zu ">Datum"
+      let changed = false;
+      for (const b of all) { const m = modern(b.text); if (m !== b.text) { b.text = m; changed = true; } }
+      if (changed) { try { await store().saveValue(KEY, all); } catch (e) { /* beim nächsten Lesen wieder */ } }
+      return all;
     }
 
     async function folderFiles() {
@@ -98,7 +108,7 @@
         try { handle = await d.getFileHandle(s.slice(7)); } catch (e) { throw notFound(); }
         const text = await readFolderFile(handle);
         if (text == null) throw invalid();
-        return { text, file: s.slice(7) };
+        return { text: modern(text), file: s.slice(7) };
       }
       if (s.startsWith('browser:')) {
         const b = (await browserList()).find(x => x.id === s.slice(8));
@@ -200,6 +210,30 @@
 
     async function grant() { return permission(true); }
 
+    /** Dateien im Ordner, die noch Termine mit "@" haben (v3.0.0): [Dateiname]. */
+    async function legacyFiles() {
+      const out = [];
+      for (const f of await folderFiles()) {
+        try { const text = await readFolderFile(f.handle); if (text != null && modern(text) !== text) out.push(f.name); } catch (e) { /* auslassen */ }
+      }
+      return out;
+    }
+
+    /** Stellt die Dateien im Ordner auf ">Datum" um. Gibt die Zahl der geänderten Dateien zurück. */
+    async function convertLegacy() {
+      const d = await loadDir();
+      if (!d || await permission(true) !== 'granted') return 0;
+      let n = 0;
+      for (const name of await legacyFiles()) {
+        const handle = await d.getFileHandle(name);
+        const text = await readFolderFile(handle);
+        if (text == null) continue;
+        await Store().fileAccess.write(handle, new TextEncoder().encode(modern(text)));
+        n++;
+      }
+      return n;
+    }
+
     /** Wohin «Speichern» geht, als Satz für den Dialog. */
     async function saveHint() {
       const f = await folder();
@@ -229,7 +263,7 @@
       saveFields: () => [],
       context: () => ({ area: o.areaName ? o.areaName() : '', me: '' }),
       saveHint, emptyHint,
-      folder, connectFolder, grant, disconnectFolder,
+      folder, connectFolder, grant, disconnectFolder, legacyFiles, convertLegacy,
     };
   }
 

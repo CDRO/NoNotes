@@ -45,7 +45,6 @@
   const QBLOCK_CLOSE_RE = /^\s*```\s*$/;
   const ANSWER_RE = /^\s*(?:!!|!(?!\[))/;
   const DONE_TASK_RE = /^(\s*(?:[-*+]|\d+[.)])\s+)\[[xX]\]/;
-  const DUE_TAIL_RE = /\s*@(?:\d{1,2}\.\d{1,2}\.\d{4}|\d{4}-\d{2}-\d{2})(?:[ T]\d{1,2}[:.]\d{2})?\s*$/;
   const IMAGE_RE = / ?!\[[^\]]*\]\(att:\d+(?:\s+"[^"]*")?\)/g;
   const MAX_NOTES = 200;
 
@@ -221,6 +220,13 @@
     return out;
   }
 
+  /** Ohne die Termine am Zeilenende (">Datum", auch mehrere, auch alte "@Datum"; dates.js). */
+  function stripTail(line) {
+    const D = global.NoNotesDates;
+    const tl = D && D.tail ? D.tail(line) : null;
+    return tl && tl.dates.length ? line.slice(0, tl.dates[0].start).replace(/\s+$/, '') : line;
+  }
+
   /** Bereinigt den Text einer Notiz: Antworten und Entscheide weg, Aufgaben offen, Termine weg (je nach options), Bilder aus der
    *  Datei immer weg (eine Markdown-Datei trägt sie nicht). Code bleibt, wie er ist. Gibt { body, images } zurück. */
   function clean(body, options) {
@@ -234,7 +240,7 @@
       if (o.stripAnswers && ANSWER_RE.test(line)) continue;
       let l = line.replace(IMAGE_RE, () => { images++; return ''; });
       if (o.reopenTasks) l = l.replace(DONE_TASK_RE, '$1[ ]');
-      if (o.stripDates) l = l.replace(DUE_TAIL_RE, '');
+      if (o.stripDates) l = stripTail(l);
       if (!l.trim() && line.trim()) continue; // nur ein Bild auf der Zeile: die Zeile fällt weg
       out.push(l);
     }

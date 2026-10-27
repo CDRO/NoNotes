@@ -26,7 +26,9 @@ Eine Markdown-Datei ohne Kopf geht auch: Name und Titel kommen dann aus dem Date
 **Platzhalter** werden beim Anlegen ersetzt: `{{datum}}` (heute), `{{datum+7}}` und `{{datum-1}}` (Tage dazu oder weg),
 `{{zeit}}`, `{{wochentag}}`, `{{woche}}` (Kalenderwoche), `{{jahr}}`, `{{vorlage}}` (Name der Vorlage), `{{bereich}}` (Name des
 Bereichs) und `{{ich}}` (im Dienst dein `@kürzel`). Die Namen gibt es auch in den anderen Sprachen der App (zum Beispiel
-`{{date}}`); unbekannte Platzhalter bleiben stehen. Ein Termin in sieben Tagen: `- [ ] Offerte einholen @{{datum+7}}`.
+`{{date}}`); unbekannte Platzhalter bleiben stehen. Ein Termin in sieben Tagen: `- [ ] Offerte einholen >{{datum+7}}`, mit einer
+Erinnerung zwei Tage vorher: `- [ ] Offerte einholen >{{datum+5}} >{{datum+7}}` (seit 3.0.0 stehen Termine hinter `>`, nicht mehr
+hinter `@`; ältere Vorlagen stellt *Datenbank → Vorlagen…* mit *Auf `>` umstellen* um).
 
 Das **Datum mit Format** steht hinter einem Doppelpunkt: `{{datum+2:JJJJ-MM-TT}}` (2026-10-22), `{{datum:TT.MM.JJJJ}}` (05.03.2026),
 `{{datum:TTTT, T. MMMM JJJJ}}` (Dienstag, 20. Oktober 2026), `{{datum:lang}}` (20. Oktober 2026). Kürzel gross oder klein, deutsch
@@ -36,7 +38,7 @@ Text in Hochkommas bleibt stehen (`{{datum:'KW' JJJJ}}`). Stile: `kurz`, `mittel
 **Platzhalter zum Ausfüllen** (seit 2.12.0) schreibst du beim Einfügen selbst: `{{?Kunde}}`. Nach dem Einfügen ist der erste
 ausgewählt (steht einer im Titel, beginnt es dort): Tippen ersetzt ihn, `Tab` springt zum nächsten, `Umschalt+Tab` zurück, `Esc`
 beendet. Übersprungene bleiben stehen und sind in der Vorschau gelb. `{{?Kunde: Muster AG}}` bringt einen Vorschlag mit, auch einen
-automatischen: `@{{?Bis wann: {{datum+7}}}}`. Gleiche Namen bekommen denselben Wert, auch im Titel und in den Unternotizen.
+automatischen: `>{{?Bis wann: {{datum+7}}}}`. Gleiche Namen bekommen denselben Wert, auch im Titel und in den Unternotizen.
 
 Eine **Beschreibung** erscheint beim Ausfüllen in einem Kasten unter der Zeile. Sie steht irgendwo in der Vorlage als Block mit dem
 Namen des Platzhalters (Markdown):

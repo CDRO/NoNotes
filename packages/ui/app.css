@@ -659,6 +659,29 @@ a.md-path { text-decoration: none; border-bottom: 1px dotted currentColor; overf
 #printArea .md-ph { border: 0; }
 .ph-hint { position: absolute; z-index: 21; max-width: min(420px, 90%); background: var(--panel); border: 1px solid var(--accent); border-left-width: 4px; border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, .15); padding: 8px 12px; font-size: 13px; }
 .ph-hint[hidden] { display: none; }
+/* Datumsauswahl (v3.0.0): kleiner Monatskalender unter der Zeile; der hervorgehobene Bereich ist der, den Enter einsetzt (Tab wechselt) */
+.dp { position: absolute; z-index: 22; width: 258px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 6px 20px rgba(0, 0, 0, .18); padding: 8px; font-size: 13px; }
+.dp[hidden] { display: none; }
+.dp-quick { display: flex; gap: 4px; margin-bottom: 6px; }
+.dp-quick button { flex: 1; padding: 3px 4px; font-size: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); cursor: pointer; white-space: nowrap; }
+.dp-quick button.active, .dp-quick button:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.dp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+.dp-month { font-weight: 600; }
+.dp-nav { border: 0; background: none; color: var(--text); font-size: 16px; line-height: 1; padding: 2px 8px; border-radius: 6px; cursor: pointer; }
+.dp-nav:hover { background: var(--hover); }
+.dp-grid { width: 100%; border-collapse: collapse; border-radius: 6px; outline: 2px solid transparent; outline-offset: 1px; }
+.dp-grid.active { outline-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.dp-grid th { font-size: 11px; font-weight: 500; color: var(--muted); padding: 2px 0; text-align: center; }
+.dp-grid td { padding: 1px; text-align: center; }
+.dp-grid button { width: 30px; height: 26px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--text); font-size: 12px; cursor: pointer; }
+.dp-grid button.other { color: var(--muted); opacity: .6; }
+.dp-grid button.today { border-color: var(--border); font-weight: 700; }
+.dp-grid button:hover { background: var(--hover); }
+.dp-grid button.sel { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); font-weight: 600; }
+.dp-time { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 2px 4px; border-radius: 6px; }
+.dp-time.active { background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
+.dp-time input { width: 70px; padding: 2px 6px; font-size: 13px; }
+.dp-keys { margin-top: 6px; color: var(--muted); font-size: 11px; line-height: 1.35; }
 .ph-hint .ph-hint-name { font-weight: 600; margin-bottom: 4px; }
 .ph-hint .md p { margin: .2em 0; }
 .ph-hint .ph-hint-keys { margin-top: 6px; color: var(--muted); font-size: 12px; }
@@ -935,7 +958,16 @@ body:not(.view-tasks) .tasks-view { display: none; }
 
 /* ---------- v0.9: Fälligkeit bei Fragen ---------- */
 .md-due { margin-left: 8px; font-weight: 500; vertical-align: middle; }
+/* Termine (v3.0.0): Erinnerungen (die früheren Termine einer Zeile) klein mit Glocke vor der Frist; vergangene blass */
+.due.md-reminder, .due.reminder { font-size: 11px; padding: 1px 7px 1px 5px; margin-right: -4px; }
+.due.md-reminder::before, .due.reminder::before { content: ''; display: inline-block; width: 10px; height: 10px; margin-right: 3px; vertical-align: -1px; background: currentColor;
+  -webkit-mask: var(--bell-icon) center / contain no-repeat; mask: var(--bell-icon) center / contain no-repeat; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+:root { --bell-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.8a4 4 0 0 0-4 4v3.1L2.6 11.4h10.8L12 8.9V5.8a4 4 0 0 0-4-4z M6.4 13a1.7 1.7 0 0 0 3.2 0' fill='none' stroke='black' stroke-width='1.4' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+.due.past { opacity: .55; }
+.history-mark { list-style: none; margin: 6px 0; padding: 4px 8px; font-size: 12px; color: var(--muted); border-left: 3px solid var(--accent-ink); }
+#preview [data-date] { cursor: pointer; }
 .q-item .q-head .due { margin-left: auto; }
+.q-item .q-head .due.reminder + .due { margin-left: 6px; }
 .segmented .count.q-overdue { background: var(--danger); }
 .segmented .count.decisions { background: var(--text); color: var(--panel); }
 .segmented .count.decisions.overdue { background: var(--danger); color: #fff; }
