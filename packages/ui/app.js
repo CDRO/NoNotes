@@ -1327,7 +1327,7 @@
     head.appendChild(h);
     const st = document.createElement('div');
     st.className = 'plugin-state' + (it.status === 'error' ? ' error' : '');
-    st.textContent = { active: t('aktiv'), error: t('Fehler'), loaded: t('geladen'), off: t('aus'), available: t('verfügbar') }[it.status] || it.status;
+    st.textContent = { active: t('aktiv'), error: t('Fehler'), loaded: t('geladen'), off: t('ausgeschaltet'), available: t('verfügbar') }[it.status] || it.status;
     head.appendChild(st);
     const tooNew = it.api != null && it.api > Plugins.API;
     if (!it.fixed) {

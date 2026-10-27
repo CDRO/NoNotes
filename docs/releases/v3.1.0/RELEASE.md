@@ -57,6 +57,10 @@ Häkchen zeigt. Export und Druck zeichnen die Mindmap weiterhin ohne diese Farbe
 
 - Hilfe, Reiter *Tastenkürzel*: die Taste `Entf` blieb in anderen Sprachen deutsch; sie heisst jetzt wie auf der Tastatur der
   Sprache (`Del`, `Suppr`, `Canc`, `Supr`).
+- *Erweiterungen…*: eine ausgeschaltete Erweiterung hiess auf Englisch «from» (derselbe Text wie «aus Notiz …»); jetzt
+  «off» bzw. «ausgeschaltet».
+- Hilfe zu Querverweisen: nennt den Knopf jetzt so, wie er heisst (*Verweise ausblenden*).
+- Mindmap-Leiste: der Hinweis rechts wurde bei wenig Platz zur schmalen, hohen Spalte; jetzt rutscht er in eine zweite Zeile.
 
 ## Update von v3.0.0
 
