@@ -29,15 +29,6 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Abhängigkeiten installieren (nur für den Test)
-        run: npm ci
-
-      - name: Chromium für Playwright installieren
-        run: npx playwright install --with-deps chromium
-
-      - name: Bauen und Smoke-Test (das Gebaute per file:// in Chromium)
-        run: npm test
-
       - name: Version bestimmen
         id: version
         env:
@@ -61,6 +52,29 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "release=${RELEASE}" >> "$GITHUB_OUTPUT"
           echo "Version: ${VERSION} (Release: ${RELEASE})"
+
+      # Ab v2.12.0 braucht jedes Release docs/releases/<Version>/RELEASE.md mit Screenshots und Update-Pfad
+      # (docs/releases/README.md). Fehlt etwas, bricht der Lauf hier ab, vor den Tests.
+      - name: Release-Notizen prüfen (ab v2.12.0)
+        if: steps.version.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if node tools/release-notes.cjs required "$VERSION"; then
+            node tools/release-notes.cjs check "$VERSION"
+          else
+            echo "$VERSION ist älter als v2.12.0: Beschreibung aus den Commits (--generate-notes)."
+          fi
+
+      - name: Abhängigkeiten installieren (nur für den Test)
+        run: npm ci
+
+      - name: Chromium für Playwright installieren
+        run: npx playwright install --with-deps chromium
+
+      - name: Bauen und Smoke-Test (das Gebaute per file:// in Chromium)
+        run: npm test
 
       - name: ZIP bauen (lokale Ausprägung, mit der Versionsnummer in der App)
         env:
@@ -131,13 +145,27 @@ jobs:
         run: |
           set -euo pipefail
           ls -la dist/NoNotes-*.zip
+          # Beschreibung: ab v2.12.0 aus docs/releases/<Version>/RELEASE.md (Bilder als Adressen im Tag, Vergleich mit dem
+          # vorigen Release), davor aus den Commits.
+          TITLE="NoNotes $VERSION"
+          NOTES=(--generate-notes)
+          if node tools/release-notes.cjs required "$VERSION"; then
+            KNOWN="$(gh release list --limit 200 --json tagName -q '.[].tagName' 2>/dev/null | tr '\n' ' ' || true)"
+            node tools/release-notes.cjs render "$VERSION" --repo "$GITHUB_REPOSITORY" --ref "$VERSION" --known "$KNOWN" \
+              --out dist/release-notes.md --title-out dist/release-title.txt
+            TITLE="$(cat dist/release-title.txt)"
+            NOTES=(--notes-file dist/release-notes.md)
+          fi
           if gh release view "$VERSION" >/dev/null 2>&1; then
             echo "Release $VERSION existiert bereits, ZIPs werden ersetzt."
             gh release upload "$VERSION" dist/NoNotes-*.zip --clobber
+            if [[ -f dist/release-notes.md ]]; then
+              gh release edit "$VERSION" --title "$TITLE" --notes-file dist/release-notes.md
+            fi
           else
             # --target legt den Tag auf diesem Commit an, falls er noch nicht existiert.
             gh release create "$VERSION" dist/NoNotes-*.zip \
               --target "$GITHUB_SHA" \
-              --title "NoNotes $VERSION" \
-              --generate-notes
+              --title "$TITLE" \
+              "${NOTES[@]}"
           fi

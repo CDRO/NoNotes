@@ -2083,6 +2083,162 @@ async function runCellsPeople(browser, part, step) {
   part('Export: Abschnitte der Erweiterungen direkt unter dem Mindmap-Bild (Ordner und eine Datei)');
 }
 
+// ============================================================
+/* Release-Notizen (ab v2.12.0): Prüfung des Ordners docs/releases/<Version>/ (Titel, Kurzfassung, «Was ist neu» mit Beschreibung und
+   Screenshot je Neuerung, Update-Pfad mit Sicherung, Bilder da und klein genug, keine Platzhalter), Beschreibung für GitHub (Adressen
+   im Tag, Pakete, Vergleich mit dem vorigen Release), Screenshots aus einem Drehbuch, und alle Ordner, die es im Repository gibt. */
+async function runReleaseNotes(browser, part, step) {
+  const RN = require(path.join(ROOT, 'tools', 'release-notes.cjs'));
+  const { shoot } = require(path.join(ROOT, 'tools', 'release-shots.cjs'));
+  const TOOL = path.join(ROOT, 'tools', 'release-notes.cjs');
+  const base = path.join(ROOT, 'dist', 'test-releases');
+  const dir = path.join(base, 'v9.9.0');
+  fs.rmSync(base, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  try {
+    // Ab welcher Version, voriges Release
+    assert.deepEqual(['v2.11.0', 'v2.11.9', 'v2.12.0', 'v2.12.1', 'v3.0.0', 'v10.0.0'].map(RN.required), [false, false, true, true, true, true]);
+    assert.equal(spawnSync(process.execPath, [TOOL, 'required', 'v2.11.0']).status, 1);
+    assert.equal(spawnSync(process.execPath, [TOOL, 'required', 'v2.12.0']).status, 0);
+    assert.equal(RN.previousOf('v2.12.0', ['v2.9.0', 'v2.11.0', 'v2.10.0', 'v2.12.0', 'v2.13.0', 'dev-123']), 'v2.11.0');
+    assert.equal(RN.previousOf('v2.12.0', []), null);
+    part('Pflicht ab v2.12.0, voriges Release aus den bekannten Tags');
+
+    // Die Vorlage selbst besteht nicht
+    fs.copyFileSync(path.join(ROOT, 'docs', 'releases', 'VORLAGE.md'), path.join(dir, 'RELEASE.md'));
+    let r = RN.check('v9.9.0', dir);
+    assert.equal(r.ok, false);
+    assert.ok(r.errors.some(e => /erste Zeile/.test(e)) && r.errors.some(e => /Platzhalter übrig: .*TODO/.test(e)), r.errors.join('\n'));
+
+    // Eine vollständige Beschreibung
+    const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+    fs.writeFileSync(path.join(dir, 'legende.png'), PNG);
+    fs.writeFileSync(path.join(dir, 'tabelle.png'), PNG);
+    const good = [
+      '# NoNotes v9.9.0 – Legende und Tabellen',
+      '',
+      '<!-- interner Hinweis, nicht im Release -->',
+      'Farben bekommen eine Bedeutung, und Tabellenfelder nehmen Aufgaben auf.',
+      '',
+      '## Was ist neu',
+      '',
+      '### Legende über der Mindmap',
+      '',
+      'Die Erweiterung «Farben über Tags» zeigt oben rechts eine Legende. Ein Klick darauf öffnet den Text, Esc speichert. Siehe [Erweiterungen](../../../docs/PLUGINS.md#farben).',
+      '',
+      '![Legende oben rechts mit drei Farben](legende.png)',
+      '',
+      '### Aufgaben in Tabellenfeldern',
+      '',
+      'In einem Feld steht `[ ] Text @anna` als Aufgabe mit Kästchen; mehrere Teile trennt `<br>`. `![nicht ersetzen](im-code.png)` bleibt Code.',
+      '',
+      '![Tabelle mit Aufgaben und Personen](tabelle.png)',
+      '',
+      '### Schnittstelle für Erweiterungen',
+      '',
+      '<!-- ohne Bild: nur Programmierschnittstelle -->',
+      'Neue Aufrufe ctx.ui.addMapButton und ctx.export.addMapSection für eigene Knöpfe und Abschnitte unter der Mindmap im Export.',
+      '',
+      '## Update von v9.8.0',
+      '',
+      '1. Sichern: Datenbank → Kopie herunterladen.',
+      '2. Neue Version entpacken und öffnen.',
+    ].join('\n');
+    fs.writeFileSync(path.join(dir, 'RELEASE.md'), good);
+    r = RN.check('v9.9.0', dir);
+    assert.deepEqual(r.errors, []);
+    assert.equal(r.title, 'NoNotes v9.9.0 – Legende und Tabellen');
+    const cli = spawnSync(process.execPath, [TOOL, 'check', 'v9.9.0', '--dir', dir], { encoding: 'utf8' });
+    assert.equal(cli.status, 0, cli.stderr);
+    part('Prüfung: die Vorlage fällt durch, eine vollständige Beschreibung besteht');
+
+    // Was fehlt, wird genannt
+    const bad = (edit, re, msg) => {
+      fs.writeFileSync(path.join(dir, 'RELEASE.md'), edit(good));
+      const res = RN.check('v9.9.0', dir);
+      assert.ok(!res.ok && res.errors.some(e => re.test(e)), `${msg}: ${res.errors.join(' | ')}`);
+    };
+    bad(t => t.replace('v9.9.0 –', 'v9.8.0 –'), /nennt v9\.8\.0/, 'falsche Version im Titel');
+    bad(t => t.replace('Farben bekommen eine Bedeutung, und Tabellenfelder nehmen Aufgaben auf.', ''), /Kurzfassung/, 'ohne Kurzfassung');
+    bad(t => t.replace('## Was ist neu', '## Neu'), /Was ist neu/, 'ohne «Was ist neu»');
+    bad(t => t.replace('![Tabelle mit Aufgaben und Personen](tabelle.png)', ''), /Aufgaben in Tabellenfeldern.*kein Screenshot/, 'Neuerung ohne Bild');
+    bad(t => t.replace('<!-- ohne Bild: nur Programmierschnittstelle -->', ''), /Schnittstelle.*kein Screenshot/, 'ohne Begründung kein Verzicht aufs Bild');
+    bad(t => t.replace(/Neue Aufrufe[^\n]*/, 'Neue Aufrufe.'), /zu knapp/, 'zu knappe Beschreibung');
+    bad(t => t.replace('## Update von v9.8.0', '## Hinweise'), /Update/, 'ohne Update-Pfad');
+    bad(t => t.replace('1. Sichern: Datenbank → Kopie herunterladen.', '1. Datenbank kopieren.'), /Sicherung/, 'Update ohne Sicherung');
+    bad(t => t.replace('1. Sichern', '- Sichern').replace('2. Neue', '- Neue'), /nummerierte Liste/, 'Update ohne Schritte');
+    bad(t => t.replace('(legende.png)', '(fehlt.png)'), /fehlt\.png fehlt/, 'fehlendes Bild');
+    bad(t => t.replace('[Legende oben rechts mit drei Farben]', '[]'), /beschreibt, was zu sehen ist/, 'Bild ohne Text');
+    bad(t => t + '\n\nTODO: noch schreiben', /Platzhalter übrig: «TODO»/, 'Platzhalter');
+    fs.writeFileSync(path.join(dir, 'RELEASE.md'), good.replace('## Update von v9.8.0', '```markdown\n## Update im Beispiel\n1. sichern\n```\n\n## Update von v9.8.0'));
+    assert.deepEqual(RN.check('v9.9.0', dir).errors, [], 'Überschriften in Codeblöcken zählen nicht als Abschnitt');
+    bad(t => t.replace('../../../docs/PLUGINS.md', '../../../docs/GIBTS-NICHT.md'), /zeigt ins Leere/, 'toter Verweis');
+    fs.writeFileSync(path.join(dir, 'gross.png'), Buffer.alloc(1100 * 1024));
+    bad(t => t + '\n\n![zu gross](gross.png)', /höchstens 1024 KB/, 'zu grosses Bild');
+    fs.rmSync(path.join(dir, 'gross.png'));
+    fs.writeFileSync(path.join(dir, 'uebrig.png'), PNG);
+    fs.writeFileSync(path.join(dir, 'RELEASE.md'), good);
+    assert.ok(RN.check('v9.9.0', dir).warnings.some(w => /uebrig\.png/.test(w)), 'nicht benutztes Bild: Hinweis');
+    fs.rmSync(path.join(dir, 'uebrig.png'));
+    const none = RN.check('v9.9.1', path.join(base, 'v9.9.1'));
+    assert.ok(!none.ok && /RELEASE\.md fehlt/.test(none.errors[0]));
+    part('Prüfung nennt: falsche Version, Kurzfassung, Abschnitte, Bild je Neuerung, Begründung, Update mit Sicherung und Schritten, Bilder, Platzhalter, Verweise, Grösse');
+
+    // Beschreibung für GitHub
+    const body = RN.render(good, { version: 'v9.9.0', dir, repo: 'CDRO/NoNotes', known: ['v9.7.0', 'v9.8.0', 'v9.9.0'] });
+    assert.ok(!/^# NoNotes/m.test(body), 'ohne Titelzeile');
+    assert.ok(!/interner Hinweis|ohne Bild/.test(body), 'ohne Kommentare');
+    assert.ok(body.includes('![Legende oben rechts mit drei Farben](https://raw.githubusercontent.com/CDRO/NoNotes/v9.9.0/dist/test-releases/v9.9.0/legende.png)'), body);
+    assert.ok(body.includes('[Erweiterungen](https://github.com/CDRO/NoNotes/blob/v9.9.0/docs/PLUGINS.md#farben)'), 'Verweis auf die Datei im Tag, mit Anker');
+    assert.ok(body.includes('`![nicht ersetzen](im-code.png)`'), 'im Code bleibt alles, wie es ist');
+    assert.match(body, /\*\*Pakete:\*\* `NoNotes-v9\.9\.0\.zip` .* `NoNotes-with-Plugins-v9\.9\.0\.zip`/);
+    assert.ok(body.trimEnd().endsWith('**Alle Änderungen:** https://github.com/CDRO/NoNotes/compare/v9.8.0...v9.9.0'));
+    const out = path.join(base, 'body.md'), titleOut = path.join(base, 'title.txt');
+    const cr = spawnSync(process.execPath, [TOOL, 'render', 'v9.9.0', '--dir', dir, '--known', 'v9.8.0 v9.9.0', '--out', out, '--title-out', titleOut], { encoding: 'utf8' });
+    assert.equal(cr.status, 0, cr.stderr);
+    assert.equal(fs.readFileSync(titleOut, 'utf8'), 'NoNotes v9.9.0 – Legende und Tabellen\n');
+    assert.ok(fs.readFileSync(out, 'utf8').includes('compare/v9.8.0...v9.9.0'));
+    part('Beschreibung: ohne Titelzeile und Kommentare, Bilder und Verweise im Tag, Code unberührt, Pakete, Vergleich mit dem vorigen Release');
+
+    // Screenshots aus einem Drehbuch (auf dem gebauten dist/NoNotes)
+    const shots = path.join(base, 'v9.9.2');
+    fs.mkdirSync(shots);
+    fs.writeFileSync(path.join(shots, 'shots.cjs'), `module.exports = {
+      date: '2026-11-02T09:00:00+01:00',
+      async run(s) {
+        await s.newNote('Projekt Süd');
+        await s.edit('Projekt Süd', { body: '- [ ] Angebot einholen @anna @03.11.2026', mode: 'preview' });
+        await s.shot('vorschau');
+        await s.shot('aufgabe', { locator: '.preview li', pad: 4 });
+        await s.back();
+        await s.view('tasks');
+        await s.shot('liste');
+      },
+    };`);
+    const made = await shoot({ version: 'v9.9.2', dir: shots, app: DIST, plugins: [] });
+    assert.deepEqual(made.map(f => path.basename(f)), ['vorschau.png', 'aufgabe.png', 'liste.png']);
+    const dims = f => { const b = fs.readFileSync(f); return [b.readUInt32BE(16), b.readUInt32BE(20)]; };
+    assert.deepEqual(dims(made[0]), [1280, 800], 'ganze Seite 1280 × 800');
+    const [w, h] = dims(made[1]);
+    assert.ok(w < 1280 && h < 200, `Ausschnitt um die Aufgabe (${w} × ${h})`);
+    const only = await shoot({ version: 'v9.9.2', dir: shots, app: DIST, plugins: [], only: 'liste' });
+    assert.deepEqual(only.map(f => path.basename(f)), ['liste.png'], '--only macht nur dieses Bild');
+    await assert.rejects(shoot({ version: 'v9.9.3', dir: path.join(base, 'v9.9.3'), app: DIST, plugins: [] }), /shots\.cjs fehlt/);
+    part('Screenshots: Drehbuch auf der gebauten App, ganze Seite und Ausschnitt, nur ein Bild, fehlendes Drehbuch');
+
+    // Alle Ordner im Repository bestehen die Prüfung
+    const releases = path.join(ROOT, 'docs', 'releases');
+    const versions = fs.readdirSync(releases).filter(v => /^v\d+\.\d+\.\d+$/.test(v));
+    for (const v of versions) {
+      const res = RN.check(v, path.join(releases, v));
+      assert.ok(res.ok, `docs/releases/${v}: ${res.errors.join(' | ')}`);
+    }
+    part(`Ordner im Repository: ${versions.length ? versions.join(', ') : 'noch keiner'} in Ordnung`);
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+}
+
 suite('Kern-Test', [
   { name: 'Zusammenführen: Myers-Vergleich, Dreiwege-Zusammenführung mit Zufallsdaten, Konflikte, Cursor', run: runMerge },
   { name: 'Datenbank: Standardschema, Angleichen alter Dateien (Schema 1, 11, 12, 13), Konflikterkennung, Autor im Verlauf, Querverweise, Entscheide und Personen', run: runDb },
@@ -2094,4 +2250,5 @@ suite('Kern-Test', [
   { name: 'Personen an Aufgaben und Tabellenfelder: Parser, Editor, Vorschau, Index (Schema 16), Abhaken, Antwort ins Feld, Agenten, Export-Abschnitte', run: runCellsPeople },
   { name: 'Agenten: Werkzeugkatalog (Notizen, Fragen, Entscheide, Aufgaben, Verlauf, Archiv, Papierkorb, Lesemodus, Ressourcen) und MCP-Protokoll aller Fassungen', run: runAgent },
   { name: 'Programm für den eigenen Rechner: Einträge für Claude Code und andere, Datei, MCP über die Standardeingabe, Änderungen von aussen, zwei Prozesse mit Sperre, Lesemodus', run: runAgentProgram },
+  { name: 'Release-Notizen: Pflicht ab v2.12.0, Prüfung, Beschreibung für GitHub, Screenshots aus einem Drehbuch, alle Ordner im Repository', run: runReleaseNotes },
 ]);

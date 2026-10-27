@@ -743,4 +743,10 @@ auf dessen Inhalt); ohne Zugriff gibt es eine Warnung und nur das erste ZIP. Ein
   Commit an, baut die ZIPs und veröffentlicht das Release (existiert es schon, werden die ZIPs ersetzt).
 - **Per Tag**: `git tag v0.1.0 && git push origin v0.1.0` löst denselben Ablauf aus.
 
+**Release-Notizen (ab v2.12.0).** Jedes Release bekommt auf GitHub eine ausführliche Beschreibung mit Screenshots: was neu ist, wie
+man es benutzt, und den Update-Pfad von der vorigen Version. Sie liegt im Repository unter `docs/releases/<Version>/RELEASE.md`
+(Vorlage `docs/releases/VORLAGE.md`), die Screenshots daneben, gemacht mit `node tools/release-shots.cjs <Version>` aus einem
+Drehbuch `shots.cjs`. Der Workflow prüft den Ordner gleich nach dem Start (`node tools/release-notes.cjs check <Version>`) und bricht
+ab, wenn etwas fehlt; beim Release wird daraus Titel und Beschreibung. Regeln und Ablauf: [docs/releases/README.md](docs/releases/README.md).
+
 Die Versionsnummer wird dabei in die App geschrieben und erscheint oben neben dem Namen.
