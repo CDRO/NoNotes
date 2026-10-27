@@ -2930,9 +2930,156 @@ async function runNavigation(browser, part, step) {
   }
 }
 
+// ============================================================
+/* Pfade auf Dateien und Ordner (v2.12.0): \\server\…, C:\…, file://, <…> mit Leerzeichen, [Text](<…>), Bilder; lokal öffnet der Link die
+   Datei im neuen Tab, Rechtsklick «Öffnen»/«Pfad kopieren»; Einfügen aus dem Explorer; über eine Webseite (wie im Dienst) kopiert der
+   Klick den Pfad und Bilder werden Links. */
+async function runPaths(browser, part, step) {
+  const http = require('node:http');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nonotes-pfade-'));
+  fs.mkdirSync(path.join(dir, 'Projekte 2026'));
+  fs.mkdirSync(path.join(dir, 'ablage'));
+  fs.writeFileSync(path.join(dir, 'Projekte 2026', 'notiz.txt'), 'Inhalt der Datei');
+  fs.writeFileSync(path.join(dir, 'plan.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mNk+M9Qz8DAwMDAwAAAHQIBAWvT6j8AAAAASUVORK5CYII=', 'base64'));
+  const body = [
+    `Datei <file://${dir}/Projekte 2026/notiz.txt>`,
+    `Ordner file://${dir}/ablage/ und das Netz \\\\srv01\\Projekte\\Angebot.docx.`,
+    'Laufwerk Z:\\Team\\ und [Offerte](<\\\\srv01\\Projekte\\Offerte 2026.pdf>)',
+    `![Plan](file://${dir}/plan.png)`,
+    '- [ ] Offerte prüfen \\\\srv01\\Projekte\\Offerte.pdf',
+    '`\\\\srv01\\im\\Code` bleibt Code',
+  ].join('\n');
+  const stub = () => {
+    window.__clip = null;
+    try { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { window.__clip = text; } } }); } catch (e) { /* bleibt echt */ }
+  };
+  const errors = [];
+  const watch = page => {
+    page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+    page.on('console', m => { if (m.type() === 'error' && !/ERR_FILE_NOT_FOUND|Not allowed to load local resource|net::ERR/.test(m.text())) errors.push('console: ' + m.text()); });
+  };
+  const note = async (page, title, text) => {
+    await page.click('#viewListBtn');
+    await page.waitForSelector('body.view-list');
+    await page.click('#newBtn');
+    await page.fill('#title', title);
+    await page.fill('#body', text);
+    await page.waitForFunction(SAVED);
+    await page.click('#modeSwitch button[data-mode="preview"]');
+    await page.waitForFunction(() => document.querySelectorAll('#preview a.md-path').length >= 5);
+  };
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'de-CH' });
+  await ctx.addInitScript(stub);
+  const server = http.createServer((req, res) => { // die gebaute App über eine Webseite, wie im Dienst
+    const file = path.join(DIST, decodeURIComponent(new URL(req.url, 'http://x').pathname));
+    if (!file.startsWith(DIST) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); res.end(); return; }
+    const type = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png' }[path.extname(file)] || 'application/octet-stream';
+    res.writeHead(200, { 'content-type': type + (/text|javascript/.test(type) ? '; charset=utf-8' : '') });
+    res.end(fs.readFileSync(file));
+  });
+  try {
+    const page = await ctx.newPage();
+    watch(page);
+    await page.goto(APP_URL);
+    await page.waitForSelector(READY, { timeout: 30000 });
+    await note(page, 'Ablage', body);
+    const links = await page.$$eval('#preview a.md-path', as => as.map(a => ({ text: a.textContent, href: a.getAttribute('href'), path: a.dataset.path, folder: a.classList.contains('md-path-folder'), icon: !!a.querySelector('.md-path-icon') })));
+    assert.deepEqual(links.map(l => l.text), [
+      `file://${dir}/Projekte 2026/notiz.txt`, `file://${dir}/ablage/`, '\\\\srv01\\Projekte\\Angebot.docx', 'Z:\\Team\\', 'Offerte', '\\\\srv01\\Projekte\\Offerte.pdf',
+    ], 'alle Formen, Satzzeichen am Ende nicht dabei, im Code kein Link');
+    assert.deepEqual(links.map(l => l.href), [
+      `file://${dir}/Projekte%202026/notiz.txt`, `file://${dir}/ablage/`, 'file://srv01/Projekte/Angebot.docx', 'file:///Z:/Team/', 'file://srv01/Projekte/Offerte%202026.pdf', 'file://srv01/Projekte/Offerte.pdf',
+    ]);
+    assert.deepEqual(links.map(l => l.folder), [false, true, false, true, false, false], 'Ordner und Dateien');
+    assert.ok(links.every(l => l.icon), 'jeder mit Symbol');
+    assert.equal(links[4].path, '\\\\srv01\\Projekte\\Offerte 2026.pdf', 'zum Kopieren in der Schreibweise von Windows');
+    assert.equal(await page.locator('#preview code').first().textContent(), '\\\\srv01\\im\\Code');
+    await page.waitForFunction(() => { const img = document.querySelector('#preview img.md-path-img'); return img && img.complete && img.naturalWidth === 2; });
+    part('Erkennen und Darstellen: Netz-, Laufwerks- und file://-Pfade, spitze Klammern, Link mit Text, Bild, Symbol, nicht im Code');
+
+    // Lokal: Klick öffnet die Datei im neuen Tab; Rechtsklick mit Öffnen und Pfad kopieren
+    const [tab] = await Promise.all([ctx.waitForEvent('page'), page.click('#preview a.md-path >> nth=0')]);
+    await tab.waitForLoadState();
+    assert.equal((await tab.textContent('body')).trim(), 'Inhalt der Datei', 'die Datei öffnet sich im neuen Tab');
+    await tab.close();
+    await page.click('#preview a.md-path >> nth=2', { button: 'right' });
+    await page.waitForSelector('#contextMenu:not([hidden])');
+    assert.deepEqual(await page.locator('#contextMenu button').allTextContents(), ['Öffnen', 'Pfad kopieren']);
+    await page.click('#contextMenu button:has-text("Pfad kopieren")');
+    await page.waitForFunction(() => window.__clip === '\\\\srv01\\Projekte\\Angebot.docx');
+    assert.match(await page.textContent('#status'), /Pfad kopiert/);
+    await page.click('#preview a.md-path >> nth=1', { button: 'right' });
+    assert.deepEqual(await page.locator('#contextMenu button').allTextContents(), ['Ordner öffnen', 'Pfad kopieren']);
+    const [folder] = await Promise.all([ctx.waitForEvent('page'), page.click('#contextMenu button:has-text("Ordner öffnen")')]);
+    assert.equal(folder.url(), `file://${dir}/ablage/`);
+    await folder.close();
+    await page.click('#preview a.md-path >> nth=0', { button: 'right' });
+    await page.click('#contextMenu button:has-text("Pfad kopieren")');
+    await page.waitForFunction(d => window.__clip === `${d}/Projekte 2026/notiz.txt`, dir);
+    part('Lokal: Klick öffnet die Datei im neuen Tab, Rechtsklick «Öffnen» (beim Ordner «Ordner öffnen») und «Pfad kopieren»');
+
+    // Aufgabenliste: der Pfad in der Aufgabe ist ein Link
+    await page.click('#viewTasksBtn');
+    await page.waitForSelector('#tasksView .t-item a.md-path');
+    assert.equal(await page.textContent('#tasksView .t-item a.md-path'), '\\\\srv01\\Projekte\\Offerte.pdf');
+    await page.click('#tasksView .t-item a.md-path', { button: 'right' });
+    await page.waitForSelector('#contextMenu:not([hidden])');
+    await page.click('#contextMenu button:has-text("Pfad kopieren")');
+    await page.waitForFunction(() => window.__clip === '\\\\srv01\\Projekte\\Offerte.pdf');
+    part('Auch in der Aufgabenliste');
+
+    // Einfügen: «Als Pfad kopieren» aus dem Explorer kommt mit Anführungszeichen; mit Leerzeichen in spitze Klammern
+    await page.click('#viewListBtn');
+    await page.click('#list li:has-text("Ablage")');
+    await page.waitForFunction(() => document.querySelector('#title').value === 'Ablage');
+    await page.click('#modeSwitch button[data-mode="edit"]');
+    const paste = text => page.evaluate(t => {
+      const area = document.querySelector('#body');
+      area.focus();
+      area.setSelectionRange(area.value.length, area.value.length);
+      const dt = new DataTransfer();
+      dt.setData('text/plain', t);
+      const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
+      area.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    }, text);
+    assert.equal(await paste('\n"C:\\Projekte\\Angebot 2026.docx"'), true);
+    assert.ok((await page.inputValue('#body')).endsWith('<C:\\Projekte\\Angebot 2026.docx>'), 'Anführungszeichen weg, spitze Klammern dazu');
+    assert.equal(await paste('Hallo C:\\nicht nur ein Pfad'), false, 'gewöhnlicher Text: normal einfügen');
+    assert.equal(await paste('C:\\ohne\\Leerzeichen.txt'), false, 'ein Pfad ohne Leerzeichen bleibt, wie er ist');
+    await page.waitForFunction(SAVED);
+    part('Einfügen aus dem Explorer: Anführungszeichen weg, Pfad mit Leerzeichen in spitzen Klammern; sonst normal');
+
+    // Über eine Webseite (wie im Dienst): Klick kopiert den Pfad, das Bild wird ein Link
+    await new Promise(r => server.listen(0, '127.0.0.1', r));
+    const web = await ctx.newPage();
+    watch(web);
+    await web.goto(`http://127.0.0.1:${server.address().port}/index.html`);
+    await web.waitForSelector(READY, { timeout: 30000 });
+    await note(web, 'Im Netz', body);
+    assert.equal(await web.locator('#preview img.md-path-img').count(), 0, 'kein Bild von einem Pfad');
+    assert.equal(await web.locator('#preview a.md-path:has-text("Plan")').count(), 1, 'stattdessen ein Link');
+    const pagesBefore = ctx.pages().length;
+    await web.click('#preview a.md-path >> nth=2');
+    await web.waitForFunction(() => window.__clip === '\\\\srv01\\Projekte\\Angebot.docx');
+    assert.match(await web.textContent('#status'), /Pfad kopiert – im Explorer einfügen/);
+    assert.equal(ctx.pages().length, pagesBefore, 'kein neuer Tab');
+    await web.click('#preview a.md-path >> nth=2', { button: 'right' });
+    assert.deepEqual(await web.locator('#contextMenu button').allTextContents(), ['Pfad kopieren'], 'ohne «Öffnen»');
+    await web.close();
+    part('Über eine Webseite (wie im Dienst): Klick kopiert den Pfad statt zu öffnen, Bilder werden Links, Rechtsklick nur «Pfad kopieren»');
+    assert.deepEqual(errors, [], 'keine Fehler im Browser');
+  } finally {
+    await ctx.close();
+    await new Promise(r => server.close(() => r()));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 suite('App-Test', [
   { name: null, run: runSmoke }, // druckt seine Gruppen selbst
   { name: 'Bereiche: anlegen, wechseln (Statusleiste, Menü, Alt+1 … 9), Adresse #w=… und ?w=…, Weiterleitung eines Webservers, Datei und Hauptfarbe je Bereich, umbenennen, entfernen, Datei als Bereich, zwei Tabs', run: runAreas },
   { name: 'Navigation: Zurück und Vor, Adresse mit Notiz, Neuladen, Pfeil im Editor, Ansichten, Link kopieren, eingefügte Links, Umbenennen, direkter Einstieg, fehlende Notiz, anderer Bereich', run: runNavigation },
+  { name: 'Pfade auf Dateien und Ordner: Netz, Laufwerk, file://, Leerzeichen, Bilder, neuer Tab, Pfad kopieren, Einfügen aus dem Explorer, über eine Webseite', run: runPaths },
   { name: 'Backend-Vertrag: Methodenliste, JSON-sichere Rückgaben, Änderungsmeldung, Fehlerkennungen', run: runBackend },
 ], { browser: true });

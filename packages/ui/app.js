@@ -364,6 +364,7 @@
     const edition = window.NoNotesEdition;
     if (!edition) throw new Error(t('Es ist keine Ausprägung geladen.'));
     shell = edition.createShell(shellHost());
+    M.configure({ localFiles: localFiles() });
     state.pluginFiles = loadPluginChoice();
     await Plugins.loadAll(state.pluginFiles); // feste Liste und die hier eingeschalteten Dateien aus plugins/, bevor etwas gezeichnet wird (Designs)
     try { applyTheme(localStorage.getItem(THEME_KEY) || ''); } catch (e) { /* ohne Zwischenspeicher: Standard */ }
@@ -2336,6 +2337,65 @@
       const note = await noteForNav(target.note);
       if (note) await openNote(note.id);
     });
+  }
+
+  // ---------- Pfade auf Dateien und Ordner (v2.12.0) ----------
+
+  /** Lassen sich Pfade (\\server\…, C:\…, file://) öffnen? Nur, wenn die Seite selbst aus einer Datei kommt (lokale Version); eine Hülle
+   *  kann es mit shell.localFiles festlegen. Von einer Webseite aus sperren Browser solche Links. */
+  function localFiles() {
+    if (shell && typeof shell.localFiles === 'boolean') return shell.localFiles;
+    return location.protocol === 'file:';
+  }
+
+  /** Pfad in die Zwischenablage, in der Schreibweise von Windows (zum Einfügen in den Explorer). */
+  async function copyPath(path) {
+    hideContextMenu();
+    try {
+      await navigator.clipboard.writeText(path);
+      hint(localFiles() ? t('Pfad kopiert: {pfad}', { pfad: path }) : t('Pfad kopiert – im Explorer einfügen: {pfad}', { pfad: path }));
+    } catch (e) {
+      window.prompt(t('Pfad (mit Ctrl+C kopieren):'), path);
+    }
+  }
+
+  /** Klick auf einen Pfad: lokal öffnet der Link die Datei im neuen Tab (Standard des Browsers); im Dienst kopiert er den Pfad. */
+  function onPathClick(e) {
+    const a = e.target.closest && e.target.closest('a.md-path');
+    if (!a || e.button !== 0) return;
+    if (localFiles()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    copyPath(a.dataset.path);
+  }
+
+  /** Rechtsklick auf einen Pfad (Link oder Bild): «Öffnen» (nur lokal) und «Pfad kopieren». */
+  function onPathContextMenu(e) {
+    const target = e.target.closest && e.target.closest('a.md-path, img.md-path-img');
+    if (!target) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const path = target.dataset.path;
+    const href = target.tagName === 'IMG' ? target.getAttribute('src') : target.getAttribute('href');
+    const items = [];
+    if (localFiles()) items.push({ label: target.classList.contains('md-path-folder') ? t('Ordner öffnen') : t('Öffnen'), action: () => window.open(href, '_blank', 'noopener') });
+    items.push({ label: t('Pfad kopieren'), title: path, action: () => copyPath(path) });
+    showContextMenu(items, e.clientX, e.clientY);
+  }
+
+  /** Einfügen in den Text: nur Pfade (etwa «Als Pfad kopieren» im Explorer) → mit Leerzeichen in spitzen Klammern, ohne Anführungszeichen. */
+  function pastePathText(e) {
+    const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+    const conv = text ? M.pastePaths(text) : null;
+    if (!conv) return false;
+    e.preventDefault();
+    el.body.focus();
+    if (!document.execCommand || !document.execCommand('insertText', false, conv)) { // execCommand behält das Rückgängigmachen
+      const s0 = el.body.selectionStart, e0 = el.body.selectionEnd;
+      el.body.setRangeText(conv, s0, e0, 'end');
+      onEdit();
+    }
+    return true;
   }
 
   /** «Link kopieren»: volle Adresse der Notiz in die Zwischenablage (sonst zum Kopieren angezeigt). */
@@ -5021,8 +5081,12 @@
     el.body.addEventListener('paste', async e => {
       const items = e.clipboardData && e.clipboardData.items ? [...e.clipboardData.items] : [];
       const files = items.filter(i => i.kind === 'file' && i.type.startsWith('image/')).map(i => i.getAsFile()).filter(Boolean);
-      if (files.length) { e.preventDefault(); await addAttachments(files); }
+      if (files.length) { e.preventDefault(); await addAttachments(files); return; }
+      if (!el.body.readOnly) pastePathText(e);
     });
+    // Pfade (v2.12.0) überall, wo Markdown steht (Vorschau, Listen): vor den Klicks der Ansichten
+    document.addEventListener('click', onPathClick, true);
+    document.addEventListener('contextmenu', onPathContextMenu, true);
     el.body.addEventListener('dragover', e => {
       if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); el.body.classList.add('drop-target'); }
     });

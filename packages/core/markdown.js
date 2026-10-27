@@ -40,6 +40,83 @@
     return null;
   }
 
+  // ---------- Pfade auf Dateien und Ordner (v2.12.0) ----------
+  // Netzwerkpfade \\server\freigabe\…, Laufwerkspfade C:\… und file://-Adressen werden zu Links. Frei im Text endet ein Pfad beim ersten
+  // Leerzeichen (Satzzeichen am Ende gehören nicht dazu); mit Leerzeichen in spitzen Klammern <\\server\Projekte\Angebot 2026.docx> oder
+  // als Ziel eines Links [Angebot](<…>). Lokal öffnet der Link die Datei im Browser; im Dienst sperren Browser solche Links, dort kopiert
+  // ein Klick den Pfad (packages/ui/app.js). Bilder mit einem solchen Pfad zeigt nur die lokale Version (configure({ localFiles })).
+
+  const conf = { localFiles: true };
+  /** Einstellungen der Ausprägung: localFiles = Pfade lassen sich öffnen (lokale Version, Seite aus einer Datei). */
+  function configure(o) { if (o && typeof o.localFiles === 'boolean') conf.localFiles = o.localFiles; }
+
+  const UNC_RE = /^\\\\([^\\/\s<>"|*?:]+)((?:\\[^\\<>"|*?:\n]*)*)$/;
+  const DRIVE_RE = /^([A-Za-z]):\\([^<>"|*?:\n]*)$/;
+  const FILE_URL_RE = /^file:\/\/[^<>"\n]*$/i;
+  const encodeSeg = s => encodeURIComponent(s).replace(/%24/g, '$');
+
+  /** Pfad oder file://-Adresse → { href (file://…), path (zum Kopieren, Windows-Schreibweise), folder } oder null. */
+  function pathInfo(raw) {
+    const p = String(raw == null ? '' : raw).trim();
+    let m;
+    const folderOf = last => !last || !/\.[A-Za-z0-9]{1,8}$/.test(last);
+    if ((m = UNC_RE.exec(p))) {
+      const segs = m[2].split('\\').slice(1);
+      if (!segs.length || !segs[0]) return null; // mindestens \\server\freigabe
+      return { href: 'file://' + m[1] + '/' + segs.map(encodeSeg).join('/'), path: p, folder: folderOf(segs[segs.length - 1]) };
+    }
+    if ((m = DRIVE_RE.exec(p))) {
+      const segs = m[2].split('\\');
+      return { href: 'file:///' + m[1].toUpperCase() + ':/' + segs.map(encodeSeg).join('/'), path: p, folder: folderOf(segs[segs.length - 1]) };
+    }
+    if (FILE_URL_RE.test(p)) {
+      const href = p.replace(/ /g, '%20');
+      let decoded = href;
+      try { decoded = decodeURIComponent(href); } catch (e) { /* so lassen */ }
+      const rest = decoded.replace(/^file:\/\//i, '').replace(/^localhost(?=\/)/i, '');
+      let path;
+      if (/^\/[A-Za-z]:\//.test(rest)) path = rest.slice(1).replace(/\//g, '\\');          // file:///C:/… → C:\…
+      else if (rest.startsWith('/')) path = rest;                                            // file:///home/… (Linux, macOS)
+      else path = '\\\\' + rest.replace(/\//g, '\\');                                        // file://server/… → \\server\…
+      const last = rest.split('/').pop();
+      return { href, path, folder: folderOf(last) };
+    }
+    return null;
+  }
+
+  /** Text aus der Zwischenablage, der nur aus Pfaden besteht (etwa «Als Pfad kopieren» im Explorer: "C:\Projekte\Angebot 2026.docx"):
+   *  Pfade mit Leerzeichen in spitze Klammern, Anführungszeichen weg, einer je Zeile. Sonst null (normal einfügen). */
+  function pastePaths(text) {
+    const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n').map(l => l.trim()).filter(Boolean);
+    if (!lines.length || lines.length > 50) return null;
+    let changed = false;
+    const out = [];
+    for (const line of lines) {
+      const bare = /^"(.*)"$/.exec(line) ? line.slice(1, -1) : line;
+      if (!(UNC_RE.test(bare) || DRIVE_RE.test(bare))) return null;
+      const next = /\s/.test(bare) ? `<${bare}>` : bare;
+      if (next !== line) changed = true;
+      out.push(next);
+    }
+    return changed ? out.join('\n') : null;
+  }
+
+  /** Link auf einen Pfad: Symbol für Ordner oder Datei, voller Pfad als Tooltip, öffnet in einem neuen Tab. */
+  function pathLinkHtml(info, labelHtml) {
+    return `<a href="${escapeHtml(info.href)}" class="md-path ${info.folder ? 'md-path-folder' : 'md-path-file'}" data-path="${escapeHtml(info.path)}" title="${escapeHtml(info.path)}" target="_blank" rel="noopener noreferrer">` +
+      `<span class="md-path-icon" aria-hidden="true"></span>${labelHtml}</a>`;
+  }
+
+  /** Ein Pfad frei im Text ab dieser Stelle (\\server\… oder C:\… oder file://…), ohne Satzzeichen am Ende; sonst null. */
+  function barePathAt(rest) {
+    const m = /^(?:\\\\[^\\/\s<>"|*?:]+\\[^\s<>"|*?:]*|[A-Za-z]:\\[^\s<>"|*?:]*|file:\/\/[^\s<>"]+)/i.exec(rest);
+    if (!m) return null;
+    const raw = m[0].replace(/[.,;:!?)\]'"]+$/, '');
+    return pathInfo(raw) ? raw : null;
+  }
+
+  const pathBoundary = c => c === undefined || /[\s(\["'>]/.test(c);
+
   /** Erzeugt den Textrenderer: escaped und hebt optional Suchtreffer hervor. */
   function makeText(highlight) {
     if (!highlight) return s => escapeHtml(s);
@@ -103,8 +180,18 @@
 
       // Bild ![alt](src) – auch Anhänge att:ID
       if (ch === '!' && src[i + 1] === '[') {
-        const m = /^!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/.exec(src.slice(i));
+        const m = /^!\[([^\]]*)\]\((?:<([^>\n]+)>|([^)\s]+))(?:\s+"([^"]*)")?\)/.exec(src.slice(i));
+        const file = m ? pathInfo(m[2] || m[3]) : null;
+        if (file) { // Bild mit einem Pfad (v2.12.0): lokal das Bild, im Dienst ein Link auf den Pfad
+          out += conf.localFiles
+            ? `<img src="${escapeHtml(file.href)}" alt="${escapeHtml(m[1])}" class="md-path-img" data-path="${escapeHtml(file.path)}"${m[4] ? ` title="${escapeHtml(m[4])}"` : ''}>`
+            : pathLinkHtml(file, text(m[1] || file.path));
+          i += m[0].length;
+          continue;
+        }
+        if (m && m[2]) { emit(m[0]); i += m[0].length; continue; } // <…> nur für Pfade
         if (m) {
+          m[2] = m[3]; m[3] = m[4];
           const att = /^att:(\d+)$/.exec(m[2]);
           let url = null;
           if (att) url = ctx.resolveAttachment ? ctx.resolveAttachment(Number(att[1])) : null;
@@ -138,8 +225,11 @@
 
       // Link [text](url)
       if (ch === '[') {
-        const m = /^\[([^\]]+)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/.exec(src.slice(i));
+        const m = /^\[([^\]]+)\]\((?:<([^>\n]+)>|([^)\s]+))(?:\s+"([^"]*)")?\)/.exec(src.slice(i));
+        if (m) m.splice(2, 2, m[2] || m[3]); // Ziel mit oder ohne spitze Klammern: [0] alles, [1] Text, [2] Ziel, [3] Titel
         const nl = m && ctx.noteLink ? ctx.noteLink(m[2]) : null;
+        const file = m && !nl ? pathInfo(m[2]) : null;
+        if (file) { out += pathLinkHtml(file, renderInline(m[1], ctx)); i += m[0].length; continue; } // Pfad (v2.12.0)
         if (nl) {
           out += noteLinkHtml(nl, m[2], m[1] === m[2] ? null : renderInline(m[1], ctx), ctx);
           i += m[0].length;
@@ -162,11 +252,24 @@
       const it = /^(\*|_)(?=\S)([^*_]*?\S)\1(?![\w*_])/.exec(src.slice(i));
       if (it && (i === 0 || !/\w/.test(src[i - 1]))) { out += '<em>' + renderInline(it[2], ctx) + '</em>'; i += it[0].length; continue; }
 
+      // Pfad in spitzen Klammern, auch mit Leerzeichen: <\\server\Projekte\Angebot 2026.docx> (v2.12.0)
+      if (ch === '<') {
+        const m = /^<((?:\\\\|[A-Za-z]:\\|file:\/\/)[^<>\n]+)>/i.exec(src.slice(i));
+        const file = m ? pathInfo(m[1]) : null;
+        if (file) { out += pathLinkHtml(file, text(m[1])); i += m[0].length; continue; }
+      }
+
       // Adresse einer Notiz dieser App (auch file:// in der lokalen Version): Link mit dem Titel der Notiz
       if (ctx.noteLink && (ch === 'h' || ch === 'f') && (i === 0 || !/[\w@]/.test(src[i - 1]))) {
         const um = /^(?:https?|file):\/\/[^\s<>()\]]+[^\s<>()\].,;:!?'"]/.exec(src.slice(i));
         const nl = um ? ctx.noteLink(um[0]) : null;
         if (nl) { out += noteLinkHtml(nl, um[0], null, ctx); i += um[0].length; continue; }
+      }
+
+      // Pfad frei im Text: \\server\freigabe\…, C:\… oder file://… (v2.12.0); endet beim Leerzeichen
+      if ((ch === '\\' || ch === 'f' || ch === 'F' || src[i + 1] === ':') && pathBoundary(i === 0 ? undefined : src[i - 1])) {
+        const raw = barePathAt(src.slice(i));
+        if (raw) { out += pathLinkHtml(pathInfo(raw), text(raw)); i += raw.length; continue; }
       }
 
       // Automatischer Link (https://… oder www.…)
@@ -179,9 +282,10 @@
       }
 
       // Normaler Text bis zum nächsten Sonderzeichen (mit Personen-Marken auch bis "@" und "(")
-      const stops = (ctx.people ? '`![*_~hw@(' : '`![*_~hw') + (ctx.noteLink ? 'f' : '');
+      const stops = (ctx.people ? '`![*_~hw@(' : '`![*_~hw') + 'f\\<';
       let j = i + 1;
-      while (j < n && !stops.includes(src[j])) j++;
+      // ein Laufwerkspfad beginnt mit einem Buchstaben: vor «X:\» anhalten, wenn davor ein Leerzeichen oder der Anfang steht
+      while (j < n && !stops.includes(src[j]) && !(src[j + 1] === ':' && src[j + 2] === '\\' && /[A-Za-z]/.test(src[j]) && pathBoundary(src[j - 1]))) j++;
       emit(src.slice(i, j));
       i = j;
     }
@@ -581,5 +685,5 @@
     return makeText(highlight)(s);
   }
 
-  global.NoNotesMarkdown = { render, inline, escapeHtml, highlightText, subEntriesHtml };
+  global.NoNotesMarkdown = { render, inline, escapeHtml, highlightText, subEntriesHtml, configure, pathInfo, pastePaths };
 })(window);

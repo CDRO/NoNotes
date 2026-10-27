@@ -447,6 +447,27 @@ zurück, ist die zuletzt offene Notiz ausgewählt.
   Bereich; seinen Titel kennt die Vorschau erst dort. Im Dienst ist die Adresse eine echte Adresse auf dem Server: wer nicht angemeldet ist,
   landet nach der Anmeldung bei der Notiz.
 
+### Pfade auf Dateien und Ordner (seit 2.12.0)
+
+Netzwerkpfade, Laufwerkspfade und `file://`-Adressen im Text werden zu Links, mit einem Symbol für Datei oder Ordner:
+
+```markdown
+Offerte: \\srv01\Projekte\Offerte.pdf, Ablage: Z:\Team\Ablage\ oder file:///C:/Daten/Bericht.pdf
+Mit Leerzeichen: <\\srv01\Projekte\Angebot 2026.docx> oder [Angebot](<\\srv01\Projekte\Angebot 2026.docx>)
+![Grundriss](<Z:\Bau\Pläne\Grundriss EG.png>)
+```
+
+- Frei im Text endet ein Pfad beim ersten Leerzeichen; Satzzeichen am Ende (Punkt, Komma, Klammer) gehören nicht dazu. Pfade mit
+  Leerzeichen stehen in spitzen Klammern. «Als Pfad kopieren» im Explorer (Umschalt+Rechtsklick) liefert den Pfad in Anführungszeichen;
+  beim Einfügen macht NoNotes daraus von selbst `<…>`.
+- Als Ordner gilt ein Pfad, der mit `\` oder `/` endet oder dessen letzter Teil keine Endung hat.
+- **Lokal** öffnet ein Klick die Datei in einem neuen Tab: PDF, Bilder und Text zeigt der Browser, Word und Excel lädt er herunter, ein
+  Ordner zeigt seinen Inhalt. Den Explorer oder Word starten kann ein Browser nicht; dafür Rechtsklick → **Pfad kopieren** (in der
+  Schreibweise von Windows) und im Explorer einfügen. Bilder mit einem Pfad erscheinen in der Vorschau.
+- **Im Dienst** sperren Browser Links auf lokale Dateien. Der Pfad sieht gleich aus, ein Klick kopiert ihn; ein Bild erscheint als Link.
+- Der Text bleibt, wie er geschrieben ist (Export, Agenten). Andere Markdown-Programme zeigen einen Netzwerkpfad mit nur einem `\` am Anfang,
+  weil sie `\\` als maskierten Backslash lesen.
+
 ### Aufgaben
 
 Eine Markdown-Checkbox ist eine Aufgabe: `- [ ] Offerte einholen` offen, `- [x] …` erledigt.

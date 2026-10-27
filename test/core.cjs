@@ -2239,6 +2239,45 @@ async function runReleaseNotes(browser, part, step) {
   }
 }
 
+// ============================================================
+/* Pfade auf Dateien und Ordner (v2.12.0) als reine Funktionen: Erkennen, Adresse, Schreibweise zum Kopieren, Ordner, Einfügen, Grenzen. */
+async function runPathsCore(browser, part, step) {
+  globalThis.window = globalThis;
+  for (const f of ['i18n.js', 'embeds.js', 'markdown.js']) require(path.join(__dirname, '..', 'packages', 'core', f));
+  const M = window.NoNotesMarkdown;
+  M.configure({ localFiles: true });
+  const P = M.pathInfo;
+  assert.deepEqual(P('\\\\srv01\\Projekte\\Angebot 2026.docx'), { href: 'file://srv01/Projekte/Angebot%202026.docx', path: '\\\\srv01\\Projekte\\Angebot 2026.docx', folder: false });
+  assert.deepEqual(P('\\\\srv01\\Daten$\\Ablage\\'), { href: 'file://srv01/Daten$/Ablage/', path: '\\\\srv01\\Daten$\\Ablage\\', folder: true }, 'versteckte Freigabe mit $');
+  assert.deepEqual(P('z:\\Team'), { href: 'file:///Z:/Team', path: 'z:\\Team', folder: true }, 'ohne Endung: Ordner');
+  assert.equal(P('C:\\Ä#ö%.txt').href, 'file:///C:/%C3%84%23%C3%B6%25.txt', 'Umlaute, # und % kodiert');
+  assert.deepEqual(P('file:///C:/Daten/Bericht%202026.pdf'), { href: 'file:///C:/Daten/Bericht%202026.pdf', path: 'C:\\Daten\\Bericht 2026.pdf', folder: false });
+  assert.equal(P('file://srv01/Projekte/x.pdf').path, '\\\\srv01\\Projekte\\x.pdf');
+  assert.equal(P('file://localhost/C:/x/y.txt').path, 'C:\\x\\y.txt');
+  assert.equal(P('file:///home/anna/a b/').path, '/home/anna/a b/');
+  for (const bad of ['\\\\srv01', '\\\\srv01\\', 'C:Daten', 'https://x.ch', 'C:\\a<b', '\\\\srv\\a"b', 'javascript:alert(1)']) assert.equal(P(bad), null, bad);
+  part('Pfad → Adresse: Netz, Laufwerk, file://, Kodierung, Schreibweise zum Kopieren, Ordner, keine falschen Treffer');
+
+  const html = M.inline('A \\\\srv\\x\\a.pdf, B (Z:\\T\\) C <\\\\srv\\a b\\c.docx> D [Text](<C:\\a b\\>) E `C:\\code` F a:b G x\\\\y H 12:30');
+  const hrefs = [...html.matchAll(/href="([^"]+)"/g)].map(m => m[1]);
+  assert.deepEqual(hrefs, ['file://srv/x/a.pdf', 'file:///Z:/T/', 'file://srv/a%20b/c.docx', 'file:///C:/a%20b/'], html);
+  assert.ok(html.includes('<code>C:\\code</code>') && html.includes('x\\\\y') && html.includes('a:b'), 'Code und gewöhnlicher Text bleiben');
+  assert.ok(html.includes('a.pdf</a>, B') && html.includes('T\\</a>) C'), 'Komma und Klammer nach dem Pfad bleiben Text');
+  const safe = M.inline('<\\\\srv\\x" onclick="alert(1)> und \\\\srv\\y"onmouseover=1');
+  assert.ok(!/<a [^>]*on\w+=/.test(safe), 'keine Attribute aus dem Pfad: ' + safe);
+  M.configure({ localFiles: false });
+  assert.match(M.inline('![Plan](<\\\\srv\\b\\Plan 1.png>)'), /^<a href="file:\/\/srv\/b\/Plan%201\.png" class="md-path md-path-file"[^>]*><span class="md-path-icon"[^>]*><\/span>Plan<\/a>$/, 'im Dienst: Bild als Link');
+  M.configure({ localFiles: true });
+  assert.match(M.inline('![Plan](<\\\\srv\\b\\Plan 1.png>)'), /^<img src="file:\/\/srv\/b\/Plan%201\.png" alt="Plan" class="md-path-img"/, 'lokal: das Bild');
+  part('In der Zeile: Pfade mit und ohne Klammern, Link mit Text, Satzzeichen, Code, keine eingeschleusten Attribute, Bilder lokal und im Dienst');
+
+  assert.equal(M.pastePaths('"C:\\Projekte\\Angebot 2026.docx"'), '<C:\\Projekte\\Angebot 2026.docx>');
+  assert.equal(M.pastePaths('"\\\\srv\\a\\x.pdf"\r\n"\\\\srv\\a\\y z.pdf"'), '\\\\srv\\a\\x.pdf\n<\\\\srv\\a\\y z.pdf>', 'mehrere Dateien, je eine Zeile');
+  assert.equal(M.pastePaths('C:\\a\\b.txt'), null, 'nichts zu ändern');
+  assert.equal(M.pastePaths('Siehe C:\\a b'), null, 'kein reiner Pfad');
+  part('Einfügen: «Als Pfad kopieren» aus dem Explorer, mehrere Dateien, sonst unverändert');
+}
+
 suite('Kern-Test', [
   { name: 'Zusammenführen: Myers-Vergleich, Dreiwege-Zusammenführung mit Zufallsdaten, Konflikte, Cursor', run: runMerge },
   { name: 'Datenbank: Standardschema, Angleichen alter Dateien (Schema 1, 11, 12, 13), Konflikterkennung, Autor im Verlauf, Querverweise, Entscheide und Personen', run: runDb },
@@ -2247,6 +2286,7 @@ suite('Kern-Test', [
   { name: 'Build: fremde Ausprägung, Verzeichnis der Erweiterungen, --plugins, klare Fehler', run: runBuild },
   { name: 'Videoadressen: YouTube, Vimeo, Dailymotion, Fälschungen, Karte im Markdown, maskierte Titel', run: runEmbeds },
   { name: 'Tabellen: Lesen, Einfügen, Tab und Enter, Rechtsklick-Schritte, Vorschau, Angaben von Erweiterungen', run: runTables },
+  { name: 'Pfade auf Dateien und Ordner: Netz, Laufwerk, file://, Kodierung, Kopieren, in der Zeile, Bilder, Einfügen aus dem Explorer', run: runPathsCore },
   { name: 'Personen an Aufgaben und Tabellenfelder: Parser, Editor, Vorschau, Index (Schema 16), Abhaken, Antwort ins Feld, Agenten, Export-Abschnitte', run: runCellsPeople },
   { name: 'Agenten: Werkzeugkatalog (Notizen, Fragen, Entscheide, Aufgaben, Verlauf, Archiv, Papierkorb, Lesemodus, Ressourcen) und MCP-Protokoll aller Fassungen', run: runAgent },
   { name: 'Programm für den eigenen Rechner: Einträge für Claude Code und andere, Datei, MCP über die Standardeingabe, Änderungen von aussen, zwei Prozesse mit Sperre, Lesemodus', run: runAgentProgram },
