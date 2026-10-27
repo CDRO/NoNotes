@@ -90,7 +90,8 @@
    *  ein Block in einer Liste ("- ?!```") ein Listenpunkt mit der Beschreibung eingerückt darunter.
    *  Code bleibt, wie er ist. inner: im Block (dort gibt es keine Blöcke). */
   function bodyToMarkdown(body, resolveLink, resolveAttachment, inner) {
-    const lines = String(body || '').replace(/\r\n?/g, '\n').split('\n');
+    const P = global.NoNotesPlaceholders; // ausfüllbare Platzhalter (v2.12.0): nur die Werte, ohne Beschreibungen
+    const lines = String(P && !inner ? P.plain(String(body || '')) : body || '').replace(/\r\n?/g, '\n').split('\n');
     const out = [];
     const Q = global.NoNotesQuestions;
     const D = global.NoNotesDates;

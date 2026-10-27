@@ -1177,9 +1177,13 @@ async function runAgentProgram(browser, part, step) {
     await init(c);
     let rv = await c.request('tools/call', { name: 'list_templates', arguments: {} });
     assert.ok(!rv.result.isError, JSON.stringify(rv));
-    assert.match(rv.result.content[0].text, /^\[t Entscheidungsvorlage\.md\] "Entscheidungsvorlage" — .*\n\[t Sitzungsprotokoll\.md\] "Sitzungsprotokoll" — .* — 3 notes$/);
+    assert.match(rv.result.content[0].text, /^\[t Aufgabe\.md\] "Aufgabe" — .* — 1 note\n  fields: "Beschreibung": .*; "Wer": .*; "Bis wann" \(default "\{\{datum\+7\}\}"\): .*; "Ziel": .*\n\[t Entscheidungsvorlage\.md\] "Entscheidungsvorlage" — .*\n\[t Sitzungsprotokoll\.md\] "Sitzungsprotokoll" — .* — 3 notes$/);
     rv = await c.request('tools/call', { name: 'create_note_from_template', arguments: { template_id: 'Sitzungsprotokoll.md' } });
     assert.match(rv.result.content[0].text, /^Created note \[1\] "Sitzung \d+\.\d+\.\d{4}" from template "Sitzungsprotokoll" with 2 sub-notes at the root\.$/);
+    rv = await c.request('tools/call', { name: 'create_note_from_template', arguments: { template_id: 'Aufgabe.md', values: { Beschreibung: 'Offerte einholen', wer: 'anna' } } });
+    assert.match(rv.result.content[0].text, /^Created note \[4\] "Offerte einholen" from template "Aufgabe" at the root\.$/, 'Werte für die ausfüllbaren Platzhalter (v2.12.0)');
+    rv = await c.request('tools/call', { name: 'get_note', arguments: { id: 4 } });
+    assert.match(JSON.stringify(rv.result.structuredContent), /- \[ \] Offerte einholen @anna @\{\{\?Bis wann: \d{1,2}\.\d{1,2}\.\d{4}\}\}/, 'nicht gegebene bleiben offen, mit Vorschlag');
     assert.equal(await c.stop(), 0);
     const own = path.join(tmp, 'eigene');
     fs.mkdirSync(own);
@@ -2172,6 +2176,9 @@ async function runReleaseNotes(browser, part, step) {
     bad(t => t + '\n\nTODO: noch schreiben', /Platzhalter übrig: «TODO»/, 'Platzhalter');
     fs.writeFileSync(path.join(dir, 'RELEASE.md'), good.replace('## Update von v9.8.0', '```markdown\n## Update im Beispiel\n1. sichern\n```\n\n## Update von v9.8.0'));
     assert.deepEqual(RN.check('v9.9.0', dir).errors, [], 'Überschriften in Codeblöcken zählen nicht als Abschnitt');
+    fs.writeFileSync(path.join(dir, 'RELEASE.md'), good.replace('## Update von v9.8.0', 'Schreibweise `{{?Kunde}}` und `` `{{datum}}` ``:\n\n````markdown\n```template-description Kunde\nTODO {{?Kunde}}\n```\n## Kein Abschnitt\n````\n\n## Update von v9.8.0'));
+    assert.deepEqual(RN.check('v9.9.0', dir).errors, [], 'Platzhalter und TODO in Code zählen nicht; ```` umschliesst ``` (v2.12.0)');
+    bad(t => t + '\n\nOffen: {{?Kunde}}', /Platzhalter übrig: «\{\{\?Kunde\}\}»/, 'ausserhalb von Code schon');
     bad(t => t.replace('../../../docs/PLUGINS.md', '../../../docs/GIBTS-NICHT.md'), /zeigt ins Leere/, 'toter Verweis');
     fs.writeFileSync(path.join(dir, 'gross.png'), Buffer.alloc(1100 * 1024));
     bad(t => t + '\n\n![zu gross](gross.png)', /höchstens 1024 KB/, 'zu grosses Bild');
@@ -2278,6 +2285,117 @@ async function runPathsCore(browser, part, step) {
   part('Einfügen: «Als Pfad kopieren» aus dem Explorer, mehrere Dateien, sonst unverändert');
 }
 
+// ============================================================
+/* Ausfüllbare Platzhalter (v2.12.0) als reine Funktionen und im Kern: Erkennen (nicht in Code), Werte für Aufgaben, Fragen, Personen und
+   Termine, Vorschau, Druck und Export, Beschreibungen (sammeln, anhängen, wegräumen), Vorlagen anlegen und einfügen, Agenten. */
+async function runPlaceholdersCore(browser, part, step) {
+  const sandbox = { console };
+  sandbox.window = sandbox;
+  const context = vm.createContext(sandbox);
+  for (const f of ['packages/core/i18n.js', 'packages/core/placeholders.js', 'packages/core/history.js', 'packages/core/dates.js', 'packages/core/questions.js',
+    'packages/core/tables.js', 'packages/core/tasks.js', 'packages/core/links.js', 'packages/core/embeds.js', 'packages/core/markdown.js', 'packages/core/backend.js',
+    'packages/core/merge.js', 'packages/core/templates.js', 'packages/core/zip.js', 'packages/core/export.js', 'packages/data/db.js',
+    'packages/store-local/backend-local.js', 'packages/agent/catalog.js']) {
+    vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
+  }
+  const P = sandbox.NoNotesPlaceholders, M = sandbox.NoNotesMarkdown, T = sandbox.NoNotesTemplates;
+  const json = v => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
+
+  // Erkennen und Werte
+  const text = 'A {{?Kunde}} B {{?Kunde: Muster AG}} `{{?Code}}`\n```\n{{?Block}}\n```\n{{? }} {{?Leer: }}';
+  assert.deepEqual(json(P.scan(text).map(p => [p.name, p.value])), [['Kunde', null], ['Kunde', 'Muster AG'], ['Leer', '']], 'nicht in Code, ohne Namen kein Platzhalter');
+  assert.equal(P.flatten('x {{?A}} y {{?B: b}}'), 'x [A] y b');
+  assert.equal(P.forPreview('@{{?Wer: anna}} {{?Ziel: frei}} [[{{?Notiz: Plan}}]] {{?Offen}}'), '@anna {{?Ziel: frei}} [[Plan]] {{?Offen}}', 'nur hängende Werte aufgelöst, offene bleiben');
+  assert.equal(P.fill('{{?Kunde}} und {{?kunde: alt}} und {{?Ort}}', { KUNDE: 'Neu' }), 'Neu und Neu und {{?Ort}}', 'Gross-/Kleinschreibung egal');
+  assert.equal(P.fill('{{?Kunde}}', { Kunde: 'Neu' }, { keep: true }), '{{?Kunde: Neu}}');
+  assert.equal(P.resolve('{{?A: a}} {{?B}} {{?A}}', 'a'), 'a {{?B}} A');
+  assert.equal(P.resolve('{{?A: a}} {{?B}}'), 'a B');
+  assert.deepEqual(json(P.at('xx {{?A: aa}} yy', 6)), { name: 'A', value: 'aa', start: 3, end: 13, valueStart: 9, valueEnd: 11 });
+  part('Erkennen: offen und ausgefüllt, nicht in Code; flatten, Vorschau (hängende Werte), fill, resolve, at');
+
+  // Beschreibungen
+  const withDesc = 'Text {{?A}} {{?B}}\n\n```template-description A\nfür **A**\n```\n```js\n```template-description X\n```\n```template-description B\nB eins\nB zwei\n```\n';
+  const ds = P.descriptions(withDesc);
+  assert.deepEqual([...ds.keys()], ['a', 'b'], 'Beschreibungen in einem anderen Codeblock zählen nicht');
+  assert.equal(P.describe(ds, 'b'), 'B eins\nB zwei');
+  assert.equal(P.stripDescriptions(withDesc), 'Text {{?A}} {{?B}}\n\n```js\n```template-description X\n```\n');
+  const appended = P.appendDescriptions('Nur {{?B}}', ds);
+  assert.equal(appended, 'Nur {{?B}}\n\n```template-description B\nB eins\nB zwei\n```\n', 'nur für vorkommende Namen');
+  assert.equal(P.appendDescriptions(appended, ds), appended, 'nicht doppelt');
+  assert.equal(P.pruneDescriptions(appended.replace('{{?B}}', 'fertig')), 'Nur fertig', 'ohne Platzhalter weg, samt Zeilenumbruch');
+  assert.equal(P.pruneDescriptions(appended, '{{?B}}'), appended, 'der Titel zählt mit');
+  assert.equal(P.plain('X {{?A: a}} {{?B}}\n\n```template-description A\nd\n```'), 'X a [B]');
+  part('Beschreibungen: sammeln (nicht aus anderem Code), anhängen nur für vorkommende Namen, wegräumen ohne Platzhalter, Druck und Export');
+
+  // Vorschau und Druck
+  const html = M.render('- [ ] {{?Was: Offerte}} @{{?Wer: anna}} @{{?Bis: 31.10.2026}}\n\nZiel: {{?Ziel}}\n\n```template-description Ziel\ngeheim\n```');
+  assert.ok(html.includes('<span class="md-ph" data-ph="Was"'), 'frei stehend: Platzhalter');
+  assert.ok(html.includes('class="md-person" data-handle="anna"') && /md-due[^>]*>31\.10\.2026/.test(html), 'Person und Termin wirken');
+  assert.ok(html.includes('<span class="md-ph open" data-ph="Ziel"') && !html.includes('geheim'), 'offen gelb, Beschreibung unsichtbar');
+  const printed = M.render('Ziel: {{?Ziel}}, Wert {{?A: **fett**}}', { placeholders: 'plain' });
+  assert.equal(printed, '<p>Ziel: [Ziel], Wert <strong>fett</strong></p>');
+  part('Vorschau: frei stehend markiert, offen gelb, Personen und Termine wirken, Beschreibung unsichtbar; Druck nur Werte');
+
+  // Index: Aufgaben, Fragen, Abhaken, Antworten
+  const SQL = await initSqlJs();
+  const db = sandbox.NoNotesDB.open(SQL, null);
+  const B = sandbox.NoNotesBackendLocal.create({ getDb: () => db, onChange: () => {} });
+  const id = await B.createNote(null);
+  await B.updateNote(id, 'Aufgabe', '- [ ] {{?Was: Offerte}} @{{?Wer: anna}} @{{?Bis: 31.10.2026}}\n? {{?Frage: Budget?}} @{{?An: ben}}\n- [ ] {{?Offen}}', {});
+  const tasks = json(await B.listTasks({ status: 'all' }));
+  assert.deepEqual(tasks.map(t => [t.text, t.due, t.people.map(p => p.handle)]), [['Offerte @anna', '2026-10-31', ['anna']], ['[Offen]', null, []]]);
+  const qs = json(await B.listQuestions({ status: 'all' }));
+  assert.deepEqual(qs.map(q => [q.text, q.people.map(p => p.handle)]), [['Budget? @ben', ['ben']]]);
+  await B.setTaskDone(tasks[0].id, true);
+  assert.ok(json(await B.getNote(id)).body.startsWith('- [x] {{?Was: Offerte}} @{{?Wer: anna}}'), 'Abhaken lässt die Platzhalter stehen');
+  await B.answerQuestion(qs[0].id, 'Ja', {});
+  assert.ok(json(await B.getNote(id)).body.includes('? {{?Frage: Budget?}} @{{?An: ben}}\n! Ja'), 'Antwort darunter');
+  part('Index: Aufgaben, Fragen, Personen und Termine aus den Werten; Abhaken und Antworten lassen die Platzhalter stehen');
+
+  // Export
+  const md = sandbox.NoNotesExport.bodyToMarkdown('X {{?A: a}} {{?B}}\n\n```template-description A\nd\n```', () => null, () => null);
+  assert.equal(md.trim(), 'X a [B]');
+  part('Export: Werte, offene als [Name], ohne Beschreibungen');
+
+  // Vorlagen: Kopf, Beschreibungen an jede Notiz, die den Platzhalter hat; Einfügen hängt sie ans Ende
+  const tpl = T.parse('---\nnonotes: 1\nname: "P"\ntitle: "Projekt {{?Kunde}}"\nplaceholders: "behalten"\n---\nKunde {{?Kunde}}, Termin @{{?Bis: {{datum+7}}}}\n```template-description Kunde\nFirma\n```\n```template-description Bis\nDatum\n```\n<!-- nonotes:note {"depth":1,"title":"Offerte","tags":[]} -->\nFür {{?Kunde}}\n<!-- nonotes:note {"depth":1,"title":"Leer","tags":[]} -->\nnichts', 'p.md');
+  assert.equal(tpl.placeholders, 'keep', 'behalten/keep');
+  assert.match(T.toMarkdown(tpl), /\nplaceholders: "keep"\n---\n/);
+  const now = new Date(2026, 9, 20, 9, 5);
+  const ids = await T.create(B, tpl, null, { now });
+  const n0 = json(await B.getNote(ids[0])), n1 = json(await B.getNote(ids[1])), n2 = json(await B.getNote(ids[2]));
+  assert.equal(n0.title, 'Projekt {{?Kunde}}');
+  assert.equal(n0.body, 'Kunde {{?Kunde}}, Termin @{{?Bis: 27.10.2026}}\n\n```template-description Kunde\nFirma\n```\n```template-description Bis\nDatum\n```\n', 'automatischer Vorschlag, Beschreibungen am Ende');
+  assert.equal(n1.body, 'Für {{?Kunde}}\n\n```template-description Kunde\nFirma\n```\n', 'die Unternotiz hat ihre Beschreibung');
+  assert.equal(n2.body, 'nichts', 'ohne Platzhalter keine Beschreibung');
+  const ins = await T.insert(B, tpl, id, 'Oben\nUnten', 5, { now });
+  assert.equal(ins.body.slice(ins.start, ins.caret), 'Kunde {{?Kunde}}, Termin @{{?Bis: 27.10.2026}}', 'start und caret umfassen das Eingefügte');
+  assert.ok(ins.body.endsWith('Unten\n\n```template-description Kunde\nFirma\n```\n```template-description Bis\nDatum\n```\n'), 'Beschreibungen am Ende der Notiz');
+  const filled = await T.create(B, tpl, null, { now }, { values: { kunde: 'Muster AG' }, keep: true });
+  assert.equal(json(await B.getNote(filled[0])).title, 'Projekt Muster AG');
+  assert.ok(json(await B.getNote(filled[0])).body.startsWith('Kunde {{?Kunde: Muster AG}}, Termin'));
+  part('Vorlagen: Kopf «placeholders», automatischer Vorschlag, Beschreibungen je Notiz, Einfügen mit Bereich und Beschreibungen am Ende, Werte beim Anlegen');
+
+  // Agenten: Felder mit Beschreibung; Werte, je nach Einstellung behalten
+  const store = new Map([['p', tpl], ['q', Object.assign({}, tpl, { placeholders: null })]]);
+  const provider = { list: async () => [...store.entries()].map(([k, v]) => ({ id: k, name: v.name, notes: v.notes.length })), get: async k => store.get(k) };
+  const cat = sandbox.NoNotesAgent.create(B, { author: 'Agent', templates: provider, templateContext: () => ({ now }) });
+  let res = await cat.call('list_templates', {});
+  assert.match(res.content[0].text, /fields: "Kunde": Firma; "Bis" \(default "\{\{datum\+7\}\}"\): Datum/);
+  assert.deepEqual(json(res.structuredContent).items[0].fields.map(f => f.name), ['Kunde', 'Bis']);
+  res = await cat.call('create_note_from_template', { template_id: 'q', values: { Kunde: 'Beta GmbH', Bis: '1.12.2026' } });
+  assert.ok(!res.isError, res.content[0].text);
+  let made = json(await B.getNote(json(res.structuredContent).id));
+  assert.equal(made.title, 'Projekt Beta GmbH');
+  assert.equal(made.body.split('\n')[0], 'Kunde Beta GmbH, Termin @1.12.2026', 'ohne Einstellung: nur die Werte');
+  await B.setMeta('templates.keepPlaceholders', '1');
+  res = await cat.call('create_note_from_template', { template_id: 'q', values: { Kunde: 'Gamma' } });
+  made = json(await B.getNote(json(res.structuredContent).id));
+  assert.equal(made.body.split('\n')[0], 'Kunde {{?Kunde: Gamma}}, Termin @{{?Bis: 27.10.2026}}', 'mit Einstellung: behalten; ohne Wert bleibt der Vorschlag');
+  assert.match(sandbox.NoNotesAgent.INSTRUCTIONS, /"\{\{\?Name\}\}" is a fill-in placeholder/);
+  part('Agenten: Felder mit Vorschlag und Beschreibung, Werte beim Anlegen, «behalten» aus der Einstellung, Hinweis in den Anweisungen');
+}
+
 suite('Kern-Test', [
   { name: 'Zusammenführen: Myers-Vergleich, Dreiwege-Zusammenführung mit Zufallsdaten, Konflikte, Cursor', run: runMerge },
   { name: 'Datenbank: Standardschema, Angleichen alter Dateien (Schema 1, 11, 12, 13), Konflikterkennung, Autor im Verlauf, Querverweise, Entscheide und Personen', run: runDb },
@@ -2287,6 +2405,7 @@ suite('Kern-Test', [
   { name: 'Videoadressen: YouTube, Vimeo, Dailymotion, Fälschungen, Karte im Markdown, maskierte Titel', run: runEmbeds },
   { name: 'Tabellen: Lesen, Einfügen, Tab und Enter, Rechtsklick-Schritte, Vorschau, Angaben von Erweiterungen', run: runTables },
   { name: 'Pfade auf Dateien und Ordner: Netz, Laufwerk, file://, Kodierung, Kopieren, in der Zeile, Bilder, Einfügen aus dem Explorer', run: runPathsCore },
+  { name: 'Ausfüllbare Platzhalter: Erkennen, Werte im Index, Vorschau, Druck, Export, Beschreibungen, Vorlagen anlegen und einfügen, Agenten', run: runPlaceholdersCore },
   { name: 'Personen an Aufgaben und Tabellenfelder: Parser, Editor, Vorschau, Index (Schema 16), Abhaken, Antwort ins Feld, Agenten, Export-Abschnitte', run: runCellsPeople },
   { name: 'Agenten: Werkzeugkatalog (Notizen, Fragen, Entscheide, Aufgaben, Verlauf, Archiv, Papierkorb, Lesemodus, Ressourcen) und MCP-Protokoll aller Fassungen', run: runAgent },
   { name: 'Programm für den eigenen Rechner: Einträge für Claude Code und andere, Datei, MCP über die Standardeingabe, Änderungen von aussen, zwei Prozesse mit Sperre, Lesemodus', run: runAgentProgram },

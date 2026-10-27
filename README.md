@@ -416,14 +416,35 @@ Eine **Vorlage** ist eine Notiz samt Unternotizen als Markdown-Datei, mit Platzh
   Hochkomma). Statt Kürzeln ein Stil der Sprache der Oberfläche (`Intl.DateTimeFormat`): `kurz`, `mittel`, `lang`, `voll` (englisch
   `short`, `medium`, `long`, `full`) und `iso`. Ohne Format gilt `20.10.2026`. Als Termin taugen `T.M.JJJJ`, `TT.MM.JJJJ` und `JJJJ-MM-TT`
   (`@{{datum+7:JJJJ-MM-TT}}`). *Heutiges Datum ersetzen* behält beim Speichern die Schreibweise (`2026-10-20` wird `{{datum:JJJJ-MM-TT}}`).
+- **Ausfüllbare Platzhalter (seit 2.12.0):** `{{?Kunde}}` füllst du beim Anlegen selbst aus. Nach dem Einfügen ist der erste
+  ausgewählt (steht einer im Titel, zuerst der); Tippen ersetzt ihn, `Tab` springt zum nächsten, `Umschalt+Tab` zurück, `Esc` beendet
+  (nach dem letzten springt `Tab` ans Ende des eingefügten Texts). Gleiche Namen bekommen denselben Wert, im Text, im Titel und in den
+  Unternotizen der Vorlage. `{{?Bis wann: {{datum+7}}}}` bringt einen Vorschlag mit, der ausgewählt ist und mit `Tab` stehen bleibt.
+  Übersprungene bleiben als `{{?Name}}` stehen (gelb in der Vorschau) und lassen sich später anklicken. Eine **Beschreibung** je Name steht
+  als Block irgendwo in der Vorlage, mit Markdown:
+
+  ````
+  ```template-description Kunde
+  Firmenname wie im Handelsregister, **ohne** Rechtsform.
+  ```
+  ````
+
+  Sie erscheint in einem kleinen Kasten unter der Zeile, solange der Platzhalter ausgewählt ist; in der Notiz selbst ist sie nicht zu sehen.
+  **Platzhalter behalten** (*Datenbank → Vorlagen…*, je Bereich bzw. Arbeitsbereich; in einer Vorlage `"placeholders": "keep"` oder
+  `"remove"` im Kopf) lässt ausgefüllte als `{{?Kunde: Firma AG}}` stehen: Die Vorschau zeigt nur den Wert, fein unterstrichen; ein Klick
+  hinein wählt ihn und zeigt die Beschreibung wieder, `Tab` springt durch die Platzhalter der Notiz, Rechtsklick → *Platzhalter auflösen*
+  (oder alle der Notiz) macht daraus gewöhnlichen Text. Aufgaben, Fragen, Personen, Termine, Suche, Listen, Druck und Export sehen nur den
+  Wert (offene als `[Name]`): `- [ ] {{?Beschreibung}} @{{?Wer: anna}} @{{?Bis wann: 31.10.2026}}` ist eine Aufgabe für @anna bis
+  31.10.2026. In Code (`` ` ``…`` ` `` und Codeblöcke) ist nichts ein Platzhalter. Beispiel: die Vorlage *Aufgabe* im ZIP.
 - **Lokal:** Vorlagen liegen im Ordner `templates/` neben `index.html`, für alle Bereiche gleich. *Datenbank → Vorlagen…* verbindet den
   Ordner einmal (Edge, Chrome); danach liest NoNotes die `.md`-Dateien darin, und neue Vorlagen landen direkt dort (gleicher Name: `Name (2).md`).
   Ohne Ordner (oder in Firefox) wird die Vorlage heruntergeladen und in diesem Browser gemerkt. Im selben Dialog: Datei hinzufügen,
-  herunterladen, entfernen. Das ZIP bringt zwei Beispiele mit (*Sitzungsprotokoll*, *Entscheidungsvorlage*) und `templates/README.md`
+  herunterladen, entfernen. Das ZIP bringt drei Beispiele mit (*Sitzungsprotokoll*, *Entscheidungsvorlage*, *Aufgabe*) und `templates/README.md`
   mit dem Dateiformat.
-- **Dateiformat:** ein Kopf mit `name`, `description`, `title`, `tags` (Werte in JSON-Schreibweise), danach der Text; jede Unternotiz
+- **Dateiformat:** ein Kopf mit `name`, `description`, `title`, `tags`, `placeholders` (Werte in JSON-Schreibweise), danach der Text; jede Unternotiz
   beginnt mit `<!-- nonotes:note {"depth":1,"title":"…","tags":[]} -->`. Eine Markdown-Datei ohne Kopf ist auch eine Vorlage.
-- **Agenten:** `list_templates` und `create_note_from_template` (WebMCP in der App, `agent/nonotes-mcp.cjs` mit `templates/` neben der
+- **Agenten:** `list_templates` (mit den ausfüllbaren Platzhaltern als `fields`, samt Vorschlag und Beschreibung) und
+  `create_note_from_template` (mit `values` für sie; WebMCP in der App, `agent/nonotes-mcp.cjs` mit `templates/` neben der
   App oder `--templates <Ordner>`).
 - **Im Dienst** liegen Vorlagen auf dem Server: eine Organisation verwaltet sie zentral und weist sie Arbeitsbereichen zu (siehe dort).
 
@@ -618,6 +639,8 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | Oberfläche | `index.html`, `css/app.css`, `js/app.js` (`packages/ui/`) – reines HTML/CSS/JS, keine Frameworks; der Build kopiert nur |
 | Mindmap | `packages/ui/mindmap.js`: eigenes Layout (links/rechts ausbalanciert), SVG, Zoom, Ziehen, Tastatur; archivierte Knoten blass und gestrichelt |
 | Vorlagen | `packages/core/templates.js` (Dateiformat, Platzhalter, aus Notizen, Anlegen und Einfügen), Ablage über `shell.templates` (lokal `packages/store-local/templates-local.js`: Ordner `templates/` mit der File System Access API, sonst Browser), Beispiele in `templates/`; Tests `test/core.cjs` und `test/extend.cjs` |
+| Ausfüllbare Platzhalter | `packages/core/placeholders.js` (seit 2.12.0): `{{?Name}}` und `{{?Name: Wert}}` finden, ausfüllen und auflösen, Beschreibungsblöcke ```` ```template-description ```` ; Aufgaben, Fragen und Verweise lesen den Text mit den Werten (`flatten`), Druck und Export ohne Beschreibungen (`plain`); Sitzung zum Ausfüllen (Tab, Kasten, Rechtsklick) in `packages/ui/app.js` |
+| Pfade | `packages/core/markdown.js` (seit 2.12.0): `pathInfo` erkennt Netzwerk-, Laufwerks- und `file://`-Pfade, `configure({ localFiles })` legt fest, ob sie sich öffnen lassen; Klick und Rechtsklick in `packages/ui/app.js` |
 | Fragen und Entscheide | `packages/core/questions.js`: ein Parser für `?`-, `?!`-, `!`- und `!!`-Zeilen samt Datum und `@kürzel`, Einträge in Listen und Blöcke `?!```` … ```` ``` ```` mit Unter-Einträgen (`parseBlock` nutzen auch Vorschau und Export, `nest` die Ansichten und der Druck); Index in der Tabelle `questions` mit `kind`, `decided`, `people`, `details`, `parent_id` (Schema 15), bei jeder Änderung abgeglichen; Vorschläge für Kürzel über `packages/core/mentions.js`; Tests `test/core.cjs` (mehrzeilige Entscheide) und `test/extend.cjs` |
 | Aufgaben | `packages/core/tasks.js`: Parser für `- [ ]`-Zeilen mit `@Datum`, Unteraufgaben über die Einrückung, Abschluss-Regeln als reine Textfunktionen; Index in der Tabelle `tasks`, gleiches Prinzip |
 | Termine | `packages/core/dates.js`: gemeinsame Logik für `@TT.MM.JJJJ` bzw. `@JJJJ-MM-TT`, Dringlichkeit, Anzeige |

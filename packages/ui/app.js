@@ -127,7 +127,7 @@
     crumbs: $('#crumbs'), noteMeta: $('#noteMeta'), childBtn: $('#childBtn'), deleteBtn: $('#deleteBtn'),
     title: $('#title'), body: $('#body'),
     viewDecisionsBtn: $('#viewDecisionsBtn'), qPersonFilter: $('#qPersonFilter'), qAnsweredBtn: $('#qAnsweredBtn'), decisionBtn: $('#decisionBtn'),
-    mentionPopup: $('#mentionPopup'), wikiPopup: $('#wikiPopup'), wikiCount: $('#wikiCount'), wikiList: $('#wikiList'), qaPrintTitle: $('#qaPrintTitle'), qaScopeOpen: $('#qaScopeOpen'), qaScopeAnswered: $('#qaScopeAnswered'),
+    mentionPopup: $('#mentionPopup'), phHint: $('#phHint'), phKeep: $('#phKeep'), wikiPopup: $('#wikiPopup'), wikiCount: $('#wikiCount'), wikiList: $('#wikiList'), qaPrintTitle: $('#qaPrintTitle'), qaScopeOpen: $('#qaScopeOpen'), qaScopeAnswered: $('#qaScopeAnswered'),
     qaScopeAll: $('#qaScopeAll'), qaLinesLabel: $('#qaLinesLabel'),
     mapTemplateBtn: $('#mapTemplateBtn'), newTemplateBtn: $('#newTemplateBtn'), templatesBtn: $('#templatesBtn'),
     childTemplateBtn: $('#childTemplateBtn'), insertTemplateBtn: $('#insertTemplateBtn'), saveTemplateBtn: $('#saveTemplateBtn'),
@@ -1995,6 +1995,8 @@
   }
 
   async function onPreviewClick(e) {
+    const phSpan = PH && e.target.closest('.md-ph[data-ph]');
+    if (phSpan && !e.target.closest('a')) { await onPreviewPlaceholderClick(phSpan); return; }
     const load = e.target.closest('.md-embed-load');
     if (load) { e.preventDefault(); loadEmbed(load.closest('.md-embed'), true); return; }
     const a = e.target.closest('a');
@@ -2337,6 +2339,328 @@
       const note = await noteForNav(target.note);
       if (note) await openNote(note.id);
     });
+  }
+
+  // ---------- Ausfüllbare Platzhalter in Vorlagen (v2.12.0) ----------
+  // {{?Name}} wählt die App nach dem Einfügen einer Vorlage aus; Tippen ersetzt ihn, Tab springt zum nächsten, Umschalt+Tab zurück, Esc
+  // beendet. Mit «Platzhalter behalten» (Einstellung im Dialog «Vorlagen», je Vorlage im Kopf «placeholders») wird daraus
+  // {{?Name: Wert}}; ein Klick hinein wählt den Wert und zeigt die Beschreibung. Gleiche Namen bekommen denselben Wert (Text, Titel und
+  // die Unternotizen der Vorlage). Übersprungene bleiben offen. Reine Textarbeit in packages/core/placeholders.js.
+
+  const PH = window.NoNotesPlaceholders;
+  const KEEP_PLACEHOLDERS = 'templates.keepPlaceholders';
+
+  async function keepPlaceholders(tpl) {
+    if (tpl && (tpl.placeholders === 'keep' || tpl.placeholders === 'remove')) return tpl.placeholders === 'keep';
+    try { return (await B.getMeta(KEEP_PLACEHOLDERS)) === '1'; } catch (e) { return false; }
+  }
+
+  /** Verschiebt eine Stelle um die Änderungen davor: edits [{ start, end, len }] (len: Länge des neuen Texts). */
+  function shiftPos(pos, edits) {
+    let p = pos;
+    for (const e of edits) if (e.end <= pos) p += e.len - (e.end - e.start);
+    return p;
+  }
+
+  /** Setzt einen Wert für alle Platzhalter eines Namens: keep → {{?Name: Wert}}, sonst der Wert. Gibt { text, edits } zurück. */
+  function fillName(text, name, value, keep) {
+    const edits = [];
+    let out = text;
+    for (const p of PH.scan(text).filter(x => PH.same(x.name, name)).reverse()) {
+      const r = keep ? PH.token(p.name, value) : value;
+      out = out.slice(0, p.start) + r + out.slice(p.end);
+      edits.push({ start: p.start, end: p.end, len: r.length });
+    }
+    return { text: out, edits };
+  }
+
+  /** Startet das Ausfüllen: in einer neuen oder gerade eingefügten Vorlage. opts: { keep, others (weitere Notizen), start, end }. */
+  async function startPlaceholders(opts) {
+    if (!PH || el.body.readOnly || readOnly()) return false;
+    const toks = PH.scan(el.body.value);
+    const titleTok = PH.scan(el.title.value).find(p => p.value == null);
+    if (!toks.length && !titleTok) return false;
+    if (state.editorMode === 'preview') await setEditorMode('split');
+    // insTail: Länge des Texts nach dem Eingefügten (bleibt beim Tippen im Feld gleich; das Ende des Eingefügten = Länge - insTail)
+    state.ph = { keep: !!opts.keep, others: opts.others || [], insTail: opts.end == null ? null : el.body.value.length - opts.end, field: null };
+    hint(t('Platzhalter ausfüllen: Tab springt zum nächsten, Umschalt+Tab zurück, Esc beendet.'));
+    if (titleTok) { selectTitleField(titleTok); return true; }
+    const from = opts.start || 0;
+    selectField(toks.find(p => p.start >= from) || toks[0], true);
+    return true;
+  }
+
+  /** Wählt einen Platzhalter im Text: offen ganz (Tippen ersetzt ihn), ausgefüllt den Wert (select: false lässt den Cursor, wo er ist). */
+  function selectField(tok, select) {
+    const ph = state.ph;
+    if (!ph || !tok) return;
+    const v = el.body.value;
+    const open = tok.value == null;
+    const a = open ? tok.start : tok.valueStart, b = open ? tok.end : tok.valueEnd;
+    if (document.activeElement !== el.body) el.body.focus();
+    if (select || open) el.body.setSelectionRange(a, b);
+    if (select || open) scrollBodyTo(a); // nach dem Neusetzen des Texts steht der Editor sonst am Ende
+    ph.field = { name: tok.name, start: a, tail: v.length - b, open, token: v.slice(tok.start, tok.end), original: tok.value, title: false };
+    showPhHint(tok.name, a, b);
+  }
+
+  function selectTitleField(tok) {
+    const ph = state.ph;
+    el.title.focus();
+    el.title.setSelectionRange(tok.start, tok.end);
+    ph.field = { name: tok.name, start: tok.start, tail: el.title.value.length - tok.end, open: true, token: el.title.value.slice(tok.start, tok.end), title: true };
+    showPhHint(tok.name, null);
+  }
+
+  /** Beschreibung zu einem Namen: aus den Blöcken am Ende der Notiz. */
+  function phDescription(name) {
+    return PH.describe(PH.descriptions(el.body.value), name);
+  }
+
+  /** Kasten mit der Beschreibung unter der Zeile des Platzhalters (beim Titel unter dem Titelfeld); ohne Beschreibung kein Kasten. */
+  function showPhHint(name, pos, end) {
+    const desc = phDescription(name);
+    if (!desc) { hidePhHint(); return; }
+    const head = document.createElement('div');
+    head.className = 'ph-hint-name';
+    head.textContent = name;
+    const body = document.createElement('div');
+    body.className = 'md';
+    body.innerHTML = M.render(desc, { embeds: false, placeholders: 'plain' });
+    const keys = document.createElement('div');
+    keys.className = 'ph-hint-keys';
+    keys.textContent = t('Tab: nächster Platzhalter · Umschalt+Tab: voriger · Esc: fertig');
+    el.phHint.replaceChildren(head, body, keys);
+    el.phHint.hidden = false;
+    if (pos == null) { // unter das Titelfeld (über Tags und Leiste), damit der Text frei bleibt
+      const box = el.body.parentElement.getBoundingClientRect(), tr = el.title.getBoundingClientRect();
+      el.phHint.style.left = Math.max(0, tr.left - box.left + 8) + 'px';
+      el.phHint.style.top = Math.round(tr.bottom - box.top + 4) + 'px';
+    } else placePopupAt(el.phHint, pos, end);
+  }
+
+  function hidePhHint() {
+    el.phHint.hidden = true;
+    el.phHint.replaceChildren();
+  }
+
+  /** Verlässt den aktuellen Platzhalter: Wert einsetzen (behalten: {{?Name: Wert}}), gleiche Namen überall nachziehen, nicht mehr
+   *  gebrauchte Beschreibungen weg. Gibt { start, end } des Felds danach zurück (im Text), oder null. caret: die Stelle, die gelten soll
+   *  (Standard: der Cursor), wird mit verschoben. */
+  async function leaveField() {
+    const ph = state.ph;
+    const f = ph && ph.field;
+    if (!f) return null;
+    ph.field = null;
+    hidePhHint();
+    if (f.title) return leaveTitleField(f);
+    const v = el.body.value;
+    const end = v.length - f.tail;
+    if (end < f.start) return null; // Text davor gelöscht: nichts mehr zu tun
+    const typed = v.slice(f.start, end);
+    // Schritt 1: das Feld selbst (offen und getippt → Wert oder {{?Name: Wert}}; ausgefüllt und nicht behalten → Wert)
+    let text = v;
+    let cut = null; // { start, end, len } in v
+    if (f.open) {
+      if (typed === f.token) return { start: f.start, end, name: f.name }; // übersprungen: bleibt offen
+      if (ph.keep) cut = { start: f.start, end, len: PH.token(f.name, typed).length, repl: PH.token(f.name, typed) };
+    } else if (!ph.keep) {
+      if (typed === f.original) return { start: f.start, end, name: f.name }; // unverändert: bleibt
+      const tok = PH.at(v, f.start);
+      if (tok) cut = { start: tok.start, end: tok.end, len: typed.length, repl: typed };
+    }
+    if (cut) text = v.slice(0, cut.start) + cut.repl + v.slice(cut.end);
+    const map1 = pos => (cut && pos >= cut.end ? pos + cut.len - (cut.end - cut.start) : pos);
+    let fStart = cut ? cut.start : f.start;
+    let fEnd = cut ? cut.start + cut.len : end;
+    // Schritt 2: gleiche Namen überall nachziehen (einzeilige Werte)
+    let r = { text, edits: [] };
+    if (!/\n/.test(typed)) {
+      r = fillName(text, f.name, typed, ph.keep);
+      const title = PH.flatten(fillName(el.title.value, f.name, typed, false).text, { open: n => `{{?${n}}}` });
+      if (title !== el.title.value) el.title.value = title;
+      for (const id of ph.others) { // die Unternotizen der Vorlage
+        try {
+          const n = await B.getNote(id);
+          if (!n) continue;
+          const nt = PH.flatten(fillName(n.title, f.name, typed, false).text, { open: x => `{{?${x}}}` });
+          const nb = PH.pruneDescriptions(fillName(n.body, f.name, typed, ph.keep).text, nt);
+          if (nt !== n.title || nb !== n.body) await B.updateNote(n.id, nt, nb, { author: meName() });
+        } catch (e) { /* eine fehlende Unternotiz hält das Ausfüllen nicht auf */ }
+      }
+    }
+    const map2 = pos => shiftPos(pos, r.edits);
+    fStart = map2(fStart);
+    fEnd = map2(fEnd);
+    const caret = map2(map1(el.body.selectionStart));
+    // Schritt 3: Beschreibungen ohne Platzhalter weg (sie stehen am Ende)
+    const next = PH.pruneDescriptions(r.text, el.title.value);
+    if (ph.insTail != null) { // was nach dem Eingefügten geändert wurde, ändert die Länge dahinter
+      const insEnd = v.length - ph.insTail;
+      let tail = ph.insTail;
+      if (cut && cut.start >= insEnd) tail += cut.len - (cut.end - cut.start);
+      const insEnd1 = map1(insEnd);
+      for (const e of r.edits) if (e.start >= insEnd1) tail += e.len - (e.end - e.start);
+      ph.insTail = Math.max(0, tail - (r.text.length - next.length));
+    }
+    if (next !== v) {
+      el.body.value = next;
+      const c = Math.min(caret, next.length);
+      el.body.setSelectionRange(c, c);
+      await onEdit();
+    }
+    return { start: Math.min(fStart, el.body.value.length), end: Math.min(fEnd, el.body.value.length), name: f.name };
+  }
+
+  async function leaveTitleField(f) {
+    const ph = state.ph;
+    const v = el.title.value;
+    const end = v.length - f.tail;
+    const typed = end >= f.start ? v.slice(f.start, end) : f.token;
+    if (typed !== f.token && typed.trim()) {
+      const before = el.body.value;
+      const r = fillName(before, f.name, typed, ph.keep);
+      const t2 = PH.flatten(fillName(v, f.name, typed, false).text, { open: n => `{{?${n}}}` });
+      if (t2 !== v) el.title.value = t2;
+      const next = PH.pruneDescriptions(r.text, el.title.value);
+      if (ph.insTail != null) {
+        const insEnd = before.length - ph.insTail;
+        let tail = ph.insTail;
+        for (const e of r.edits) if (e.start >= insEnd) tail += e.len - (e.end - e.start);
+        ph.insTail = Math.max(0, tail - (r.text.length - next.length));
+      }
+      el.body.value = next;
+      for (const id of ph.others) {
+        try {
+          const n = await B.getNote(id);
+          if (!n) continue;
+          const nb = PH.pruneDescriptions(fillName(n.body, f.name, typed, ph.keep).text, n.title);
+          const nt = PH.flatten(fillName(n.title, f.name, typed, false).text, { open: x => `{{?${x}}}` });
+          if (nb !== n.body || nt !== n.title) await B.updateNote(n.id, nt, nb, { author: meName() });
+        } catch (e) { /* weiter */ }
+      }
+      await onEdit();
+    }
+    return { start: -1, end: -1, title: true, name: f.name };
+  }
+
+  /** Tab (dir 1) oder Umschalt+Tab (dir -1): zum nächsten oder vorigen Platzhalter; nach dem letzten ans Ende des Eingefügten. */
+  async function phJump(dir) {
+    const ph = state.ph;
+    if (!ph) return;
+    const left = await leaveField();
+    if (!state.ph) return;
+    // gleiche Namen wie der eben verlassene sind schon ausgefüllt (nachgezogen): überspringen
+    const toks = PH.scan(el.body.value).filter(p => !left || !PH.same(p.name, left.name));
+    const at = left ? left : { start: el.body.selectionStart, end: el.body.selectionEnd };
+    let tok = null;
+    if (at.title) tok = dir > 0 ? toks[0] : null;
+    else if (dir > 0) tok = toks.find(p => p.start >= at.end && (!left || p.start !== left.start));
+    else tok = toks.filter(p => p.end <= at.start).pop() || null;
+    if (!tok && dir < 0) {
+      const titleTok = PH.scan(el.title.value).find(p => p.value == null);
+      if (titleTok) { selectTitleField(titleTok); return; }
+      if (left) { el.body.setSelectionRange(left.start, left.start); }
+      return;
+    }
+    if (!tok) { // fertig: ans Ende des eingefügten Texts
+      const endAt = ph.insTail != null ? Math.max(0, el.body.value.length - ph.insTail) : (left ? left.end : el.body.selectionEnd);
+      endPlaceholders();
+      el.body.focus();
+      el.body.setSelectionRange(endAt, endAt);
+      return;
+    }
+    selectField(tok, true);
+  }
+
+  function endPlaceholders() {
+    state.ph = null;
+    hidePhHint();
+  }
+
+  /** Tasten im Text, solange Platzhalter ausgefüllt werden: Tab, Umschalt+Tab, Esc (und Enter mit «behalten»: der Wert bleibt einzeilig). */
+  function handlePhKey(e) {
+    const ph = state.ph;
+    if (!ph || e.ctrlKey || e.metaKey || e.altKey) return false;
+    if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && ph.keep && ph.field)) {
+      e.preventDefault();
+      e.stopPropagation();
+      phJump(e.key === 'Tab' && e.shiftKey ? -1 : 1);
+      return true;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      leaveField().then(endPlaceholders);
+      return true;
+    }
+    return false;
+  }
+
+  /** Cursor im Text bewegt (Klick, Pfeiltasten): in einen Platzhalter hinein beginnt das Ausfüllen (mit der Beschreibung), hinaus beendet es. */
+  async function phCaretMoved() {
+    if (!PH || el.body.readOnly || readOnly()) return;
+    const c = el.body.selectionStart;
+    if (c !== el.body.selectionEnd) return;
+    const ph = state.ph;
+    if (ph && ph.field) {
+      const end = el.body.value.length - ph.field.tail;
+      if (!ph.field.title && c >= ph.field.start && c <= end) return; // noch im Feld
+      await leaveField();
+    }
+    const tok = PH.at(el.body.value, el.body.selectionStart);
+    if (!tok) { if (state.ph) endPlaceholders(); return; }
+    if (!state.ph) state.ph = { keep: await keepPlaceholders(null), others: [], insTail: null, field: null };
+    selectField(tok, tok.value == null);
+  }
+
+  /** Platzhalter auflösen: der Name (oder alle) wird zu Text; Beschreibungen ohne Platzhalter fallen weg. */
+  async function resolvePlaceholders(name) {
+    hideContextMenu();
+    if (denyWrite() || state.currentId == null) return;
+    endPlaceholders();
+    const v = el.body.value;
+    const next = PH.pruneDescriptions(PH.resolve(v, name || null), el.title.value);
+    const title = PH.resolve(el.title.value, name || null);
+    if (next === v && title === el.title.value) return;
+    const c = Math.min(el.body.selectionStart, next.length);
+    el.title.value = title;
+    await applyEdit({ text: next, selStart: c, selEnd: c });
+    hint(name ? t('Platzhalter «{name}» aufgelöst.', { name }) : t('Alle Platzhalter dieser Notiz aufgelöst.'));
+  }
+
+  function phMenuItems(name) {
+    return [
+      { write: true, label: t('Platzhalter «{name}» auflösen', { name }), title: t('Der Text bleibt, die Markierung als Platzhalter fällt weg'), action: () => resolvePlaceholders(name) },
+      { write: true, label: t('Alle Platzhalter der Notiz auflösen'), action: () => resolvePlaceholders(null) },
+    ];
+  }
+
+  /** Rechtsklick auf einen Platzhalter in der Vorschau oder im Text: auflösen. */
+  function onPhContextMenu(e) {
+    if (!PH || state.currentId == null || el.body.readOnly || readOnly()) return false;
+    const span = e.target.closest && e.target.closest('.md-ph[data-ph]');
+    let name = span ? span.dataset.ph : null;
+    if (!name && e.target === el.body) {
+      const tok = PH.at(el.body.value, el.body.selectionStart);
+      if (tok && el.body.selectionStart === el.body.selectionEnd) name = tok.name;
+    }
+    if (!name) return false;
+    e.preventDefault();
+    e.stopPropagation();
+    showContextMenu(phMenuItems(name), e.clientX, e.clientY);
+    return true;
+  }
+
+  /** Klick auf einen Platzhalter in der Vorschau: im Text auswählen (die Vorschau allein wird zur geteilten Ansicht). */
+  async function onPreviewPlaceholderClick(span) {
+    if (el.body.readOnly || readOnly()) return;
+    const name = span.dataset.ph;
+    const toks = PH.scan(el.body.value).filter(p => PH.same(p.name, name));
+    if (!toks.length) return;
+    if (state.editorMode === 'preview') await setEditorMode('split');
+    if (!state.ph) state.ph = { keep: await keepPlaceholders(null), others: [], insTail: null, field: null };
+    selectField(toks[0], true);
   }
 
   // ---------- Pfade auf Dateien und Ordner (v2.12.0) ----------
@@ -3094,19 +3418,22 @@
         await onEdit();
         if (r.children.length) { state.mapDirty = true; await renderList(); await renderCount(); }
         hint(t('Vorlage «{name}» eingefügt.', { name: tpl.name }));
+        await startPlaceholders({ keep: await keepPlaceholders(tpl), others: r.children, start: r.start, end: r.caret });
       } else {
         const parentId = pick.parentId;
         if (parentId != null && state.map) {
           const info = state.map.nodeInfo(parentId);
           if (info && info.collapsed) await B.setCollapsed(parentId, false);
         }
-        const id = await Tpl.apply(B, tpl, parentId, ctx, { author: meName() });
+        const ids = await Tpl.create(B, tpl, parentId, ctx, { author: meName() });
+        const id = ids[0];
         markEdited();
         state.mapSelection = id;
         state.mapDirty = true;
         await renderAll();
         await openNote(id);
         hint(t('Notiz aus Vorlage «{name}» angelegt.', { name: tpl.name }));
+        if (PH) await startPlaceholders({ keep: await keepPlaceholders(tpl), others: ids.slice(1), start: 0, end: PH.stripDescriptions(el.body.value).replace(/\s+$/, '').length });
       }
       emitPlugins('template:applied', { name: tpl.name, mode: pick.mode });
     } catch (e) {
@@ -3169,6 +3496,8 @@
     if (!p) return;
     el.templatesLead.textContent = p.manageLead ? p.manageLead() : t('Vorlagen sind Markdown-Dateien (.md) mit Titel, Text und Unternotizen. Sie gelten für alle Bereiche in diesem Browser.');
     el.templatesPlaceholders.textContent = placeholderText(); // gleich, nicht erst nach Ordner und Liste
+    el.phKeep.disabled = readOnly();
+    try { el.phKeep.checked = (await B.getMeta(KEEP_PLACEHOLDERS)) === '1'; } catch (e) { el.phKeep.checked = false; }
     await renderTemplateFolder(p);
     let items = [];
     let error = null;
@@ -3631,23 +3960,39 @@
     if (state.mention) placePopupAt(el.mentionPopup, state.mention.start);
   }
 
-  /** Setzt eine Vorschlagsliste unter die Textstelle start im Editor. */
-  function placePopupAt(popup, start) {
-    const m = { start };
+  /** Lage der Textstelle start im Editor, ohne Scrollen gerechnet: { top, left } der Zeile im Textfeld und die Zeilenhöhe. */
+  function bodyCaretBox(start) {
     const ta = el.body;
     const cs = getComputedStyle(ta);
     const mirror = document.createElement('div');
     for (const p of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'boxSizing', 'tabSize', 'textIndent']) mirror.style[p] = cs[p];
     Object.assign(mirror.style, { position: 'absolute', top: '0', left: '0', visibility: 'hidden', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', border: '0', width: ta.clientWidth + 'px' });
-    mirror.textContent = ta.value.slice(0, m.start);
+    mirror.textContent = ta.value.slice(0, start);
     const marker = document.createElement('span');
-    marker.textContent = ta.value.slice(m.start, m.start + 1) || '.';
+    marker.textContent = ta.value.slice(start, start + 1) || '.';
     mirror.appendChild(marker);
     ta.parentElement.appendChild(mirror);
-    const lineH = parseFloat(cs.lineHeight) || 20;
-    const lineTop = ta.offsetTop + marker.offsetTop - ta.scrollTop;
-    const left = ta.offsetLeft + marker.offsetLeft - ta.scrollLeft;
+    const box = { top: marker.offsetTop, left: marker.offsetLeft, lineH: parseFloat(cs.lineHeight) || 20 };
     mirror.remove();
+    return box;
+  }
+
+  /** Scrollt den Editor so, dass die Textstelle pos zu sehen ist (etwa nachdem der Text neu gesetzt wurde). */
+  function scrollBodyTo(pos) {
+    const ta = el.body;
+    const c = bodyCaretBox(pos);
+    if (c.top < ta.scrollTop || c.top + c.lineH > ta.scrollTop + ta.clientHeight) ta.scrollTop = Math.max(0, c.top - Math.round(ta.clientHeight / 3));
+  }
+
+  /** Setzt eine Vorschlagsliste unter die Textstelle start im Editor (mit end: unter die Zeile, in der end steht, etwa das Ende eines
+   *  umgebrochenen Platzhalters). */
+  function placePopupAt(popup, start, end) {
+    const ta = el.body;
+    const c = bodyCaretBox(start);
+    const e = end != null && end > start ? bodyCaretBox(end) : c;
+    const lineH = c.lineH;
+    const lineTop = ta.offsetTop + e.top - ta.scrollTop;
+    const left = ta.offsetLeft + Math.min(c.left, e.left) - ta.scrollLeft;
     const box = ta.parentElement;
     const h = popup.offsetHeight;
     // Unter die Zeile; reicht der Platz nicht, darüber, damit die Liste die Zeile nicht verdeckt
@@ -4027,6 +4372,7 @@
 
   /** Rechtsklick auf eine Tabelle in der Vorschau: Titelzeile, Titelspalte, Hervorheben; Zeilen und Spalten; Einträge der Erweiterungen. */
   function onPreviewContextMenu(e) {
+    if (onPhContextMenu(e)) return; // Platzhalter (v2.12.0) vor dem Tabellenmenü
     const cellEl = e.target.closest('table.md-table[data-src] th, table.md-table[data-src] td');
     if (!cellEl || state.currentId == null || el.body.readOnly || readOnly()) return;
     const tg = tableTarget(cellEl);
@@ -4913,6 +5259,11 @@
         if (next) { next.focus(); await selectTemplate(next.dataset.id); }
       } else if (e.key === 'Enter' && i >= 0) { e.preventDefault(); await selectTemplate(items[i].dataset.id); await runTemplatePick(); }
     });
+    el.phKeep.addEventListener('change', async () => { // Einstellung des Bereichs (im Dienst: des Arbeitsbereichs)
+      if (denyWrite()) { el.phKeep.checked = !el.phKeep.checked; return; }
+      await B.setMeta(KEEP_PLACEHOLDERS, el.phKeep.checked ? '1' : '');
+      hint(el.phKeep.checked ? t('Ausgefüllte Platzhalter bleiben stehen.') : t('Ausgefüllte Platzhalter werden zu Text.'));
+    });
     el.templatesImportBtn.addEventListener('click', () => el.templateInput.click());
     el.templateInput.addEventListener('change', async () => { const files = [...el.templateInput.files]; el.templateInput.value = ''; await importTemplateFiles(files); });
     el.templatesManageBtn.addEventListener('click', () => { const p = templateStore(); if (p && p.manageUrl) window.open(p.manageUrl(), '_blank', 'noopener'); });
@@ -4927,7 +5278,17 @@
       const mod = e.ctrlKey || e.metaKey;
       if (e.isComposing || el.body.readOnly) return;
       if (state.wiki && handleWikiKey(e)) return; // offene Vorschläge für [[Verweise]]
+      if (state.ph && state.ph.field && state.mention && e.key === 'Tab' && !mod && !e.altKey) {
+        // Kürzel in einem Platzhalter: Tab übernimmt den Vorschlag (falls einer passt) und springt weiter
+        e.preventDefault();
+        e.stopPropagation();
+        const m = state.mention;
+        if (!e.shiftKey && m.items[m.index]) await acceptMention(m.index); else closeMentionPopup();
+        await phJump(e.shiftKey ? -1 : 1);
+        return;
+      }
       if (state.mention && handleMentionKey(e)) return; // offene Vorschlagsliste für @kürzel
+      if (state.ph && handlePhKey(e)) return; // ausfüllbare Platzhalter einer Vorlage (v2.12.0)
       // Tabellen (v2.10.0): Tab und Umschalt+Tab springen von Feld zu Feld, Enter fügt eine Zeile an; die Striche werden ausgerichtet
       // Umschalt+Enter in einem Feld setzt «<br>» (v2.11.0): eine neue Zeile im Feld statt einer, die die Tabelle beendet
       if (Tables && !mod && !e.altKey && (e.key === 'Tab' || e.key === 'Enter')) {
@@ -4963,12 +5324,19 @@
     });
 
     el.body.addEventListener('input', () => { updateMentionPopup(); updateWikiPopup(); });
-    el.body.addEventListener('click', () => { if (state.mention) updateMentionPopup(); if (state.wiki) updateWikiPopup(); });
+    el.body.addEventListener('click', () => { if (state.mention) updateMentionPopup(); if (state.wiki) updateWikiPopup(); phCaretMoved(); });
+    el.body.addEventListener('contextmenu', onPhContextMenu);
     el.body.addEventListener('keyup', e => {
+      if (/^(ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Home|End|PageUp|PageDown)$/.test(e.key) && !state.mention && !state.wiki) phCaretMoved();
       if (e.key === 'Control') el.wikiPopup.classList.remove('with-path');
       else if (state.wiki && /^(ArrowLeft|ArrowRight|Home|End)$/.test(e.key)) updateWikiPopup(); // Cursor aus dem Verweis heraus: Liste zu
     });
-    el.body.addEventListener('scroll', () => { if (state.mention) placeMentionPopup(); if (state.wiki) placePopupAt(el.wikiPopup, Math.max(0, state.wiki.start - 2)); });
+    el.body.addEventListener('scroll', () => {
+      if (state.mention) placeMentionPopup();
+      if (state.wiki) placePopupAt(el.wikiPopup, Math.max(0, state.wiki.start - 2));
+      const f = state.ph && state.ph.field;
+      if (f && !f.title && !el.phHint.hidden) placePopupAt(el.phHint, f.start, el.body.value.length - f.tail);
+    });
     el.body.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== el.body) { closeMentionPopup(); closeWikiPopup(); } }, 0));
     el.wikiPopup.addEventListener('mousedown', e => e.preventDefault()); // der Fokus bleibt im Textfeld
     el.wikiPopup.addEventListener('click', async e => {
@@ -5105,6 +5473,11 @@
     el.tagInput.addEventListener('change', async () => { if (el.tagInput.value.trim()) await addTagFromInput(); });
     el.tagInput.addEventListener('blur', async () => { if (el.tagInput.value.trim()) await addTagFromInput(); });
     el.title.addEventListener('keydown', e => {
+      const ph = state.ph;
+      if (ph && ph.field && ph.field.title) { // Platzhalter im Titel: Tab und Enter springen in den Text, Esc beendet
+        if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); phJump(e.shiftKey ? -1 : 1); return; }
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); leaveField().then(endPlaceholders); return; }
+      }
       if (e.key === 'Enter') { e.preventDefault(); el.body.focus(); }
     });
 

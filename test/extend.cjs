@@ -1718,10 +1718,10 @@ async function runTemplatesUi(browser, part, step) {
   assert.match(await page.locator('#templatesPlaceholders').innerText(), /\{\{datum\}\} \(\d+\.\d+\.\d{4}\), \{\{datum\+7\}\} \(in sieben Tagen\), \{\{zeit\}\}/);
   assert.match(await page.locator('#templatesPlaceholders').innerText(), /Das Datum mit Format: \{\{datum:TT\.MM\.JJJJ\}\} \(\d{2}\.\d{2}\.\d{4}\), \{\{datum\+7:JJJJ-MM-TT\}\} \(\d{4}-\d{2}-\d{2}\), \{\{datum:lang\}\} \(\d+\. \S+ \d{4}\)$/, 'Beispiele für das Format mit den Werten von heute');
   await page.locator('#templatesFolder button', { hasText: 'Ordner verbinden' }).click();
-  await page.waitForFunction(() => document.querySelectorAll('.template-row').length === 2);
+  await page.waitForFunction(() => document.querySelectorAll('.template-row').length === 3);
   assert.match(await page.locator('#templatesFolder').innerText(), /Verbunden mit dem Ordner «templates»\./);
-  assert.deepEqual(await page.locator('.template-row strong').allInnerTexts(), ['Entscheidungsvorlage', 'Sitzungsprotokoll']);
-  assert.match(await page.locator('.template-row').nth(1).innerText(), /3 Notizen · im Ordner/);
+  assert.deepEqual(await page.locator('.template-row strong').allInnerTexts(), ['Aufgabe', 'Entscheidungsvorlage', 'Sitzungsprotokoll']);
+  assert.match(await page.locator('.template-row').nth(2).innerText(), /3 Notizen · im Ordner/);
   await page.locator('#templatesDialog button[value="close"]').click();
   part('Vorlagen verwalten: Ordner templates/ verbinden, Beispiele aus dem Ordner (ohne README), Platzhalter in der Sprache der Oberfläche');
 
@@ -1764,7 +1764,7 @@ async function runTemplatesUi(browser, part, step) {
   await page.click('#noteMenuBtn');
   await page.click('#childTemplateBtn');
   await page.waitForSelector('#templatePickDialog[open]');
-  await page.waitForFunction(() => document.querySelectorAll('.template-item').length === 4);
+  await page.waitForFunction(() => document.querySelectorAll('.template-item').length === 5);
   assert.match(await page.locator('#templatePickLead').innerText(), new RegExp(`Die neue Notiz kommt unter «Sitzung ${todayText().replace(/\./g, '\\.')}»\\.`));
   await page.locator('.template-item', { hasText: 'Sitzungsprotokoll' }).click();
   await page.waitForFunction(() => /Sitzung \d/.test(document.querySelector('#templatePickPreview h3').textContent));
@@ -1781,7 +1781,7 @@ async function runTemplatesUi(browser, part, step) {
   await page.click('#insertTemplateBtn');
   await page.waitForSelector('#templatePickDialog[open]');
   assert.equal(await page.locator('#templatePickGoBtn').innerText(), 'Einfügen');
-  await page.waitForFunction(() => document.querySelectorAll('.template-item').length === 4);
+  await page.waitForFunction(() => document.querySelectorAll('.template-item').length === 5);
   await page.locator('.template-item', { hasText: 'Entscheidungsvorlage' }).click();
   await page.waitForFunction(() => document.querySelector('#templatePickPreview').textContent.includes('Ausgangslage'));
   await page.keyboard.press('Enter');
@@ -1795,7 +1795,7 @@ async function runTemplatesUi(browser, part, step) {
   await page.click('#viewMapBtn');
   await page.click('#mapTemplateBtn');
   await page.waitForSelector('#templatePickDialog[open]');
-  await page.waitForFunction(() => document.querySelectorAll('.template-item').length === 4);
+  await page.waitForFunction(() => document.querySelectorAll('.template-item').length === 5);
   assert.equal(await page.evaluate(() => window.__dirAsked), 1, 'einmal nach der Erlaubnis gefragt');
   await page.locator('#templatePickDialog button[value="cancel"]').click();
   const nodes = await page.locator('#mindmap .mm-node').allTextContents();
@@ -1805,7 +1805,7 @@ async function runTemplatesUi(browser, part, step) {
   // Ohne Ordner: Download und im Browser gemerkt, für alle Bereiche; Datei hinzufügen; entfernen
   await page.click('#menuBtn');
   await page.click('#templatesBtn');
-  await page.waitForFunction(() => document.querySelectorAll('.template-row').length === 4);
+  await page.waitForFunction(() => document.querySelectorAll('.template-row').length === 5);
   await page.locator('#templatesFolder button', { hasText: 'Trennen' }).click();
   await page.waitForFunction(() => document.querySelectorAll('.template-row').length === 0);
   await page.setInputFiles('#templateInput', { name: 'Woche.md', mimeType: 'text/markdown', buffer: Buffer.from('# KW {{woche}}\n- [ ] Plan') });
@@ -1830,6 +1830,199 @@ async function runTemplatesUi(browser, part, step) {
 
   assert.deepEqual(errors, [], 'keine Fehler im Browser');
   part('Keine Fehler im Browser');
+  await ctx.close();
+}
+
+// ============================================================
+/* Ausfüllbare Platzhalter in Vorlagen (v2.12.0): neue Notiz aus «Aufgabe» (Titel zuerst, Tab, Beschreibung im Kasten, gleiche Namen,
+   Termin und Person zählen), «behalten» (Wert im Text, Klick hinein, Vorschau, Aufgabenliste), Unternotizen gleich mit, Vorlage einfügen,
+   Rechtsklick auflösen. */
+async function runPlaceholdersUi(browser, part, step) {
+  const examples = {};
+  for (const f of fs.readdirSync(path.join(DIST, 'templates'))) examples[f] = fs.readFileSync(path.join(DIST, 'templates', f), 'utf8');
+  examples['Projekt.md'] = '---\nnonotes: 1\nname: "Projekt"\ntitle: "Projekt {{?Kunde}}"\n---\nKunde: {{?Kunde}}, Kontakt {{?Kontakt}}\n\n```template-description Kunde\nFirma **ohne** Rechtsform.\n```\n<!-- nonotes:note {"depth":1,"title":"Offerte","tags":[]} -->\nOfferte für {{?Kunde}}\n';
+  const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 }, locale: 'de-CH' });
+  await ctx.addInitScript(files => {
+    const store = new Map(Object.entries(files));
+    const fileHandle = name => ({ kind: 'file', name, getFile: async () => new File([store.get(name)], name), queryPermission: async () => 'granted', requestPermission: async () => 'granted' });
+    const dir = {
+      kind: 'directory', name: 'templates', queryPermission: async () => 'granted', requestPermission: async () => 'granted',
+      entries: async function* () { for (const name of [...store.keys()]) yield [name, fileHandle(name)]; },
+      getFileHandle: async name => fileHandle(name), removeEntry: async name => { store.delete(name); },
+    };
+    window.showDirectoryPicker = async () => dir;
+    const saved = {};
+    let ns;
+    Object.defineProperty(window, 'NoNotesStorage', { configurable: true, get: () => ns, set: v => {
+      ns = v;
+      v.browserStore.saveHandleKey = async (k, h) => { saved[k] = h; };
+      v.browserStore.loadHandleKey = async k => saved[k] || null;
+      v.browserStore.clearHandleKey = async k => { delete saved[k]; };
+    } });
+  }, examples);
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  await page.goto('file://' + path.join(DIST, 'index.html'));
+  await page.waitForSelector(READY, { timeout: 30000 });
+  const sel = sel2 => page.evaluate(id => { const e = document.querySelector(id); return e.value.slice(e.selectionStart, e.selectionEnd); }, sel2);
+  const body = () => page.inputValue('#body');
+  const hintText = () => page.evaluate(() => (document.querySelector('#phHint').hidden ? null : document.querySelector('#phHint').innerText));
+  const d = new Date(); d.setDate(d.getDate() + 7);
+  const inWeek = `${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`;
+  const fromTemplate = async name => {
+    await page.click('#viewMapBtn');
+    await page.click('#mapTemplateBtn');
+    await page.waitForSelector('#templatePickDialog[open]');
+    await page.locator('.template-item', { hasText: name }).click();
+    await page.click('#templatePickGoBtn');
+    await page.waitForSelector('body.editor-open');
+  };
+
+  // Ordner verbinden; die Einstellung ist zuerst aus
+  await page.click('#menuBtn');
+  await page.click('#templatesBtn');
+  await page.locator('#templatesFolder button', { hasText: 'Ordner verbinden' }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.template-row').length === 4);
+  assert.equal(await page.isChecked('#phKeep'), false);
+  await page.click('#phHelp summary');
+  assert.match(await page.locator('#phHelp').innerText(), /template-description Kunde/);
+  await page.locator('#templatesDialog button[value="close"]').click();
+
+  // Neue Notiz aus «Aufgabe»: der Titel zuerst, dann Tab durch den Text
+  await fromTemplate('Aufgabe');
+  await page.waitForFunction(() => document.activeElement === document.querySelector('#title'));
+  assert.equal(await sel('#title'), '{{?Beschreibung}}', 'der Platzhalter im Titel ist ausgewählt');
+  assert.match(await hintText(), /^Beschreibung\n+Was zu tun ist, kurz und als Tätigkeit/, 'die Beschreibung im Kasten');
+  await page.keyboard.type('Offerte Heizung');
+  await page.keyboard.press('Tab');
+  await page.waitForFunction(() => document.activeElement === document.querySelector('#body'));
+  assert.equal(await page.inputValue('#title'), 'Offerte Heizung');
+  assert.ok((await body()).startsWith('- [ ] Offerte Heizung @{{?Wer}} @{{?Bis wann: '), 'der gleiche Name im Text: ' + await body());
+  assert.equal(await sel('#body'), '{{?Wer}}');
+  assert.match(await hintText(), /^Wer\n+Das Kürzel der Person/);
+  await page.keyboard.type('anna');
+  await page.keyboard.press('Tab');
+  assert.equal(await sel('#body'), inWeek, 'ein Vorschlag (in einer Woche) ist als Wert ausgewählt');
+  await page.keyboard.type('30.11.2026');
+  await page.keyboard.press('Tab');
+  assert.equal(await sel('#body'), '{{?Ziel}}');
+  await page.keyboard.type('Heizung läuft');
+  await page.keyboard.press('Tab');
+  await page.waitForFunction(() => document.querySelector('#phHint').hidden);
+  await page.waitForFunction(SAVED);
+  assert.equal(await body(), '- [ ] Offerte Heizung @anna @30.11.2026\n\n**Ziel:** Heizung läuft\n\n**Notizen:**', 'ohne «behalten»: nur Text, keine Beschreibungen mehr');
+  const caret = await page.evaluate(() => document.querySelector('#body').selectionStart);
+  assert.equal(caret, (await body()).length, 'nach dem letzten ans Ende des Eingefügten');
+  part('Neue Notiz aus «Aufgabe»: Titel zuerst, Tab durch den Text, Beschreibung im Kasten, gleiche Namen, Vorschlag, am Ende ohne Platzhalter');
+
+  // «Behalten»: der Wert bleibt als Platzhalter; Übersprungenes bleibt offen; Termin und Person zählen trotzdem
+  await page.click('#backBtn');
+  await page.click('#menuBtn');
+  await page.click('#templatesBtn');
+  await page.check('#phKeep');
+  await page.waitForFunction(() => /bleiben stehen/.test(document.querySelector('#status').textContent));
+  await page.locator('#templatesDialog button[value="close"]').click();
+  await fromTemplate('Aufgabe');
+  await page.waitForFunction(() => document.activeElement === document.querySelector('#title'));
+  await page.keyboard.type('Zweite');
+  await page.keyboard.press('Tab');
+  await page.keyboard.type('ben');
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Tab'); // Termin übersprungen: der Vorschlag bleibt
+
+  assert.equal(await sel('#body'), '{{?Ziel}}');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.querySelector('#phHint').hidden);
+  assert.ok(await page.evaluate(() => document.body.classList.contains('editor-open')), 'Esc beendet nur das Ausfüllen');
+  await page.waitForFunction(SAVED);
+  const kept = await body();
+  assert.ok(kept.startsWith(`- [ ] {{?Beschreibung: Zweite}} @{{?Wer: ben}} @{{?Bis wann: ${inWeek}}}\n\n**Ziel:** {{?Ziel}}`), kept);
+  assert.match(kept, /```template-description Wer\n/, 'die Beschreibungen bleiben am Ende');
+  await page.click('#modeSwitch button[data-mode="split"]');
+  await page.waitForSelector('#preview .md-ph.open[data-ph="Ziel"]');
+  assert.equal(await page.locator('#preview .md-person[data-handle="ben"]').count(), 1, 'die Person zählt');
+  assert.equal(await page.locator('#preview .md-due').count(), 1, 'der Termin zählt');
+  assert.equal(await page.locator('#preview .md-ph:not(.open)[data-ph="Beschreibung"]').innerText(), 'Zweite');
+  assert.ok(!(await page.locator('#preview').innerText()).includes('Kürzel der Person'), 'Beschreibungen unsichtbar');
+  await page.click('#backBtn');
+  await page.waitForSelector('body:not(.editor-open)');
+  await page.click('#viewTasksBtn');
+  await page.waitForSelector('#tasksView .t-item');
+  assert.ok((await page.locator('#tasksView').innerText()).includes('Zweite @ben'), 'die Aufgabenliste sieht den Wert');
+  part('Behalten: {{?Name: Wert}} im Text, Übersprungenes bleibt, Esc beendet nur das Ausfüllen; Person, Termin und Liste sehen den Wert, Beschreibungen unsichtbar');
+
+  // Klick in einen Wert: Beschreibung wieder da, Tab weiter, Wert ändern
+  await page.click('#viewListBtn');
+  await page.click('#list li:has-text("Zweite")');
+  await page.waitForFunction(() => document.querySelector('#title').value === 'Zweite');
+  await page.evaluate(() => {
+    const b = document.querySelector('#body');
+    b.focus();
+    const at = b.value.indexOf('ben') + 1;
+    b.setSelectionRange(at, at);
+    b.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+  await page.waitForFunction(() => !document.querySelector('#phHint').hidden);
+  assert.match(await hintText(), /^Wer\n/);
+  await page.keyboard.press('Tab');
+  assert.equal(await sel('#body'), inWeek);
+  await page.keyboard.type('1.12.2026');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.querySelector('#body').value.includes('@{{?Bis wann: 1.12.2026}}'));
+  part('Klick in einen ausgefüllten Platzhalter: Beschreibung, Tab zum nächsten, Wert ändern');
+
+  // Rechtsklick in der Vorschau: einen und alle auflösen; Beschreibungen ohne Platzhalter verschwinden
+  await page.waitForSelector('#preview .md-ph.open[data-ph="Ziel"]');
+  await page.click('#preview .md-ph.open[data-ph="Ziel"]', { button: 'right' });
+  assert.deepEqual(await page.locator('#contextMenu button').allTextContents(), ['Platzhalter «Ziel» auflösen', 'Alle Platzhalter der Notiz auflösen']);
+  await page.click('#contextMenu button:has-text("Platzhalter «Ziel» auflösen")');
+  await page.waitForFunction(() => document.querySelector('#body').value.includes('**Ziel:** Ziel\n'));
+  assert.ok(!(await body()).includes('template-description Ziel'), 'seine Beschreibung ist weg');
+  await page.waitForSelector('#preview .md-ph[data-ph="Beschreibung"]'); // @{{?Wer: ben}} hängt am @: in der Vorschau die Person, kein Platzhalter
+  await page.click('#preview .md-ph[data-ph="Beschreibung"]', { button: 'right' });
+  await page.click('#contextMenu button:has-text("Alle Platzhalter der Notiz auflösen")');
+  await page.waitForFunction(() => !document.querySelector('#body').value.includes('{{?'));
+  assert.equal((await body()).trim(), '- [ ] Zweite @ben @1.12.2026\n\n**Ziel:** Ziel\n\n**Notizen:**');
+  await page.waitForFunction(SAVED);
+  part('Rechtsklick in der Vorschau: einen oder alle Platzhalter auflösen, Beschreibungen gehen mit');
+
+  // Unternotizen: gleiche Namen werden mitgefüllt; im Titel der Wert
+  await fromTemplate('Projekt');
+  await page.waitForFunction(() => document.activeElement === document.querySelector('#title'));
+  assert.equal(await sel('#title'), '{{?Kunde}}');
+  assert.match(await hintText(), /Firma ohne Rechtsform/);
+  await page.keyboard.type('Muster AG');
+  await page.keyboard.press('Tab');
+  assert.equal(await sel('#body'), '{{?Kontakt}}', 'der gleiche Name im Text ist schon gefüllt, weiter zum nächsten');
+  assert.ok((await body()).startsWith('Kunde: {{?Kunde: Muster AG}}, Kontakt {{?Kontakt}}'));
+  await page.keyboard.type('Frau Meier');
+  await page.keyboard.press('Tab');
+  await page.waitForFunction(SAVED);
+  await page.click('#backBtn');
+  await page.click('#viewListBtn');
+  await page.waitForSelector('body.view-list');
+  const titles = await page.locator('#list li[data-id] .note-title').allTextContents();
+  assert.ok(titles.includes('Projekt Muster AG'), 'Titel mit dem Wert: ' + titles.join(' | '));
+  await page.locator('#list li[data-id]', { has: page.locator('.note-title', { hasText: /^Offerte$/ }) }).click();
+  await page.waitForFunction(() => document.querySelector('#title').value === 'Offerte');
+  assert.ok((await body()).startsWith('Offerte für {{?Kunde: Muster AG}}'), 'die Unternotiz bekommt den Wert: ' + await body());
+  part('Unternotizen der Vorlage: gleicher Name mitgefüllt; im Titel der Wert');
+
+  // Vorlage einfügen: das erste Feld im eingefügten Text, der Titel bleibt
+  await page.evaluate(() => { const b = document.querySelector('#body'); b.focus(); b.setSelectionRange(b.value.length, b.value.length); });
+  await page.click('#noteMenuBtn');
+  await page.click('#insertTemplateBtn');
+  await page.waitForSelector('#templatePickDialog[open]');
+  await page.locator('.template-item', { hasText: 'Aufgabe' }).click();
+  await page.click('#templatePickGoBtn');
+  await page.waitForFunction(() => document.activeElement === document.querySelector('#body'));
+  assert.equal(await sel('#body'), '{{?Beschreibung}}');
+  assert.equal(await page.inputValue('#title'), 'Offerte', 'der Titel der Notiz bleibt');
+  await page.keyboard.press('Escape');
+  assert.deepEqual(errors, [], 'keine Fehler im Browser');
+  part('Vorlage einfügen: das erste Feld im eingefügten Text ist ausgewählt, der Titel bleibt');
   await ctx.close();
 }
 
@@ -2784,6 +2977,7 @@ suite('Erweiterungs-Test', [
   { name: 'Querverweise: gestrichelte Linien, Schalter, eingeklappte Ziele, Vorschau, Export und Druck, gelöschtes Ziel', run: runLinks },
   { name: 'Entscheide und Personen: Reiter, Ansicht, Entscheiden mit Datum, Vorschau, Toolleiste, Vorschläge beim Tippen von @, Export und Druck, Blöcke in Listen', run: runDecisions },
   { name: 'Vorlagen: Ordner verbinden, speichern, aus Vorlage anlegen und einfügen, Erlaubnis, ohne Ordner, Datei hinzufügen', run: runTemplatesUi },
+  { name: 'Ausfüllbare Platzhalter: Titel zuerst, Tab, Beschreibung, gleiche Namen, behalten, Klick hinein, auflösen, Unternotizen, einfügen', run: runPlaceholdersUi },
   { name: 'Tabellen: Raster in der Toolleiste, Tab und Enter, Titelzeile oben, Rechtsklick, Schnittstelle für Erweiterungen, Druck, Lesemodus', run: runTablesUi },
   { name: 'Personen an Aufgaben und Tabellenfelder: Aufgaben-Ansicht (Filter, nach Person, geerbt), Druck, Kästchen und Knöpfe im Feld, Knopf und Element über der Mindmap, Abschnitt im Druck', run: runCellsPeopleUi },
   { name: 'Sprachen: Pseudo-Sprache durch alle Ansichten, Englisch, Browsersprache, Mehrzahl, Testpaket, Wechsel', run: runI18n },

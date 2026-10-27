@@ -7,6 +7,9 @@
 (function (global) {
   'use strict';
 
+  /** Ausfüllbare Platzhalter (v2.12.0, placeholders.js): es zählt der Wert, offene als «[Name]»; die Zeilen bleiben, wie sie sind. */
+  const flat = body => (global.NoNotesPlaceholders && body ? global.NoNotesPlaceholders.flatten(body) : body);
+
   const REF_RE = /\[\[([^[\]\n]*)\]\]/g;
 
   /** Inhalt eines Verweises: { title, cross }. Ein Stern am Ende macht ihn zum Querverweis; [[Titel *]] gilt auch. */
@@ -53,7 +56,7 @@
   function parse(body) {
     const out = [];
     const seen = new Set();
-    const lines = String(body == null ? '' : body).replace(/\r\n?/g, '\n').split('\n');
+    const lines = String(body == null ? '' : flat(body)).replace(/\r\n?/g, '\n').split('\n');
     let fence = null;
     let block = false;
     for (let i = 0; i < lines.length; i++) {

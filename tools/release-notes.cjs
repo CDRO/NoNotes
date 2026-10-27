@@ -47,10 +47,28 @@ function previousOf(version, known) {
 
 const stripComments = text => text.replace(/<!--[\s\S]*?-->/g, '');
 
+/** Ein Codeblock endet erst bei einem Zaun aus denselben Zeichen, mindestens so lang (````markdown … ```` darf ``` enthalten). */
+function fenceStep(fence, line) {
+  const m = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
+  if (!fence) return m ? m[1] : null;
+  return m && m[1][0] === fence[0] && m[1].length >= fence.length && !m[2].trim() ? null : fence;
+}
+
+/** Text mit Leerzeichen statt Code (Blöcke und `…`), gleich lang: für Prüfungen, die nur den Fliesstext meinen. */
+function maskCode(text) {
+  let fence = null;
+  return text.split('\n').map(line => {
+    const was = fence;
+    fence = fenceStep(fence, line);
+    if (was || fence) return ' '.repeat(line.length);
+    return line.replace(/(`+)(?!`)[\s\S]*?[^`]\1(?!`)/g, m => ' '.repeat(m.length));
+  }).join('\n');
+}
+
 /** Bilder und Verweise ausserhalb von Code: [{ image, alt, target, index }] */
 function links(text) {
   const out = [];
-  const masked = text.replace(/```[\s\S]*?```/g, m => ' '.repeat(m.length)).replace(/`[^`\n]*`/g, m => ' '.repeat(m.length));
+  const masked = maskCode(text);
   const re = /(!?)\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
   let m;
   while ((m = re.exec(masked))) out.push({ image: m[1] === '!', alt: m[2], target: m[3], index: m.index, length: m[0].length });
@@ -65,11 +83,13 @@ function sections(text) {
   const out = [];
   let cur = null, sub = null;
   const head = [];
-  let fence = false;
+  let fence = null;
   for (const line of lines) {
-    if (/^\s*(```|~~~)/.test(line)) fence = !fence;
-    const h2 = !fence && /^##\s+(.+?)\s*$/.exec(line);
-    const h3 = !fence && /^###\s+(.+?)\s*$/.exec(line);
+    const was = fence;
+    fence = fenceStep(fence, line);
+    const code = was || fence; // im Block, die Zäune eingeschlossen
+    const h2 = !code && /^##\s+(.+?)\s*$/.exec(line);
+    const h3 = !code && /^###\s+(.+?)\s*$/.exec(line);
     if (h2) { cur = { title: h2[1], body: '', subs: [] }; sub = null; out.push(cur); continue; }
     if (h3 && cur) { sub = { title: h3[1], body: '' }; cur.subs.push(sub); continue; }
     if (sub) sub.body += line + '\n';
@@ -125,7 +145,7 @@ function check(version, dir) {
   }
 
   const left = new Map();
-  for (const m of text.matchAll(/\bTODO\b|\{\{[^}]*\}\}|\bvX\.Y\.Z\b|\bvA\.B\.C\b|<Titel>/g)) left.set(m[0], (left.get(m[0]) || 0) + 1);
+  for (const m of maskCode(text).matchAll(/\bTODO\b|\{\{[^}]*\}\}|\bvX\.Y\.Z\b|\bvA\.B\.C\b|<Titel>/g)) left.set(m[0], (left.get(m[0]) || 0) + 1);
   if (left.size) errors.push(`Platzhalter übrig: ${[...left].map(([k, n]) => `«${k}»${n > 1 ? ` (${n}×)` : ''}`).join(', ')}.`);
 
   const used = new Set();

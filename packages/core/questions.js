@@ -18,6 +18,9 @@
 (function (global) {
   'use strict';
 
+  /** Ausfüllbare Platzhalter (v2.12.0, placeholders.js): es zählt der Wert, offene als «[Name]»; die Zeilen bleiben, wie sie sind. */
+  const flat = body => (global.NoNotesPlaceholders && body ? global.NoNotesPlaceholders.flatten(body) : body);
+
   const QUESTION_RE = /^\s*\?(!?)\s?(.*)$/;                          // Gruppe 1: "!" → Entscheid
   const LIST_RE = /^(\s*)((?:[-*+]|\d+[.)])\s+)\?(!?)\s?(.*)$/;     // "- ?! Text", "1. ? Text"
   const BLOCK_RE = /^(\s*)\?(!?)\s?```(.*)$/;                       // "?!``` Titel" öffnet einen Block
@@ -264,7 +267,7 @@
   /** Zerlegt einen Notiztext in Fragen und Entscheide mit optionaler Antwort, in der Reihenfolge des Texts. Unter-Einträge eines
    *  Blocks folgen ihm und tragen in parent dessen Stelle in der Liste. Code (``` und ~~~) zählt nicht, wie in der Vorschau. */
   function parse(body) {
-    const lines = (body || '').split('\n');
+    const lines = (flat(body) || '').split('\n');
     const result = [];
     const push = (b, lineIndex, parent) => {
       result.push({

@@ -127,6 +127,7 @@
       const note = notes.get(n.id);
       const level = Math.min(6, n.printLevel + 1);
       let body = M().render(note.body, {
+        placeholders: 'plain', // ausfüllbare Platzhalter: nur die Werte
         resolveRef,
         resolveAttachment: id => urls.get(id) || null,
         tableFormat: options.tableFormat ? info => options.tableFormat(Object.assign({ noteId: n.id }, info)) : undefined,
@@ -182,11 +183,11 @@
         : (answered && r.answered_at ? t('Beantwortet {datum}', { datum: fmtDate(r.answered_at) }) : t('Gestellt {datum}', { datum: fmtDate(r.created_at) }));
       const subs = r.sub ? M().subEntriesHtml(r.sub, answered) : '';
       const within = r.parent_id != null && !nested && r.parent_text ? `<div class="print-within">${esc(t('Teil von «{titel}»', { titel: r.parent_text }))}</div>` : '';
-      const details = r.details ? `<div class="print-details md">${M().render(r.details, { resolveRef })}</div>` : '';
+      const details = r.details ? `<div class="print-details md">${M().render(r.details, { resolveRef, placeholders: 'plain' })}</div>` : '';
       return `<div class="print-q${decision ? ' decision' : ''}${nested ? ' sub' : ''} ${answered ? 'answered' : 'open'}">` +
         `<span class="print-mark">${answered ? '✓' : decision ? '?!' : '?'}</span>` +
         `<div class="print-q-body"><div class="print-q-text">${M().inline(r.text, { resolveRef, people: true })}${due}${subs}</div>${within}${details}` +
-        (answered ? `<div class="print-a md">${M().render(r.answer, { resolveRef })}</div>` : ruled) +
+        (answered ? `<div class="print-a md">${M().render(r.answer, { resolveRef, placeholders: 'plain' })}</div>` : ruled) +
         `<div class="print-q-meta">${esc(when)}${from}</div></div></div>`;
     };
 

@@ -47,6 +47,8 @@
   // ein Klick den Pfad (packages/ui/app.js). Bilder mit einem solchen Pfad zeigt nur die lokale Version (configure({ localFiles })).
 
   const conf = { localFiles: true };
+  // wie TOKEN_SRC in placeholders.js: {{?Name}} oder {{?Name: Wert}}, der Wert darf {{datum+7}} enthalten
+  const PH_RE = /^\{\{\?([^{}:\n]+?)(?::[ \t]?((?:\{\{[^{}\n]*\}\}|[^\n])*?))?\}\}/;
   /** Einstellungen der Ausprägung: localFiles = Pfade lassen sich öffnen (lokale Version, Seite aus einer Datei). */
   function configure(o) { if (o && typeof o.localFiles === 'boolean') conf.localFiles = o.localFiles; }
 
@@ -161,6 +163,19 @@
         if (close > i) {
           out += '<code>' + escapeHtml(src.slice(i + 1, close)) + '</code>';
           i = close + 1;
+          continue;
+        }
+      }
+
+      // Ausfüllbarer Platzhalter {{?Name}} (offen, gelb) oder {{?Name: Wert}} (ausgefüllt, fein unterstrichen); im Druck nur der Wert
+      if (ch === '{' && src[i + 1] === '{' && src[i + 2] === '?') {
+        const m = PH_RE.exec(src.slice(i));
+        const name = m ? m[1].trim().replace(/\s+/g, ' ') : '';
+        if (name) {
+          if (ctx.options.placeholders === 'plain') out += m[2] === undefined ? text(`[${name}]`) : renderInline(m[2], ctx);
+          else if (m[2] === undefined) out += `<span class="md-ph open" data-ph="${escapeHtml(name)}" title="${escapeHtml(t('Platzhalter «{name}»: noch auszufüllen', { name }))}">${text(name)}</span>`;
+          else out += `<span class="md-ph" data-ph="${escapeHtml(name)}" title="${escapeHtml(t('Platzhalter «{name}»', { name }))}">${renderInline(m[2], ctx)}</span>`;
+          i += m[0].length;
           continue;
         }
       }
@@ -282,7 +297,7 @@
       }
 
       // Normaler Text bis zum nächsten Sonderzeichen (mit Personen-Marken auch bis "@" und "(")
-      const stops = (ctx.people ? '`![*_~hw@(' : '`![*_~hw') + 'f\\<';
+      const stops = (ctx.people ? '`![*_~hw@(' : '`![*_~hw') + 'f\\<{';
       let j = i + 1;
       // ein Laufwerkspfad beginnt mit einem Buchstaben: vor «X:\» anhalten, wenn davor ein Leerzeichen oder der Anfang steht
       while (j < n && !stops.includes(src[j]) && !(src[j + 1] === ':' && src[j + 2] === '\\' && /[A-Za-z]/.test(src[j]) && pathBoundary(src[j - 1]))) j++;
@@ -486,7 +501,10 @@
   function render(markdown, options) {
     options = options || {};
     const ctx = makeCtx(options);
-    const lines = String(markdown || '').replace(/\r\n?/g, '\n').split('\n');
+    // Ausfüllbare Platzhalter (v2.12.0): im Druck nur die Werte, sonst hängende Werte aufgelöst (Personen, Termine wirken)
+    const P = global.NoNotesPlaceholders;
+    const source = P ? (options.placeholders === 'plain' ? P.flatten(String(markdown || '')) : P.forPreview(String(markdown || ''))) : markdown;
+    const lines = String(source || '').replace(/\r\n?/g, '\n').split('\n');
     const out = [];
     let i = 0;
 
@@ -522,6 +540,7 @@
         i++;
         while (i < lines.length && !lines[i].trim().startsWith(fence[1])) code.push(lines[i++]);
         i++;
+        if (fence[2] === 'template-description') continue; // Beschreibung eines Platzhalters: unsichtbar
         out.push(`<pre${la(start)}><code${fence[2] ? ` class="lang-${escapeHtml(fence[2])}"` : ''}>${escapeHtml(code.join('\n'))}</code></pre>`);
         continue;
       }

@@ -26,6 +26,7 @@
     'Tasks are Markdown checkboxes "- [ ] text"; indented checkboxes are subtasks. A due date is written at the end of a line as "@YYYY-MM-DD" or "@DD.MM.YYYY".',
     '"@handle" names a person who should answer, decide or do a task; "(@handle)" marks an optional participant. A subtask without its own @handle belongs to the people of its parent task.',
     'Markdown tables ("| a | b |" with a "|---|---|" line below the header) may hold these entries in cells: "[ ] text" is a task, "? text" a question and "?! text" a decision; "<br>" separates lines inside a cell, and an answer follows in the same cell as "<br>! answer" ("<br>!! date: decision"). Write "\\|" for a "|" inside a cell.',
+    'Paths such as "\\\\server\\share\\file.pdf", "C:\\folder\\" or "file:///…" are links to files and folders ("<…>" around a path with spaces). "{{?Name}}" is a fill-in placeholder from a template that is still open; "{{?Name: value}}" is one that was filled in and kept: its value counts as text (people, dates), keep the braces when you edit around it. A fenced block "```template-description Name" describes a placeholder and is not shown.',
     'Prefer the dedicated tools (answer_question, record_decision, complete_task, append_to_note) over rewriting a whole note; when you must rewrite, pass base_updated_at from get_note so concurrent edits are detected.',
   ].join(' ');
 
@@ -122,6 +123,7 @@
   // ---------- Bausteine für Schemata ----------
 
   const ID = desc => ({ type: 'integer', minimum: 1, description: desc });
+  const KEEP_PLACEHOLDERS = 'templates.keepPlaceholders'; // Einstellung «Platzhalter behalten» (v2.12.0, '1' oder leer)
   const STR = (desc, extra) => Object.assign({ type: 'string', description: desc }, extra || {});
   const BOOL = desc => ({ type: 'boolean', description: desc });
   const LIMIT = { type: 'integer', minimum: 1, maximum: 500, description: 'Maximum number of items to return (default 100).' };
@@ -544,21 +546,37 @@
     // Vorlagen (v2.5.0): nur, wenn die Ausprägung welche kennt (options.templates, dieselbe Schnittstelle wie shell.templates)
     {
       name: 'list_templates', title: 'List templates', readOnly: true, needs: 'templates',
-      description: 'Templates for new notes: a note with optional sub-notes; placeholders such as {{date}}, {{date+7}} or {{date+7:yyyy-mm-dd}} (date with a format) are filled in when a note is created from it. Each item has an id for create_note_from_template.',
+      description: 'Templates for new notes: a note with optional sub-notes; placeholders such as {{date}}, {{date+7}} or {{date+7:yyyy-mm-dd}} (date with a format) are filled in when a note is created from it. Fill-in placeholders {{?Name}} are for the writer: give their values to create_note_from_template (fields, with the description the template gives). Each item has an id for create_note_from_template.',
       inputSchema: schema({}),
       async run(B, input, ctx) {
-        const items = (await ctx.templates.list()).map(i => ({ id: String(i.id), name: i.name, description: i.description || '', notes: i.notes || 1 }));
-        const text = items.length ? items.map(i => `[t ${i.id}] ${quote(i.name)}${i.description ? ` — ${i.description}` : ''} — ${plural(i.notes, 'note', 'notes')}`).join('\n') : 'No templates.';
+        const P = global.NoNotesPlaceholders;
+        const fieldsOf = async i => { // ausfüllbare Platzhalter (v2.12.0) mit ihrer Beschreibung
+          if (!P || !ctx.templates.get) return [];
+          const tpl = await ctx.templates.get(i.id).catch(() => null);
+          if (!tpl) return [];
+          const descs = new Map();
+          const seen = new Map();
+          for (const n of tpl.notes || []) {
+            for (const [k, d] of P.descriptions(n.body)) if (!descs.has(k)) descs.set(k, d.text);
+            for (const p of P.scan(`${n.title}\n${n.body}`)) if (!seen.has(p.name.toLowerCase())) seen.set(p.name.toLowerCase(), { name: p.name, default: p.value });
+          }
+          return [...seen.values()].map(f => Object.assign(f, { description: descs.get(f.name.toLowerCase()) || '' }));
+        };
+        const items = [];
+        for (const i of await ctx.templates.list()) items.push({ id: String(i.id), name: i.name, description: i.description || '', notes: i.notes || 1, fields: await fieldsOf(i) });
+        const fieldText = f => `${quote(f.name)}${f.default ? ` (default ${quote(f.default)})` : ''}${f.description ? `: ${f.description.replace(/\s+/g, ' ')}` : ''}`;
+        const text = items.length ? items.map(i => `[t ${i.id}] ${quote(i.name)}${i.description ? ` — ${i.description}` : ''} — ${plural(i.notes, 'note', 'notes')}${i.fields.length ? `\n  fields: ${i.fields.map(fieldText).join('; ')}` : ''}`).join('\n') : 'No templates.';
         return result(text, { total: items.length, items });
       },
     },
     {
       name: 'create_note_from_template', title: 'Create a note from a template', readOnly: false, needs: 'templates',
-      description: 'Create a new note, together with the sub-notes of the template, under a parent note or at the root. Placeholders are filled in; title replaces the title of the template. Returns the id of the new note.',
+      description: 'Create a new note, together with the sub-notes of the template, under a parent note or at the root. Placeholders are filled in; values fills the fill-in placeholders {{?Name}} by name (fields of list_templates), the others stay open for the writer; title replaces the title of the template. Returns the id of the new note.',
       inputSchema: schema({
         template_id: STR('Template id (from list_templates).', { minLength: 1, maxLength: 300 }),
         parent_id: { type: ['integer', 'null'], minimum: 1, description: 'Parent note; omit or null for the root.' },
         title: STR('Title instead of the one in the template.', { minLength: 1, maxLength: 300 }),
+        values: { type: 'object', description: 'Values for fill-in placeholders, by name: {"Customer": "Muster AG"}. One line each; Markdown allowed.', additionalProperties: { type: 'string' } },
       }, ['template_id']),
       async run(B, input, ctx) {
         if (input.parent_id != null) await liveNote(B, input.parent_id).catch(e => { throw Object.assign(e, { code: e.code === 'NOTE_NOT_FOUND' || e.code === 'IN_TRASH' ? 'TARGET_NOT_FOUND' : e.code }); });
@@ -567,6 +585,16 @@
         const fill = Object.assign({}, ctx.templates.context ? ctx.templates.context() : {}, ctx.templateContext ? ctx.templateContext() : {});
         const notes = T.instantiate(tpl, fill);
         if (!notes.length) throw Object.assign(new Error('empty template'), { code: 'TEMPLATE_EMPTY' });
+        const P = global.NoNotesPlaceholders;
+        if (P && input.values && typeof input.values === 'object') { // ausfüllbare Platzhalter (v2.12.0): stehen lassen je nach Vorlage oder Einstellung
+          const values = {};
+          for (const [k, v] of Object.entries(input.values)) if (v != null) values[k] = String(v).slice(0, 2000);
+          const keep = tpl.placeholders ? tpl.placeholders === 'keep' : (B.getMeta ? (await B.getMeta(KEEP_PLACEHOLDERS)) === '1' : false);
+          for (const n of notes) {
+            n.title = P.flatten(P.fill(n.title, values), { open: name => `{{?${name}}}` });
+            n.body = P.fill(n.body, values, { keep });
+          }
+        }
         if (input.title) notes[0].title = input.title.trim();
         const ids = await T.createNotes(B, notes, input.parent_id == null ? null : input.parent_id, { author: ctx.author });
         return result(`Created note [${ids[0]}] ${quote(notes[0].title)} from template ${quote(tpl.name)}${ids.length > 1 ? ` with ${plural(ids.length - 1, 'sub-note', 'sub-notes')}` : ''}${input.parent_id != null ? ` under note ${input.parent_id}` : ' at the root'}.`, { id: ids[0], ids });

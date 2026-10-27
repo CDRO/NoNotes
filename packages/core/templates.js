@@ -8,6 +8,7 @@
      description: "Traktanden, Beschlüsse und Pendenzen"
      title: "Sitzung {{datum}}"
      tags: ["sitzung"]
+     placeholders: "keep"          wahlweise: ausgefüllte Platzhalter stehen lassen ("keep") oder nicht ("remove"); sonst die Einstellung
      ---
      Text der obersten Notiz …
 
@@ -25,7 +26,11 @@
    MMM kurz (Okt), MMMM ausgeschrieben; TT Tag, T ohne führende Null, TTT Wochentag kurz (Di), TTTT ausgeschrieben. Text in '…'
    bleibt, wie er ist ('' für ein Hochkomma), alle anderen Zeichen ebenfalls. Statt Kürzeln ein Stil der Sprache der Oberfläche
    (Intl.DateTimeFormat, dateStyle): kurz, mittel, lang, voll; dazu iso (JJJJ-MM-TT). Ein Format an einem anderen Platzhalter
-   lässt ihn stehen. */
+   lässt ihn stehen.
+
+   Ausfüllbare Platzhalter (v2.12.0, placeholders.js): {{?Kunde}} wählt die App beim Anlegen aus, Tippen ersetzt ihn, Tab springt weiter;
+   {{?Kunde: Vorschlag}} bringt einen Wert mit. Blöcke «```template-description Kunde … ```» beschreiben sie; beim Anlegen wandern sie ans
+   Ende jeder Notiz, die den Platzhalter (im Text oder Titel) hat. */
 (function (global) {
   'use strict';
 
@@ -297,6 +302,7 @@
     if (t.description) head.push(`description: ${json(String(t.description))}`);
     head.push(`title: ${json(String(root.title || ''))}`);
     if (root.tags && root.tags.length) head.push(`tags: ${json(root.tags.map(String))}`);
+    if (t.placeholders === 'keep' || t.placeholders === 'remove') head.push(`placeholders: ${json(t.placeholders)}`);
     head.push('---');
     const parts = [head.join('\n'), String(root.body || '')];
     for (const n of notes.slice(1)) {
@@ -343,7 +349,11 @@
     }
     for (const n of notes) n.body = n.body.join('\n').replace(/^\n+|\s+$/g, '');
     const name = String(head.name || notes[0].title || fallback || '').trim() || t('Vorlage');
-    return { name, description: String(head.description || '').trim(), notes };
+    const keep = String(head.placeholders || '').trim().toLowerCase();
+    const placeholders = /^(keep|behalten)$/.test(keep) ? 'keep' : /^(remove|entfernen)$/.test(keep) ? 'remove' : null;
+    const out = { name, description: String(head.description || '').trim(), notes };
+    if (placeholders) out.placeholders = placeholders;
+    return out;
   }
 
   /** Dateiname für eine Vorlage: aus dem Namen, ohne heikle Zeichen. */
@@ -357,9 +367,24 @@
   /** Notizen einer Vorlage mit ersetzten Platzhaltern: [{ depth, title, body, tags }]. */
   function instantiate(template, ctx) {
     const c = Object.assign({ template: template && template.name }, ctx || {});
-    return ((template && template.notes) || []).map(n => ({
+    const notes = ((template && template.notes) || []).map(n => ({
       depth: n.depth, title: fill(n.title, c), body: fill(n.body, c), tags: (n.tags || []).map(x => fill(x, c)).filter(Boolean),
     }));
+    // Beschreibungen ausfüllbarer Platzhalter: aus allen Notizen gesammelt, aus dem Text genommen; createNotes und insert hängen sie
+    // dort an, wo der Platzhalter vorkommt (descriptions je Notiz, für alle dieselbe Map)
+    const P = global.NoNotesPlaceholders;
+    if (P) {
+      const descs = new Map();
+      for (const n of notes) for (const [k, d] of P.descriptions(n.body)) if (!descs.has(k)) descs.set(k, d);
+      for (const n of notes) { n.body = P.stripDescriptions(n.body); n.descriptions = descs; }
+    }
+    return notes;
+  }
+
+  /** Text einer neuen Notiz: mit den Beschreibungen ihrer Platzhalter am Ende (unsichtbar in Vorschau, Druck und Export). */
+  function withDescriptions(n) {
+    const P = global.NoNotesPlaceholders;
+    return P && n.descriptions ? P.appendDescriptions(n.body || '', n.descriptions, n.title) : n.body || '';
   }
 
   /** Legt Notizen über das Backend an: die erste unter parentId (oder an der Wurzel), die übrigen nach ihrer Tiefe darunter. Gibt die
@@ -372,7 +397,7 @@
       const depth = n.depth - base;
       const parent = depth <= 0 ? parentId : stack[Math.min(depth, stack.length) - 1];
       const id = await backend.createNote(parent == null ? null : parent);
-      await backend.updateNote(id, n.title || '', n.body || '', options && options.author ? { author: options.author } : {});
+      await backend.updateNote(id, n.title || '', withDescriptions(n), options && options.author ? { author: options.author } : {});
       if (n.tags && n.tags.length) await backend.setTags(id, n.tags);
       const level = Math.max(0, Math.min(depth, stack.length));
       stack[level] = id;
@@ -382,12 +407,24 @@
     return ids;
   }
 
-  /** Neue Notiz aus einer Vorlage unter parentId: gibt die Kennung der obersten Notiz zurück. */
-  async function apply(backend, template, parentId, ctx, options) {
+  /** Neue Notizen aus einer Vorlage unter parentId: gibt alle Kennungen zurück (die erste ist die oberste Notiz). options.values setzt
+   *  ausfüllbare Platzhalter ein ({ Name: Wert }, options.keep: als {{?Name: Wert}} stehen lassen), etwa für Agenten. */
+  async function create(backend, template, parentId, ctx, options) {
     const notes = instantiate(template, ctx);
     if (!notes.length) throw Object.assign(new Error(t('Die Vorlage ist leer.')), { code: 'TEMPLATE_EMPTY' });
-    const ids = await createNotes(backend, notes, parentId, options);
-    return ids[0];
+    const P = global.NoNotesPlaceholders;
+    if (P && options && options.values) {
+      for (const n of notes) {
+        n.title = P.flatten(P.fill(n.title, options.values), { open: name => `{{?${name}}}` }); // im Titel nur Werte
+        n.body = P.fill(n.body, options.values, { keep: !!options.keep });
+      }
+    }
+    return createNotes(backend, notes, parentId, options);
+  }
+
+  /** Neue Notiz aus einer Vorlage unter parentId: gibt die Kennung der obersten Notiz zurück. */
+  async function apply(backend, template, parentId, ctx, options) {
+    return (await create(backend, template, parentId, ctx, options))[0];
   }
 
   /** Vorlage in eine bestehende Notiz einfügen: der Text der obersten Notiz an der Stelle caret, ihre Unternotizen unter noteId.
@@ -402,11 +439,14 @@
     const lead = before && !before.endsWith('\n') ? '\n' : '';
     const tail = after && !after.startsWith('\n') ? '\n' : '';
     const children = notes.length > 1 ? await createNotes(backend, notes.slice(1).map(n => Object.assign({}, n, { depth: n.depth - 1 })), noteId, options) : [];
-    return { body: before + lead + piece + tail + after, caret: before.length + lead.length + piece.length, children };
+    const joined = before + lead + piece + tail + after;
+    const full = notes.length ? withDescriptions({ body: joined, descriptions: notes[0].descriptions }) : joined;
+    // start und caret: das Eingefügte (für das Springen durch seine Platzhalter); die Beschreibungen stehen am Ende der Notiz
+    return { body: full, start: before.length + lead.length, caret: before.length + lead.length + piece.length, children };
   }
 
   /** Kurzbeschreibung für Listen: Zahl der Notizen. */
   function noteCount(template) { return ((template && template.notes) || []).length; }
 
-  global.NoNotesTemplates = { FORMAT, PLACEHOLDERS, DATE_STYLES, fill, placeholders, dateFormats, formatDate, placeholderName, clean, datesToPlaceholder, fromNotes, toMarkdown, parse, fileName, instantiate, createNotes, apply, insert, noteCount };
+  global.NoNotesTemplates = { FORMAT, PLACEHOLDERS, DATE_STYLES, fill, placeholders, dateFormats, formatDate, placeholderName, clean, datesToPlaceholder, fromNotes, toMarkdown, parse, fileName, instantiate, createNotes, create, apply, insert, noteCount };
 })(window);

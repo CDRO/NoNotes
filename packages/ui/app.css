@@ -652,6 +652,20 @@ a.md-path { text-decoration: none; border-bottom: 1px dotted currentColor; overf
 /* Vorschläge für @kürzel im Editor */
 .mention-popup { position: absolute; z-index: 20; min-width: 180px; max-width: 280px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, .15); padding: 4px; display: flex; flex-direction: column; }
 .mention-popup[hidden] { display: none; }
+/* Ausfüllbare Platzhalter (v2.12.0): offen gelb, ausgefüllt fein unterstrichen; Kasten mit der Beschreibung unter der Zeile */
+.md-ph { border-bottom: 1px dotted var(--muted); cursor: text; }
+.md-ph.open { background: #fff3b0; color: #5c4400; border: 1px dashed #c9a200; border-radius: 4px; padding: 0 4px; font-size: .95em; }
+@media (prefers-color-scheme: dark) { .md-ph.open { background: #4a3d0a; color: #ffe9a3; border-color: #a88a1c; } }
+#printArea .md-ph { border: 0; }
+.ph-hint { position: absolute; z-index: 21; max-width: min(420px, 90%); background: var(--panel); border: 1px solid var(--accent); border-left-width: 4px; border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, .15); padding: 8px 12px; font-size: 13px; }
+.ph-hint[hidden] { display: none; }
+.ph-hint .ph-hint-name { font-weight: 600; margin-bottom: 4px; }
+.ph-hint .md p { margin: .2em 0; }
+.ph-hint .ph-hint-keys { margin-top: 6px; color: var(--muted); font-size: 12px; }
+.ph-keep { display: flex; gap: 8px; align-items: center; margin: 8px 0 4px; }
+.ph-help { margin-top: 6px; font-size: 13px; }
+.ph-help summary { cursor: pointer; color: var(--accent-ink); }
+.ph-help pre { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; overflow: auto; }
 .mention-popup button { border: 0; background: none; text-align: left; padding: 6px 10px; border-radius: 6px; display: flex; gap: 8px; align-items: baseline; color: var(--text); }
 .mention-popup button[aria-selected="true"], .mention-popup button:hover { background: var(--hover); }
 .mention-handle { font-weight: 600; }

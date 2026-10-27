@@ -32,3 +32,22 @@ Das **Datum mit Format** steht hinter einem Doppelpunkt: `{{datum+2:JJJJ-MM-TT}}
 `{{datum:TTTT, T. MMMM JJJJ}}` (Dienstag, 20. Oktober 2026), `{{datum:lang}}` (20. Oktober 2026). Kürzel gross oder klein, deutsch
 oder englisch: `JJJJ` (`yyyy`), `JJ`; `MM`, `M`, `MMM` (Okt), `MMMM` (Oktober); `TT` (`dd`), `T`; `TTT` (Di), `TTTT` (Dienstag).
 Text in Hochkommas bleibt stehen (`{{datum:'KW' JJJJ}}`). Stile: `kurz`, `mittel`, `lang`, `voll`, `iso`.
+
+**Platzhalter zum Ausfüllen** (seit 2.12.0) schreibst du beim Einfügen selbst: `{{?Kunde}}`. Nach dem Einfügen ist der erste
+ausgewählt (steht einer im Titel, beginnt es dort): Tippen ersetzt ihn, `Tab` springt zum nächsten, `Umschalt+Tab` zurück, `Esc`
+beendet. Übersprungene bleiben stehen und sind in der Vorschau gelb. `{{?Kunde: Muster AG}}` bringt einen Vorschlag mit, auch einen
+automatischen: `@{{?Bis wann: {{datum+7}}}}`. Gleiche Namen bekommen denselben Wert, auch im Titel und in den Unternotizen.
+
+Eine **Beschreibung** erscheint beim Ausfüllen in einem Kasten unter der Zeile. Sie steht irgendwo in der Vorlage als Block mit dem
+Namen des Platzhalters (Markdown):
+
+````
+```template-description Kunde
+Firmenname wie im Handelsregister, **ohne** Rechtsform.
+```
+````
+
+Die Blöcke stehen nach dem Einfügen am Ende der Notiz und sind in Vorschau, Druck und Export unsichtbar; sie verschwinden, sobald es
+keinen Platzhalter ihres Namens mehr gibt. Ob ein ausgefüllter Platzhalter als `{{?Kunde: Muster AG}}` stehen bleibt (zum späteren
+Anspringen) oder zu Text wird, sagt die Einstellung unter **Datenbank → Vorlagen…**; eine Vorlage kann es im Kopf selbst festlegen:
+`placeholders: "keep"` oder `"remove"`. Beispiel: `Aufgabe.md`.

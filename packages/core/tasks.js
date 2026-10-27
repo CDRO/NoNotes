@@ -13,6 +13,9 @@
 (function (global) {
   'use strict';
 
+  /** Ausfüllbare Platzhalter (v2.12.0, placeholders.js): es zählt der Wert, offene als «[Name]»; die Zeilen bleiben, wie sie sind. */
+  const flat = body => (global.NoNotesPlaceholders && body ? global.NoNotesPlaceholders.flatten(body) : body);
+
   const { t, tn } = global.NoNotesI18n;
 
   const TASK_RE = /^(\s*)([-*+]|\d+[.)])\s+\[([ xX])\]\s+(.*)$/;
@@ -55,7 +58,7 @@
   /** Alle Aufgaben eines Notiztexts, mit Einrückung, Tiefe und Verweis auf die Hauptaufgabe
    *  (parent = Index in der Ergebnisliste, -1 ohne Hauptaufgabe). */
   function parse(body) {
-    const lines = (body || '').split('\n');
+    const lines = (flat(body) || '').split('\n');
     const out = [];
     const stack = []; // offene Hauptaufgaben: { indent, index }
     const tb = Tb();
