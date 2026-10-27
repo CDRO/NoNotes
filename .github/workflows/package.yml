@@ -14,12 +14,34 @@ on:
 
 permissions:
   contents: write
+  actions: write   # doppelte Läufe abbrechen (erster Schritt)
 
 jobs:
   build:
     name: Smoke-Test und ZIP
     runs-on: ubuntu-latest
     steps:
+      # Ressourcen sparen: Ein Push auf einen anderen Zweig als main bricht ab, wenn dieser Workflow mit demselben Commit auf
+      # main schon läuft, wartet oder dort grün war; main prüft denselben Stand. Darum zuerst main pushen, dann den Zweig.
+      - name: Abbrechen, wenn derselbe Commit schon auf main läuft
+        if: github.event_name == 'push' && github.ref_type == 'branch' && github.ref_name != 'main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          WF="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --jq '.workflow_id')"
+          ON_MAIN="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${WF}/runs?branch=main&head_sha=${GITHUB_SHA}&per_page=50" \
+            --jq '[.workflow_runs[] | select(.status != "completed" or .conclusion == "success")] | length')"
+          if [[ "${ON_MAIN}" -eq 0 ]]; then
+            echo "Commit ${GITHUB_SHA::7} läuft nicht auf main: weiter."
+            exit 0
+          fi
+          echo "Commit ${GITHUB_SHA::7} läuft schon auf main (oder war dort grün): dieser Lauf auf ${GITHUB_REF_NAME} bricht ab."
+          gh run cancel "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}"
+          for _ in $(seq 1 60); do sleep 5; done   # der Abbruch beendet den Lauf hier
+          echo "Abbruch hat nicht gegriffen." >&2
+          exit 1
+
       - name: Code holen
         uses: actions/checkout@v5
 
