@@ -563,9 +563,14 @@
           return [...seen.values()].map(f => Object.assign(f, { description: descs.get(f.name.toLowerCase()) || '' }));
         };
         const items = [];
-        for (const i of await ctx.templates.list()) items.push({ id: String(i.id), name: i.name, description: i.description || '', notes: i.notes || 1, fields: await fieldsOf(i) });
+        for (const i of await ctx.templates.list()) {
+          const item = { id: String(i.id), name: i.name, description: i.description || '', notes: i.notes || 1 };
+          const fields = await fieldsOf(i);
+          if (fields.length) item.fields = fields; // nur mit ausfüllbaren Platzhaltern
+          items.push(item);
+        }
         const fieldText = f => `${quote(f.name)}${f.default ? ` (default ${quote(f.default)})` : ''}${f.description ? `: ${f.description.replace(/\s+/g, ' ')}` : ''}`;
-        const text = items.length ? items.map(i => `[t ${i.id}] ${quote(i.name)}${i.description ? ` — ${i.description}` : ''} — ${plural(i.notes, 'note', 'notes')}${i.fields.length ? `\n  fields: ${i.fields.map(fieldText).join('; ')}` : ''}`).join('\n') : 'No templates.';
+        const text = items.length ? items.map(i => `[t ${i.id}] ${quote(i.name)}${i.description ? ` — ${i.description}` : ''} — ${plural(i.notes, 'note', 'notes')}${i.fields ? `\n  fields: ${i.fields.map(fieldText).join('; ')}` : ''}`).join('\n') : 'No templates.';
         return result(text, { total: items.length, items });
       },
     },

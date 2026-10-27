@@ -1178,6 +1178,7 @@ async function runAgentProgram(browser, part, step) {
     let rv = await c.request('tools/call', { name: 'list_templates', arguments: {} });
     assert.ok(!rv.result.isError, JSON.stringify(rv));
     assert.match(rv.result.content[0].text, /^\[t Aufgabe\.md\] "Aufgabe" — .* — 1 note\n  fields: "Beschreibung": .*; "Wer": .*; "Bis wann" \(default "\{\{datum\+7\}\}"\): .*; "Ziel": .*\n\[t Entscheidungsvorlage\.md\] "Entscheidungsvorlage" — .*\n\[t Sitzungsprotokoll\.md\] "Sitzungsprotokoll" — .* — 3 notes$/);
+    assert.deepEqual(rv.result.structuredContent.items.map(i => [i.id, !!i.fields]), [['Aufgabe.md', true], ['Entscheidungsvorlage.md', false], ['Sitzungsprotokoll.md', false]], 'fields nur mit ausfüllbaren Platzhaltern');
     rv = await c.request('tools/call', { name: 'create_note_from_template', arguments: { template_id: 'Sitzungsprotokoll.md' } });
     assert.match(rv.result.content[0].text, /^Created note \[1\] "Sitzung \d+\.\d+\.\d{4}" from template "Sitzungsprotokoll" with 2 sub-notes at the root\.$/);
     rv = await c.request('tools/call', { name: 'create_note_from_template', arguments: { template_id: 'Aufgabe.md', values: { Beschreibung: 'Offerte einholen', wer: 'anna' } } });
