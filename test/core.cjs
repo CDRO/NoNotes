@@ -2180,6 +2180,9 @@ async function runReleaseNotes(browser, part, step) {
     fs.writeFileSync(path.join(dir, 'RELEASE.md'), good.replace('## Update von v9.8.0', 'Schreibweise `{{?Kunde}}` und `` `{{datum}}` ``:\n\n````markdown\n```template-description Kunde\nTODO {{?Kunde}}\n```\n## Kein Abschnitt\n````\n\n## Update von v9.8.0'));
     assert.deepEqual(RN.check('v9.9.0', dir).errors, [], 'Platzhalter und TODO in Code zählen nicht; ```` umschliesst ``` (v2.12.0)');
     bad(t => t + '\n\nOffen: {{?Kunde}}', /Platzhalter übrig: «\{\{\?Kunde\}\}»/, 'ausserhalb von Code schon');
+    bad(t => t + '\n\nEine Aufgabe für @beat bis morgen.', /«@beat» ausserhalb von Code: GitHub erwähnt/, '@name erwähnt ein GitHub-Konto (v2.12.0)');
+    fs.writeFileSync(path.join(dir, 'RELEASE.md'), good.replace('## Update von v9.8.0', 'Für `@beat`, `- [ ] Text @anna`, Mail an info@example.ch.\n\n## Update von v9.8.0'));
+    assert.deepEqual(RN.check('v9.9.0', dir).errors, [], '@name in Code und Mailadressen sind keine Erwähnung');
     bad(t => t.replace('../../../docs/PLUGINS.md', '../../../docs/GIBTS-NICHT.md'), /zeigt ins Leere/, 'toter Verweis');
     fs.writeFileSync(path.join(dir, 'gross.png'), Buffer.alloc(1100 * 1024));
     bad(t => t + '\n\n![zu gross](gross.png)', /höchstens 1024 KB/, 'zu grosses Bild');

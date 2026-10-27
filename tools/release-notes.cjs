@@ -148,6 +148,11 @@ function check(version, dir) {
   for (const m of maskCode(text).matchAll(/\bTODO\b|\{\{[^}]*\}\}|\bvX\.Y\.Z\b|\bvA\.B\.C\b|<Titel>/g)) left.set(m[0], (left.get(m[0]) || 0) + 1);
   if (left.size) errors.push(`Platzhalter übrig: ${[...left].map(([k, n]) => `«${k}»${n > 1 ? ` (${n}×)` : ''}`).join(', ')}.`);
 
+  // @name ausserhalb von Code erwähnt auf GitHub das Konto dieses Namens (Benachrichtigung, «Contributors» im Release)
+  const mentions = new Set();
+  for (const m of maskCode(text).matchAll(/(?<![\w`/.@-])@([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)(?![\w@-])/g)) mentions.add(m[0]);
+  if (mentions.size) errors.push(`${[...mentions].map(k => `«${k}»`).join(', ')} ausserhalb von Code: GitHub erwähnt damit das Konto dieses Namens und führt es beim Release als Mitwirkende auf. In Backticks setzen (\`@kürzel\`).`);
+
   const used = new Set();
   for (const l of links(text)) {
     if (!isRelative(l.target)) continue;

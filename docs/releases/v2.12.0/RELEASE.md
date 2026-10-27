@@ -71,7 +71,7 @@ Im selben Dialog erklärt *Platzhalter zum Ausfüllen schreiben* die Schreibweis
 ![Vorlagen-Dialog mit der Einstellung «Ausgefüllte Platzhalter behalten» und der Hilfe zur Schreibweise](platzhalter-einstellung.png)
 
 Die Vorschau zeigt von einem behaltenen Platzhalter nur den Wert, fein unterstrichen. Personen und Termine darin wirken wie sonst:
-`- [ ] … @{{?Wer: beat}} @{{?Bis wann: 6.11.2026}}` ist eine Aufgabe für @beat bis 6.11.2026, in der Liste *Aufgaben*, im
+`- [ ] … @{{?Wer: beat}} @{{?Bis wann: 6.11.2026}}` ist eine Aufgabe für `@beat` bis 6.11.2026, in der Liste *Aufgaben*, im
 Kalenderexport und im Dienst in den Erinnerungen per Mail. Suche, Listen, Druck und Export sehen nur den Wert, offene Platzhalter erscheinen dort als «[Name]».
 
 ![Vorschau einer Aufgabe mit behaltenen Werten (fein unterstrichen) und dem offenen Platzhalter «Ziel» (gelb)](platzhalter-vorschau.png)

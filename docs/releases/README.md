@@ -27,6 +27,8 @@ Der Ordner geht nicht ins ZIP (der Build nimmt aus `docs/` nur die Dateien direk
    geschieht (Schema, automatische Angleichung), ob der Weg zurück geht, was eigene Dateien (`plugins/plugins.js`, eigene
    Erweiterungen, `templates/`) brauchen, und was Erweiterungen, eigene Backends und Agenten wissen müssen.
 5. Wahlweise `## Behoben`, `## Bekannte Einschränkungen`, `## Für Entwickler` (Schnittstellen, Hooks, `docs/BACKEND.md`).
+6. **`@kürzel` nur in Backticks** (`` `@anna` ``, auch in Beispielen): Ein `@name` im Fliesstext erwähnt auf GitHub das Konto mit
+   diesem Namen, benachrichtigt es und führt es beim Release als Mitwirkende auf. Die Prüfung lässt das nicht durch.
 
 Relative Bilder und Verweise (`![Legende](legende.png)`, `[Erweiterungen](../../PLUGINS.md)`) funktionieren im Repository und
 werden beim Release zu Adressen auf dem Stand des Tags. Am Ende hängt das Werkzeug die Erklärung der zwei ZIPs und den Vergleich mit
