@@ -36,7 +36,12 @@
     const map = new Map(Object.entries(messages || {}));
     // Ergänzungen, die vor dem Paket angemeldet wurden, kommen hinzu; Texte des Pakets selbst bleiben unverändert.
     for (const [k, v] of extras.get(code) || []) if (!map.has(k)) map.set(k, v);
-    packs.set(code, { code, name, locale: (options && options.locale) || code, messages: map, source: !!(options && options.source) });
+    const o = options || {};
+    packs.set(code, {
+      code, name, locale: o.locale || code, messages: map, source: !!o.source,
+      flag: typeof o.flag === 'string' ? o.flag.toUpperCase() : '', // Land der Flagge im Sprachwechsel (ISO 3166, z. B. CH)
+      regions: Array.isArray(o.regions) ? o.regions.map(r => String(r).toUpperCase()) : [], // Regionen der Browsersprache, die dieses Paket bekommen
+    });
   }
 
   /** Ergänzt die Texte einer Sprache um weitere (zum Beispiel einer Ausprägung oder Erweiterung), egal ob das Paket schon
@@ -52,7 +57,25 @@
   }
 
   function available() {
-    return [...packs.values()].map(p => ({ code: p.code, name: p.name }));
+    return [...packs.values()].map(p => ({ code: p.code, name: p.name, flag: p.flag, locale: p.locale }));
+  }
+
+  /** Das Paket zu einer Browsersprache (de-CH, es-AR, pt …): genau dieselbe Kennung oder dasselbe Gebietsschema; sonst ein Paket
+   *  derselben Sprache, das die Region nennt (es-AR → es-MX); sonst das Paket, das nur die Sprache heisst (de, en), oder das erste
+   *  dieser Sprache. Ohne Treffer null. */
+  function match(tag) {
+    const want = String(tag || '').toLowerCase();
+    if (!want) return null;
+    const list = [...packs.values()];
+    const exact = list.find(p => p.code.toLowerCase() === want) || list.find(p => p.locale.toLowerCase() === want);
+    if (exact) return exact.code;
+    const parts = want.split('-');
+    const base = parts[0];
+    const region = (parts.slice(1).find(x => /^([a-z]{2}|\d{3})$/.test(x)) || '').toUpperCase();
+    const same = list.filter(p => p.code.toLowerCase().split('-')[0] === base);
+    if (!same.length) return null;
+    const byRegion = region && same.find(p => p.regions.includes(region));
+    return (byRegion || same.find(p => p.code.toLowerCase() === base) || same[0]).code;
   }
 
   function format(text, params) {
@@ -131,7 +154,7 @@
     }
   }
 
-  /** Beim Start: gespeicherte Wahl, sonst Browsersprache, sonst Deutsch. */
+  /** Beim Start: gespeicherte Wahl, sonst Browsersprache (match), sonst Deutsch. */
   function init() {
     started = true;
     let wanted = null;
@@ -141,10 +164,8 @@
     wanted = pending || wanted;
     if (!wanted) {
       for (const l of (global.navigator && global.navigator.languages) || []) {
-        const code = String(l).toLowerCase();
-        if (packs.has(code)) { wanted = code; break; }
-        const short = code.split('-')[0];
-        if (packs.has(short)) { wanted = short; break; }
+        wanted = match(l);
+        if (wanted) break;
       }
     }
     setLanguage(wanted || SOURCE, false);
@@ -206,7 +227,10 @@
       if (elm.tagName === 'OPTION' || (elm.childNodes.length && isInlineText(elm))) {
         if (forced || hasWords(ownText(elm))) {
           emit(collapse(elm.innerHTML), (text, ok) => { if (ok) elm.innerHTML = text; });
+          return;
         }
+        // Ohne eigenen Text (nur Tasten): erzwungene Teile trotzdem, z. B. <dt><kbd data-i18n>Entf</kbd></dt>
+        for (const c of elm.querySelectorAll('[data-i18n]')) visit(c);
         return;
       }
       for (const c of [...elm.childNodes]) {
@@ -228,5 +252,5 @@
 
   function collect(root) { return walk(root || global.document.body, false); }
 
-  global.NoNotesI18n = { SOURCE, PSEUDO, N_, register, extend, available, init, setLanguage, language, locale, t, tn, translateDom, collect, format, variant, variants };
+  global.NoNotesI18n = { SOURCE, PSEUDO, N_, register, extend, available, match, init, setLanguage, language, locale, t, tn, translateDom, collect, format, variant, variants };
 })(window);

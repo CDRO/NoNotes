@@ -86,6 +86,31 @@ body {
 .segmented button:hover { background: var(--hover); }
 
 .topbar .menu { margin-left: auto; }
+.topbar .lang-menu:not([hidden]) ~ .menu { margin-left: 0; } /* der Sprachwechsel steht rechts vor dem Menü «Datenbank» */
+
+/* ---------- Sprachwechsel (v3.1.0): Flagge und Kürzel, Liste mit Flagge und Namen ---------- */
+
+.flag {
+  display: inline-block; flex: none;
+  width: 21px; height: 14px;
+  border-radius: 2px; overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .18);
+  vertical-align: middle;
+}
+.flag svg { display: block; width: 100%; height: 100%; }
+.flag.flag-none { box-shadow: none; color: var(--muted); }
+.lang-btn { display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px; font-size: 13px; font-weight: 600; letter-spacing: .02em; }
+.lang-btn .lang-code { min-width: 2ch; }
+.lang-list { min-width: 230px; max-height: min(70vh, 420px); overflow-y: auto; }
+.lang-list .lang-option {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap;
+}
+.lang-list .lang-option:hover, .lang-list .lang-option:focus { background: var(--hover); outline: none; }
+.lang-list .lang-option:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.lang-list .lang-option[aria-selected="true"] { font-weight: 600; }
+.lang-list .lang-option .lang-check { margin-left: auto; padding-left: 12px; color: var(--accent); visibility: hidden; }
+.lang-list .lang-option[aria-selected="true"] .lang-check { visibility: visible; }
 
 /* ---------- Statusleiste (unten): Zustand links, offene Notiz oder Mehrfachauswahl rechts ---------- */
 

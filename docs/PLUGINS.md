@@ -99,7 +99,7 @@ gilt für eine Erweiterung, deren `activate` oder deren Ereignisrückruf einen F
 | --- | --- |
 | `ctx.id`, `ctx.api`, `ctx.appVersion` | Kennung der Erweiterung, Schnittstellenversion (`1`), Version der App |
 | `ctx.backend` | Zugriff auf die Daten: dieselbe asynchrone [Backend-Schnittstelle](BACKEND.md) wie in der App (`await ctx.backend.getNote(id)` …). Änderungen werden wie jede andere gespeichert |
-| `ctx.language()` | Kennung der Sprache der Oberfläche, zum Beispiel `de` |
+| `ctx.language()` | Kennung der Sprache der Oberfläche, zum Beispiel `de` (Deutsch, Schweiz), `en`, seit 3.1.0 auch mit Region: `de-DE`, `fr-CH`, `it-CH`, `es-ES`, `es-MX`, `pt-PT`, `pt-BR`. Für die Sprache allein den Teil vor dem Bindestrich nehmen |
 | `ctx.on(ereignis, rückruf)` | Auf ein Ereignis hören; liefert eine Funktion, die das Hören beendet |
 | `ctx.openNote(id)` | Notiz im Editor öffnen (Promise) |
 | `ctx.readOnly()` | Seit 2.11.0. `true` im Lesemodus (alles nur lesen, etwa als Leserin im Dienst); dann ändert `ctx.backend` nichts |
@@ -371,7 +371,8 @@ NoNotesPlugins.register({
 ## Texte der Erweiterung
 
 Die Texte einer Erweiterung gehören ihr: Sie stehen nicht in den Sprachpaketen von NoNotes. Wer mehrere Sprachen
-anbieten will, wählt anhand von `ctx.language()` selbst aus.
+anbieten will, wählt anhand von `ctx.language()` selbst aus, am besten nach der Sprache vor dem Bindestrich
+(`ctx.language().split('-')[0]`: `de-DE` und `de` sind beide Deutsch) und mit Englisch als Rückfall.
 
 ## Stabilität
 

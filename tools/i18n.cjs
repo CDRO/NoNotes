@@ -186,7 +186,16 @@ function pluralCategories(locale) {
   catch (e) { return ['one', 'other']; }
 }
 
-function writePack(file, code, name, locale, keys, existing) {
+/** Optionen am Ende des Pakets ({ locale, flag, regions … }), in fester Reihenfolge und als Quelltext. */
+function optionsSource(options) {
+  const lit = v => (Array.isArray(v) ? `[${v.map(lit).join(', ')}]` : typeof v === 'string' ? quote(v) : JSON.stringify(v));
+  const order = ['locale', 'flag', 'regions'];
+  const keys = Object.keys(options).sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
+  return `{ ${keys.map(k => `${k}: ${lit(options[k])}`).join(', ')} }`;
+}
+
+function writePack(file, code, name, options, keys, existing) {
+  const locale = options.locale || code;
   const cats = pluralCategories(locale);
   const lines = [];
   lines.push(`/* NoNotes – Sprachpaket ${name} (${code}). Mit tools/i18n.cjs erzeugt und abgeglichen; siehe docs/LANGUAGES.md.`);
@@ -202,7 +211,7 @@ function writePack(file, code, name, locale, keys, existing) {
       lines.push(`  ${quote(key)}: ${quote(typeof old === 'string' ? old : '')},`);
     }
   }
-  lines.push(`}, { locale: ${quote(locale)} });`);
+  lines.push(`}, ${optionsSource(Object.assign({}, options, { locale }))});`);
   fs.writeFileSync(file, lines.join('\n') + '\n');
 }
 
@@ -282,10 +291,24 @@ function cmdList() {
   return problems.length ? 1 : 0;
 }
 
+// Namen, die Leute in Vorlagen schreiben ({{datum}}, {{datum:lang}}): ein Wort, klein, über alle Sprachen eindeutig (templates.js)
+const NAME_KEY = /^(platzhalter|datumsstil):/;
+const NAME_RE = /^[\p{Ll}_][\p{Ll}\p{N}_]*$/u;
+// Datumsformate für {{datum:…}}: dieselben Kürzel und Trennzeichen, deutsch (J, M, T) oder englisch (y, m, d)
+const normFormat = f => String(f).replace(/[JjYy]/g, 'y').replace(/[TtDd]/g, 'd').replace(/M/g, 'm');
+
 function cmdCheck(strict) {
   const { keys, problems } = collectAll();
   let errors = problems.slice();
   const warnings = [];
+  const names = new Map(); // «art:name» → { key, where }
+  const claim = (key, name, where) => {
+    const id = key.slice(0, key.indexOf(':')) + ':' + String(name).toLowerCase();
+    const had = names.get(id);
+    if (had && had.key !== key) errors.push(`${where}: Name «${name}» steht schon für «${had.key}» (${had.where})`);
+    else if (!had) names.set(id, { key, where });
+  };
+  for (const key of keys.keys()) if (NAME_KEY.test(key)) claim(key, key.slice(key.indexOf(':') + 1), 'Quelltext');
   for (const [key, info] of keys) {
     if (info.other != null && placeholders(key, true) !== placeholders(info.other, true)) errors.push(`Platzhalter in Einzahl und Mehrzahl verschieden: «${key}»`);
   }
@@ -317,6 +340,13 @@ function cmdCheck(strict) {
         if (typeof value !== 'string') { errors.push(`${f}: «${key}» muss ein Text sein`); continue; }
         if (value === '') continue;
         if (placeholders(value) !== placeholders(key)) errors.push(`${f}: «${key}»: Platzhalter {${placeholders(value)}} statt {${placeholders(key)}}`);
+        if (NAME_KEY.test(key)) {
+          if (!NAME_RE.test(value)) errors.push(`${f}: «${key}»: «${value}» muss ein Wort aus Kleinbuchstaben, Ziffern oder _ sein`);
+          else claim(key, value, f);
+        }
+        if (key.startsWith('datumsformat:') && normFormat(value) !== normFormat(key.slice(key.indexOf(':') + 1))) {
+          errors.push(`${f}: «${key}»: «${value}» braucht dieselben Kürzel und Trennzeichen (deutsch oder englisch)`);
+        }
         done++;
       }
     }
@@ -341,7 +371,7 @@ function cmdInit(args) {
   const { keys, problems } = collectAll();
   if (problems.length) { problems.forEach(p => console.error('Problem: ' + p)); return 1; }
   fs.mkdirSync(LANG_DIR, { recursive: true });
-  writePack(file, code, name, locale || code, keys, null);
+  writePack(file, code, name, { locale: locale || code }, keys, null);
   console.log(`${path.relative(ROOT, file)} angelegt mit ${keys.size} Texten. Übersetzungen eintragen, dann «check» ausführen.`);
   return 0;
 }
@@ -356,7 +386,7 @@ function cmdUpdate(args) {
   if (problems.length) { problems.forEach(p => console.error('Problem: ' + p)); return 1; }
   const added = [...keys.keys()].filter(k => !(k in pack.messages));
   const dropped = Object.keys(pack.messages).filter(k => !keys.has(k));
-  writePack(file, pack.code, pack.name, pack.options.locale || pack.code, keys, pack.messages);
+  writePack(file, pack.code, pack.name, pack.options, keys, pack.messages); // Optionen (flag, regions …) bleiben
   console.log(`${path.relative(ROOT, file)}: ${added.length} neue Texte, ${dropped.length} veraltete entfernt`);
   for (const k of dropped) console.log('  entfernt: ' + JSON.stringify(k));
   return 0;

@@ -27,6 +27,12 @@
         <button type="button" id="viewTasksBtn" role="tab" data-view="tasks" aria-selected="false">Aufgaben</button>
       </div>
 
+      <!-- Sprachwechsel (v3.1.0): Flagge und Kürzel der Sprache, Liste mit allen Sprachen; nur bei mehr als einer Sprache -->
+      <div class="menu lang-menu" id="langMenu" hidden>
+        <button type="button" id="langBtn" class="lang-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="langList" data-i18n-skip></button>
+        <div id="langList" class="menu-panel lang-list" role="listbox" tabindex="-1" hidden data-i18n-skip></div>
+      </div>
+
       <div class="menu">
         <button type="button" id="menuBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="menu">Datenbank ▾</button>
         <div id="menu" class="menu-panel" role="menu" hidden>
@@ -48,10 +54,6 @@
             <div class="sep" role="separator"></div>
           </div>
           <button type="button" id="pluginsBtn" role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2.5h3v1.6a1.4 1.4 0 1 0 1.5 0V2.5h3v3h-1.6a1.4 1.4 0 1 0 0 1.5h1.6v3h-3v1.6a1.4 1.4 0 1 1-1.5 0V10H6V8.4a1.4 1.4 0 1 1 0-1.5z"/></svg>Erweiterungen…</button>
-          <div class="menu-lang" id="langRow" hidden>
-            <label for="langSelect">Sprache</label>
-            <select id="langSelect" data-i18n-skip></select>
-          </div>
           <div class="menu-lang" id="themeRow" hidden>
             <label for="themeSelect">Design</label>
             <select id="themeSelect" data-i18n-skip></select>
@@ -713,6 +715,7 @@ Firmenname wie im Handelsregister, **ohne** Rechtsform.
   <script src="print.js"></script>
   <script src="scrollsync.js"></script>
   <script src="datepicker.js"></script>
+  <script src="flags.js"></script>
   <script src="../../plugins/plugins.js"></script>
   <script src="app.js"></script>
 </body>

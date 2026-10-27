@@ -2324,13 +2324,16 @@ async function runI18n(browser, part, step) {
     assert.equal(await page.locator('#menuBtn').innerText(), 'Database ▾');
     assert.equal(await page.locator('#viewMapBtn').innerText(), 'Mind map');
     assert.equal(await page.evaluate(() => document.querySelector('.mm-root text').textContent), 'My notes', 'Titel einer neuen Mindmap auf Englisch');
+    assert.equal(await page.locator('#langBtn').innerText(), 'EN');
+    assert.equal(await page.getAttribute('#langBtn', 'title'), 'Language: English');
+    await page.click('#langBtn');
+    assert.equal(await page.getAttribute('#langList', 'aria-label'), 'Language');
+    assert.equal(await page.locator('#langList [aria-selected="true"]').getAttribute('data-lang'), 'en');
+    await page.keyboard.press('Escape');
     await page.click('#menuBtn');
-    assert.deepEqual(await page.locator('#langSelect option').allInnerTexts(), ['Deutsch', 'English']);
-    assert.equal(await page.inputValue('#langSelect'), 'en');
-    assert.equal(await page.locator('#langRow label').innerText(), 'Language');
     assert.deepEqual(await page.locator('#accentSwatches .swatch').evaluateAll(b => b.map(x => x.getAttribute('aria-label'))), ['Blue', 'Teal', 'Green', 'Yellow', 'Orange', 'Red', 'Violet', 'Grey']);
     await page.keyboard.press('Escape');
-    part('Englisch: Browsersprache wird erkannt, Menü, Farben, Titel der Mindmap');
+    part('Englisch: Browsersprache wird erkannt, Sprachwechsel, Menü, Farben, Titel der Mindmap');
 
     // Mehrzahl und Zeitformat
     await page.click('#viewListBtn');
@@ -2356,25 +2359,125 @@ async function runI18n(browser, part, step) {
     });
     assert.equal(md, 1);
 
-    // Wechsel auf Deutsch über das Menü: gespeichert, nach dem Neuladen deutsch, Daten bleiben
-    await page.click('#menuBtn');
-    await page.selectOption('#langSelect', 'de');
+    // Wechsel auf Deutsch über den Sprachwechsel: gespeichert, nach dem Neuladen deutsch, Daten bleiben
+    await page.click('#langBtn');
+    await page.click('#langList [data-lang="de"]');
     await page.waitForFunction(() => document.querySelector('#menuBtn').textContent.includes('Datenbank'));
     await page.waitForSelector(READY);
     assert.equal(await page.locator('#count').innerText(), '2 Notizen');
     assert.deepEqual(en.errors, []);
     await en.ctx.close();
-    part('Englisch: Wechsel auf Deutsch über das Menü, Daten bleiben');
+    part('Englisch: Wechsel auf Deutsch über den Sprachwechsel, Daten bleiben');
 
-    // Deutsch bleibt Deutsch; eine Sprache ohne Paket fällt auf Deutsch zurück
-    for (const locale of ['de-CH', 'fr-CH']) {
+    // Browsersprache → Paket: genau, über die Region (es-AR → es-MX, de-AT → de-DE), über die Sprache (fr-FR → fr-CH, pt → pt-BR);
+    // Deutsch (Schweiz) bleibt die Quelle; eine Sprache ohne Paket fällt auf Deutsch zurück
+    for (const [locale, want] of [['de-CH', 'de'], ['de-DE', 'de-DE'], ['de-AT', 'de-DE'], ['fr-FR', 'fr-CH'], ['it-CH', 'it-CH'], ['es-AR', 'es-MX'], ['es-ES', 'es-ES'], ['pt', 'pt-BR'], ['pt-PT', 'pt-PT'], ['nl-NL', 'de']]) {
       const c = await open(locale);
-      assert.equal(await c.page.evaluate(() => NoNotesI18n.language()), 'de', locale);
-      assert.equal(await c.page.locator('#menuBtn').innerText(), 'Datenbank ▾', locale);
+      assert.equal(await c.page.evaluate(() => NoNotesI18n.language()), want, locale);
+      assert.equal(await c.page.evaluate(() => document.documentElement.lang), want, locale + ': html lang');
+      if (want === 'de') assert.equal(await c.page.locator('#menuBtn').innerText(), 'Datenbank ▾', locale);
       assert.deepEqual(c.errors, []);
       await c.ctx.close();
     }
-    part('Deutsch bleibt Deutsch, Sprachen ohne Paket (fr-CH) fallen auf Deutsch zurück');
+    part('Browsersprache: passendes Paket nach Kennung, Region und Sprache; ohne Paket (nl-NL) Deutsch');
+  }
+
+  /** Alle Sprachpakete (v3.1.0): Sprachwechsel mit Flaggen, Maus und Tastatur; je Sprache Hauptansicht, Menü und Hilfe ohne deutschen
+   *  Text dort, wo das Paket eine Übersetzung hat (ganze Textblöcke, die genau einem Schlüssel entsprechen), dazu html lang und Kürzel. */
+  async function packsTest(browser) {
+    const url = 'file://' + path.join(DIST, 'index.html');
+    let keys = null;
+    vm.runInNewContext(fs.readFileSync(path.join(ROOT, 'lang', 'en.js'), 'utf8'), { NoNotesI18n: { register: (c, n, m) => { keys = Object.keys(m).filter(k => typeof m[k] === 'string'); } } });
+    const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 }, locale: 'de-CH' });
+    const page = await ctx.newPage();
+    const errors = [];
+    page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+    page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+    await page.goto(url);
+    await page.waitForSelector(READY, { timeout: 30000 });
+    const packs = await page.evaluate(() => NoNotesI18n.available());
+    const files = fs.readdirSync(path.join(ROOT, 'lang')).filter(f => f.endsWith('.js')).length;
+    assert.equal(packs.length, files, 'jedes Paket aus lang/ ist angemeldet');
+    for (const p of packs) assert.match(p.flag, /^[A-Z]{2}$/, `${p.code}: Flagge`);
+    assert.equal(await page.locator('#langBtn').innerText(), 'DE');
+    assert.equal(await page.locator('#langBtn .flag:not(.flag-none) svg').count(), 1, 'Flagge im Knopf');
+    await page.click('#langBtn');
+    const names = await page.locator('#langList .lang-option').evaluateAll(os => os.map(o => o.textContent.replace('✓', '').trim()));
+    assert.deepEqual(names, packs.map(p => p.name).sort((a, b) => new Intl.Collator('de-CH').compare(a, b)), 'nach Namen sortiert');
+    assert.equal(await page.locator('#langList .lang-option .flag:not(.flag-none) svg').count(), packs.length, 'jede Sprache mit Flagge');
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.lang), 'de', 'Fokus auf der gewählten Sprache');
+    await page.keyboard.press('End');
+    const last = await page.evaluate(() => document.activeElement.dataset.lang);
+    await page.keyboard.press('ArrowDown');
+    assert.notEqual(await page.evaluate(() => document.activeElement.dataset.lang), last, 'nach der letzten wieder die erste');
+    await page.keyboard.press('Home');
+    await page.keyboard.press('ArrowUp');
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.lang), last, 'vor der ersten die letzte');
+    await page.keyboard.press('i');
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.lang), 'it-CH', 'Anfangsbuchstabe');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('#langList').isVisible(), false, 'Esc schliesst');
+    assert.equal(await page.evaluate(() => document.activeElement.id), 'langBtn', 'Fokus zurück auf dem Knopf');
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await page.locator('#langList').isVisible(), true, 'Pfeil öffnet');
+    await page.click('#menuBtn');
+    assert.equal(await page.locator('#langList').isVisible(), false, 'das Menü «Datenbank» schliesst die Liste');
+    await page.click('#langBtn');
+    assert.equal(await page.locator('#menu').isVisible(), false, 'und umgekehrt');
+    await page.mouse.click(700, 500);
+    assert.equal(await page.locator('#langList').isVisible(), false, 'Klick daneben schliesst');
+    await page.click('#langBtn');
+    await page.keyboard.press('p');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.documentElement.lang === 'pt-BR');
+    await page.waitForSelector(READY);
+    assert.equal(await page.evaluate(() => localStorage.getItem('nonotes.lang')), 'pt-BR', 'gemerkt');
+    assert.equal(await page.locator('#langBtn').innerText(), 'PT');
+    await ctx.close();
+    assert.deepEqual(errors, []);
+    part('Sprachwechsel: Flagge und Kürzel, Liste mit Flaggen nach Namen, Tastatur (Pfeile, Pos1/Ende, Anfangsbuchstabe, Enter, Esc), Klick daneben, gemerkt');
+
+    // Je Sprache: nichts Deutsches, wo eine Übersetzung da ist
+    const left = [];
+    for (const p of packs.filter(x => x.code !== 'de')) {
+      const c = await browser.newContext({ viewport: { width: 1400, height: 900 }, locale: 'de-CH' });
+      await c.addInitScript(code => { try { localStorage.setItem('nonotes.lang', code); } catch (e) { /* egal */ } }, p.code);
+      const pg = await c.newPage();
+      const errs = [];
+      pg.on('pageerror', e => errs.push('pageerror: ' + e.message));
+      pg.on('console', m => { if (m.type() === 'error') errs.push('console: ' + m.text()); });
+      await pg.goto(url);
+      await pg.waitForSelector(READY, { timeout: 30000 });
+      assert.equal(await pg.evaluate(() => document.documentElement.lang), p.code, `${p.code}: html lang`);
+      assert.equal(await pg.locator('#langBtn').innerText(), p.code.split('-')[0].toUpperCase(), `${p.code}: Kürzel im Knopf`);
+      const scan = () => pg.evaluate(all => {
+        const want = new Set(all.filter(k => { const v = NoNotesI18n.variant(k); return v && v !== k; }));
+        const out = [];
+        const visible = el => el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden';
+        for (const el of document.querySelectorAll('button, label, h1, h2, h3, h4, th, td, dt, dd, p, li, span, summary, option, a')) {
+          if (el.closest('svg, #mindmap, [data-i18n-skip], textarea, .note-title') || !visible(el)) continue;
+          const text = el.textContent.replace(/\s+/g, ' ').trim();
+          if (want.has(text)) out.push(text);
+          for (const a of ['title', 'placeholder', 'aria-label']) { const v = el.getAttribute(a); if (v && want.has(v.trim())) out.push(`${a}=${v}`); }
+        }
+        return [...new Set(out)];
+      }, keys);
+      const found = new Set(await scan());
+      await pg.click('#menuBtn');
+      for (const x of await scan()) found.add(x);
+      await pg.keyboard.press('Escape');
+      await pg.keyboard.press('F1');
+      await pg.waitForSelector('#helpDialog[open]');
+      for (const tab of ['editor', 'keys', 'storage']) {
+        await pg.click(`#helpTabs button[data-tab="${tab}"]`);
+        for (const x of await scan()) found.add(x);
+      }
+      for (const x of found) left.push(`${p.code}: «${x}»`);
+      assert.deepEqual(errs, [], `${p.code}: keine Fehler im Browser`);
+      await c.close();
+    }
+    assert.deepEqual(left, [], 'deutsch geblieben, obwohl übersetzt:\n' + left.join('\n'));
+    part(`${packs.length - 1} Sprachpakete: Hauptansicht, Menü und Hilfe übersetzt, html lang und Kürzel stimmen`);
   }
 
   async function packTest(browser, tmp) {
@@ -2398,12 +2501,15 @@ async function runI18n(browser, part, step) {
     assert.equal(await page.locator('#menuBtn').innerText(), 'TT db ▾');
     assert.equal(await page.locator('#viewMapBtn').innerText(), 'TT map');
     assert.equal(await page.locator('#mapNewBtn').innerText(), 'TT new note');
-    await page.click('#menuBtn');
-    assert.equal(await page.locator('#langRow').isVisible(), true, 'Sprachwahl sichtbar bei mehr als einer Sprache');
-    assert.equal(await page.locator('#langRow label').innerText(), 'TT language');
-    assert.deepEqual(await page.locator('#langSelect option').allInnerTexts(), ['Deutsch', 'English', 'Testsprache']);
-    assert.equal(await page.inputValue('#langSelect'), 'tt');
-    part('Testpaket: Texte aus dem Markup, Sprachwahl im Menü');
+    assert.equal(await page.locator('#langMenu').isVisible(), true, 'Sprachwechsel sichtbar bei mehr als einer Sprache');
+    assert.equal(await page.locator('#langBtn').innerText(), 'TT');
+    assert.equal(await page.locator('#langBtn .flag.flag-none').count(), 1, 'ohne Flagge im Paket: Weltkugel');
+    await page.click('#langBtn');
+    assert.equal(await page.getAttribute('#langList', 'aria-label'), 'TT language');
+    const names = await page.locator('#langList .lang-option').allInnerTexts();
+    assert.ok(names.some(n => n.startsWith('Testsprache')), 'das Testpaket steht in der Liste: ' + names.join(', '));
+    assert.equal(await page.locator('#langList [aria-selected="true"]').getAttribute('data-lang'), 'tt');
+    part('Testpaket: Texte aus dem Markup, Sprachwechsel');
 
     // Mehrzahlformen und nicht übersetzte Texte (Rückfall auf Deutsch)
     await page.keyboard.press('Escape');
@@ -2429,9 +2535,7 @@ async function runI18n(browser, part, step) {
       const title = document.querySelector('#title');
       title.value = 'Three';
       title.dispatchEvent(new Event('input', { bubbles: true }));
-      const select = document.querySelector('#langSelect');
-      select.value = 'de';
-      select.dispatchEvent(new Event('change', { bubbles: true }));
+      document.querySelector('#langList [data-lang="de"]').click();
     });
     await page.waitForFunction(() => document.querySelector('#menuBtn').textContent.includes('Datenbank') && !document.querySelector('#menuBtn').textContent.includes('TT'));
     await page.waitForSelector(READY);
@@ -2461,6 +2565,7 @@ async function runI18n(browser, part, step) {
     await walkTest(browser, 'qps');
     await walkTest(browser, 'en');
     await englishTest(browser);
+    await packsTest(browser);
     await packTest(browser, tmp);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -3423,6 +3528,6 @@ suite('Erweiterungs-Test', [
   { name: 'Personen an Aufgaben und Tabellenfelder: Aufgaben-Ansicht (Filter, nach Person, geerbt), Druck, Kästchen und Knöpfe im Feld, Knopf und Element über der Mindmap, Abschnitt im Druck', run: runCellsPeopleUi },
   { name: 'Termine mit «>» (v3.0.0): Datumsauswahl, Knopf, Strg+Leertaste, Abzeichen, alte @Datum, Aufgabenliste, Vorlagen im Ordner, Mindmap-Seiten, Gleiten, Bild kopieren, Umstellung mit Sicherung', run: runDatesUi },
   { name: 'Mindmap ab einem Knoten als Bild (v3.1.0): Weg von der Wurzel, Überschrift, wie zu sehen, Mehrfachauswahl, Kontextmenü, Farben aus Erweiterungen in Kopie und Druck', run: runCopyNodeUi },
-  { name: 'Sprachen: Pseudo-Sprache durch alle Ansichten, Englisch, Browsersprache, Mehrzahl, Testpaket, Wechsel', run: runI18n },
+  { name: 'Sprachen: Pseudo-Sprache durch alle Ansichten, Englisch, Browsersprache, Sprachwechsel mit Flaggen, alle Pakete, Mehrzahl, Testpaket, Wechsel', run: runI18n },
   { name: 'WebMCP: Werkzeuge für den Agenten des Browsers, Aufrufe ändern Daten und Oberfläche, gespeichert, Lesemodus, ohne Schnittstelle nichts', run: runWebMcp },
 ], { browser: true });

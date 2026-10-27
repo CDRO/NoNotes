@@ -103,7 +103,7 @@
     qaScopeFiltered: $('#qaScopeFiltered'), qaLines: $('#qaLines'), qSort: $('#qSort'),
     mdToolbar: $('#mdToolbar'), headingSelect: $('#headingSelect'), helpBtn: $('#helpBtn'),
     helpDialog: $('#helpDialog'), helpTabs: $('#helpTabs'), helpStorageStatus: $('#helpStorageStatus'),
-    storageHelpBtn: $('#storageHelpBtn'), menuHelpBtn: $('#menuHelpBtn'), langRow: $('#langRow'), langSelect: $('#langSelect'), accentSwatches: $('#accentSwatches'),
+    storageHelpBtn: $('#storageHelpBtn'), menuHelpBtn: $('#menuHelpBtn'), langMenu: $('#langMenu'), langBtn: $('#langBtn'), langList: $('#langList'), accentSwatches: $('#accentSwatches'),
     themeRow: $('#themeRow'), themeSelect: $('#themeSelect'), pluginMenu: $('#pluginMenu'), pluginsBtn: $('#pluginsBtn'),
     pluginsDialog: $('#pluginsDialog'), pluginList: $('#pluginList'), pluginFile: $('#pluginFile'), pluginLoadBtn: $('#pluginLoadBtn'),
     historyBtn: $('#historyBtn'), historyDialog: $('#historyDialog'), historyLead: $('#historyLead'), historyList: $('#historyList'),
@@ -144,6 +144,7 @@
   };
 
   const state = {
+    closeLangList: null,         // schliesst die Liste des Sprachwechsels (setupLanguage)
     navReady: false,             // Navigation mit dem Verlauf läuft (nach dem Start)
     navApplying: false,          // ein Eintrag des Verlaufs wird gerade angewendet: keine neuen Schritte
     navChain: Promise.resolve(), // Schritte nacheinander
@@ -444,25 +445,91 @@
     } catch (e) { console.warn('WebMCP', e); }
   }
 
-  /** Sprachwahl im Menü, nur sichtbar, wenn mehr als eine Sprache vorhanden ist. Der Wechsel lädt die Seite neu. */
+  /** Sprachwechsel in der Kopfleiste (seit 3.1.0): Knopf mit Flagge und Kürzel, Liste mit Flagge und Namen jeder Sprache (nach Namen
+   *  sortiert). Nur sichtbar, wenn mehr als eine Sprache vorhanden ist. Der Wechsel sichert die offene Notiz und lädt die Seite neu. */
   function setupLanguage() {
-    const langs = I18n.available();
-    el.langRow.hidden = langs.length < 2;
-    el.langSelect.replaceChildren(...langs.map(l => {
-      const o = document.createElement('option');
-      o.value = l.code;
-      o.textContent = l.name;
+    const Flags = window.NoNotesFlags;
+    const flag = country => (Flags ? Flags.element(country) : document.createTextNode(''));
+    const collator = new Intl.Collator(I18n.locale());
+    const langs = I18n.available().slice().sort((a, b) => collator.compare(a.name, b.name));
+    el.langMenu.hidden = langs.length < 2;
+    if (langs.length < 2) return;
+    const current = I18n.language();
+    const mine = langs.find(l => l.code === current) || { code: current, name: current, flag: '' };
+    const code = document.createElement('span');
+    code.className = 'lang-code';
+    code.textContent = mine.code.split('-')[0].toUpperCase();
+    el.langBtn.replaceChildren(flag(mine.flag), code);
+    el.langBtn.title = t('Sprache: {sprache}', { sprache: mine.name });
+    el.langBtn.setAttribute('aria-label', el.langBtn.title);
+    el.langList.setAttribute('aria-label', t('Sprache'));
+    el.langList.replaceChildren(...langs.map(l => {
+      const o = document.createElement('div');
+      o.className = 'lang-option';
+      o.setAttribute('role', 'option');
+      o.tabIndex = -1;
+      o.dataset.lang = l.code;
+      o.lang = l.code; // der Name steht in seiner eigenen Sprache
+      o.setAttribute('aria-selected', String(l.code === current));
+      const name = document.createElement('span');
+      name.textContent = l.name;
+      const check = document.createElement('span');
+      check.className = 'lang-check';
+      check.setAttribute('aria-hidden', 'true');
+      check.textContent = '✓';
+      o.append(flag(l.flag), name, check);
       return o;
     }));
-    el.langSelect.value = I18n.language();
-    el.langSelect.addEventListener('change', async () => {
-      I18n.setLanguage(el.langSelect.value, true);
+    const options = () => [...el.langList.querySelectorAll('.lang-option')];
+    const open = focusSelected => {
+      closeMenu();
+      el.langList.hidden = false;
+      el.langBtn.setAttribute('aria-expanded', 'true');
+      if (focusSelected) (el.langList.querySelector('[aria-selected="true"]') || options()[0]).focus();
+    };
+    const close = focusButton => {
+      if (el.langList.hidden) return;
+      el.langList.hidden = true;
+      el.langBtn.setAttribute('aria-expanded', 'false');
+      if (focusButton) el.langBtn.focus();
+    };
+    state.closeLangList = () => close(false);
+    const choose = async target => {
+      close(true);
+      if (!target || target === I18n.language()) return;
+      I18n.setLanguage(target, true);
       // Erst die offene Notiz sichern: sonst fragt beforeunload nach «ungespeicherten Änderungen» oder das Neuladen bleibt hängen.
       // Bei einem Konflikt entscheidet die Person zuerst; die Sprache gilt dann beim nächsten Laden.
       try { if (!(await ensureSaved())) return; } catch (e) { /* neu laden trotzdem */ }
       try { await shell.flush(); } catch (e) { /* neu laden trotzdem */ }
       location.reload();
+    };
+    el.langBtn.addEventListener('click', () => (el.langList.hidden ? open(true) : close(false)));
+    el.langBtn.addEventListener('keydown', e => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); open(true); }
     });
+    el.langList.addEventListener('click', e => {
+      const o = e.target.closest('.lang-option');
+      if (o) choose(o.dataset.lang);
+    });
+    el.langList.addEventListener('keydown', e => {
+      const list = options();
+      const i = list.indexOf(document.activeElement);
+      const go = n => { e.preventDefault(); list[(n + list.length) % list.length].focus(); };
+      if (e.key === 'ArrowDown') go(i + 1);
+      else if (e.key === 'ArrowUp') go(i < 0 ? list.length - 1 : i - 1);
+      else if (e.key === 'Home') go(0);
+      else if (e.key === 'End') go(list.length - 1);
+      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (i >= 0) choose(list[i].dataset.lang); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true); }
+      else if (e.key === 'Tab') close(false);
+      else if (e.key.length === 1 && /\S/.test(e.key)) { // Anfangsbuchstabe: zur nächsten Sprache, deren Name so beginnt
+        const k = e.key.toLowerCase();
+        const next = list.slice(i + 1).concat(list.slice(0, i + 1)).find(o => o.textContent.trim().toLowerCase().startsWith(k));
+        if (next) { e.preventDefault(); next.focus(); }
+      }
+    });
+    document.addEventListener('click', e => { if (!e.target.closest('#langMenu')) close(false); });
   }
 
   function bootError(message) {
@@ -5525,6 +5592,7 @@
 
   function toggleMenu(force) {
     const open = typeof force === 'boolean' ? force : el.menu.hidden;
+    if (open && state.closeLangList) state.closeLangList();
     el.menu.hidden = !open;
     el.menuBtn.setAttribute('aria-expanded', String(open));
   }
@@ -5949,6 +6017,7 @@
         if (state.rename || anyDialogOpen()) return;
         if (state.multi.size && !isEditorOpen() && el.menu.hidden && el.contextMenu.hidden) { clearMulti(); return; }
         if (!el.contextMenu.hidden) { hideContextMenu(); return; }
+        if (!el.langList.hidden) { state.closeLangList(); return; }
         if (!el.menu.hidden) { closeMenu(); return; }
         if (!el.noteMenu.hidden) { closeNoteMenu(); return; }
         if (isEditorOpen()) { await closeEditorStep(); return; }

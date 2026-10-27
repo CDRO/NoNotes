@@ -703,7 +703,7 @@ Im ausgelieferten Ordner liegen alle Skripte flach unter `js/`.
 | Backend | `packages/core/backend.js`: asynchrone Schnittstelle für alle Datenzugriffe; `packages/store-local/backend-local.js` setzt sie über SQLite um |
 | Datenbank | [sql.js](https://github.com/sql-js/sql.js) (SQLite nach JavaScript kompiliert) in `vendor/sql.js/`; Schema und Abfragen in `packages/data/db.js` |
 | Persistenz | `packages/store-local/storage.js`: IndexedDB (ersatzweise localStorage) plus File System Access API; `local-shell.js` steuert Speichern, Datei und Browser-Kopie |
-| Sprachen | `packages/core/i18n.js` und `lang/`: der deutsche Text ist der Schlüssel, weitere Sprachen sind Dateien (siehe [docs/LANGUAGES.md](docs/LANGUAGES.md)) |
+| Sprachen | `packages/core/i18n.js` und `lang/`: der deutsche Text ist der Schlüssel, weitere Sprachen sind Dateien (siehe [docs/LANGUAGES.md](docs/LANGUAGES.md)); Sprachwechsel mit Flaggen in `packages/ui/app.js` (`setupLanguage`), Flaggen als SVG in `packages/ui/flags.js` |
 | Start | `start.ps1` (nur Cmdlets, läuft im Constrained Language Mode), `start.cmd` |
 
 Warum kein lokaler Webserver? Auf dem Zielrechner steht PowerShell nur im Constrained
@@ -800,7 +800,7 @@ npm run build        # schreibt dist/NoNotes
 | `test/core.cjs` (ohne Browser) | Zusammenführen, Datenbankschicht (Standardschema, Angleichen alter Dateien, Konflikte, Autor, Querverweise, Entscheide), Build fremder Ausprägungen, Videoadressen, Tabellen |
 | `test/app.cjs` | das Gebaute wie ein Benutzer per `file://` in headless Chromium: Datei und Speicher, Mindmap, Fragen, Markdown, Tags, Suche, Papierkorb, Export, Drag & Drop, Anhänge, Drucken, Toolleiste, Hilfe, Aufgaben, Termine, Kalender, Listen, geteilte Ansicht, Unteraufgaben, Archiv, alte Dateien; der Vertrag der Backend-Schnittstelle |
 | `test/collab.cjs` | Verlauf pro Notiz, gleichzeitiges Schreiben, Änderungen von aussen (Datei, anderer Tab), Lesemodus |
-| `test/extend.cjs` | Erweiterungen und Designs, Hauptfarbe, Videos in der Vorschau, Querverweise, Entscheide und Personen, Vorlagen, Tabellen, Sprachen (Pseudo-Sprache, Englisch, Testpaket) |
+| `test/extend.cjs` | Erweiterungen und Designs, Hauptfarbe, Videos in der Vorschau, Querverweise, Entscheide und Personen, Vorlagen, Tabellen, Sprachen (Pseudo-Sprache, Englisch, Sprachwechsel mit Flaggen, alle Pakete, Testpaket) |
 
 Dazu kommen `tools/i18n.cjs lint` und `check` (Texte und Sprachpakete):
 
@@ -812,11 +812,18 @@ npm test
 
 ## Sprachen
 
-Ausgeliefert werden **Deutsch** und **English** (ab v1.4.0). Beim ersten Start gilt die Sprache des Browsers,
-sonst Deutsch; umgestellt wird im Menü **Datenbank → Sprache** (die Auswahl wird im Browser gemerkt, die Seite
-lädt neu, die Daten bleiben). Weitere Sprachen sind Dateien in `lang/` und kommen mit einem Release dazu:
-`npm run i18n -- init fr French fr-CH` legt ein Paket mit allen Texten an, `check` prüft es. Einzelheiten in
-[docs/LANGUAGES.md](docs/LANGUAGES.md).
+Ausgeliefert werden neun Sprachen: **Deutsch (Schweiz)** (Quellsprache), **English** (ab v1.4.0) und seit v3.1.0
+**Deutsch (Deutschland)**, **Français (Suisse)**, **Italiano (Svizzera)**, **Español (España)**, **Español (México)**,
+**Português (Portugal)** und **Português (Brasil)**.
+
+- **Sprachwechsel** (seit 3.1.0): der Knopf mit Flagge und Kürzel oben rechts neben **Datenbank** öffnet die Liste aller
+  Sprachen mit Flagge und Namen. Maus oder Tastatur (Pfeile, `Pos1`/`Ende`, Anfangsbuchstabe, `Enter`, `Esc`). Die Wahl wird im
+  Browser gemerkt, die offene Notiz gesichert, die Seite lädt neu, die Daten bleiben.
+- **Beim ersten Start** gilt die Sprache des Browsers: dieselbe Kennung, sonst eine Sprache für die Region (`de-AT` →
+  Deutsch (Deutschland), `es-AR` → Español (México), `pt-AO` → Português (Portugal)), sonst die Sprache selbst (`fr-FR` →
+  Français (Suisse), `pt` → Português (Brasil)), sonst Deutsch (Schweiz).
+- Weitere Sprachen sind Dateien in `lang/` und kommen mit einem Release dazu: `npm run i18n -- init nl-NL Nederlands nl-NL` legt
+  ein Paket mit allen Texten an, `check` prüft es. Einzelheiten in [docs/LANGUAGES.md](docs/LANGUAGES.md).
 
 ## Release
 
