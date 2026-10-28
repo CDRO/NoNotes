@@ -91,16 +91,18 @@
     });
   }
 
+  // Erst die Links, dann [[…]]: ein Link, der aus einem Verweis entsteht, ist schon richtig und wird nicht noch einmal umgeschrieben
+  // (er behielte sonst nur die Nummer ohne den lesbaren Titel).
   function rewriteMoved(body, o) {
     return outsideCode(body, part => {
       let s = part.replace(/(!\[[^\]\n]*\]\()att:(\d+)((?:\s+"[^"]*")?\))/g, (m, a, id, b) => (o.atts && o.atts.has(Number(id)) ? `${a}att:${o.atts.get(Number(id))}${b}` : m));
-      s = rewriteRefs(s, o, true);
-      return rewriteUrls(s, o, true);
+      s = rewriteUrls(s, o, true);
+      return rewriteRefs(s, o, true);
     });
   }
 
   function rewriteStaying(body, o) {
-    return outsideCode(body, part => rewriteUrls(rewriteRefs(part, o, false), o, false));
+    return outsideCode(body, part => rewriteRefs(rewriteUrls(part, o, false), o, false));
   }
 
   /** Link am Knoten: wie ein Link im Text. moving: der Knoten geht mit. */

@@ -2662,10 +2662,10 @@ async function runNodeLinks(browser, part, step) {
     const atts = new Map([[7, 1]]);
     const titles = Links.resolver([['budget', 10], ['heizung', 3], ['offerte', 4], ['projekt', 2]]);
     const parse = url => { const m = /^#(?:w=([^&]+)&)?n=(\d+)/.exec(url) || /^#w=([^&]+)$/.exec(url); if (!m) return null; return m[2] ? { note: Number(m[2]), area: m[1] && m[1] !== 'alt' ? m[1] : null } : { note: null, area: m[1] }; };
-    const o = { notes, atts, resolve: titles, parse, source: (id, l) => `#w=alt&n=${id}`, target: (id, l) => `#w=neu&n=${id}` };
+    const o = { notes, atts, resolve: titles, parse, source: (id, l) => `#w=alt&n=${id}${l ? '-' + l.toLowerCase() : ''}`, target: (id, l) => `#w=neu&n=${id}` };
     const moved = 'Kosten [[Budget]], Teil [[Heizung]] und [[Offerte#4*]], offen [[Gibts nicht]].\n![Plan](att:7) ![Fremd](att:9)\n[Link](#n=10) und [hier](#w=alt&n=3) und [anderswo](#w=x&n=3)\n`[[Budget]]` im Code\n```\n[[Budget]]\n```';
     assert.equal(Move.rewriteMoved(moved, o),
-      'Kosten [Budget](#w=alt&n=10), Teil [[Heizung]] und [[Offerte#2*]], offen [[Gibts nicht]].\n![Plan](att:1) ![Fremd](att:9)\n[Link](#w=alt&n=10) und [hier](#w=neu&n=1) und [anderswo](#w=x&n=3)\n`[[Budget]]` im Code\n```\n[[Budget]]\n```');
+      'Kosten [Budget](#w=alt&n=10-budget), Teil [[Heizung]] und [[Offerte#2*]], offen [[Gibts nicht]].\n![Plan](att:1) ![Fremd](att:9)\n[Link](#w=alt&n=10) und [hier](#w=neu&n=1) und [anderswo](#w=x&n=3)\n`[[Budget]]` im Code\n```\n[[Budget]]\n```');
     assert.equal(Move.rewriteStaying('Siehe [[Heizung]], [[Budget]] und [Offerte](#n=4), Bereich #w=neu', o),
       'Siehe [Heizung](#w=neu&n=1), [[Budget]] und [Offerte](#w=neu&n=2), Bereich #w=neu');
     assert.equal(Move.rewriteMoved('[[Titel [x]]]', o), '[[Titel [x]]]', 'Klammern im Text stören nicht');
@@ -2674,7 +2674,7 @@ async function runNodeLinks(browser, part, step) {
     assert.equal(Move.rewriteLink('#n=10', o, true), '#w=alt&n=10', 'aus dem neuen Bereich zurück in den alten');
     assert.equal(Move.rewriteLink('https://example.ch', o, true), 'https://example.ch');
   }
-  part('Umschreiben beim Auslösen: [[…]] bleibt, wenn das Ziel mitgeht (Nummer neu), sonst Link in den anderen Bereich; Bilder att:…, Links auf Notizen, Code bleibt');
+  part('Umschreiben beim Auslösen: [[…]] bleibt, wenn das Ziel mitgeht (Nummer neu), sonst Link in den anderen Bereich (mit Titel in der Adresse, nicht zweimal umgeschrieben); Bilder att:…, Links auf Notizen, Code bleibt');
 
   // ---------- Auslösen zwischen zwei Datenbanken ----------
   {
