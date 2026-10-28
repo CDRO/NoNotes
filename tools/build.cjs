@@ -24,8 +24,8 @@
    nach plugins/ legen). --plugins <Ordner> nimmt zusätzlich die Erweiterungen eines anderen Ordners oder Repositorys
    mit (mehrfach möglich): seine Unterordner kommen ganz nach plugins/ (mit ihren README), .js-Dateien direkt im Ordner
    ebenfalls; andere Dateien direkt im Ordner (README, LICENSE …), Verstecktes (.git) und node_modules bleiben draussen.
-   Der Build liest die Angaben jeder .js-Datei in plugins/ (register(): id, name, version, api, description, theme) und
-   stellt sie als Verzeichnis (NoNotesPlugins.catalog([...])) vor die Liste in plugins/plugins.js. Im Dialog
+   Der Build liest die Angaben jeder .js-Datei in plugins/ (register(): id, name, version, api, description, theme, names,
+   descriptions) und stellt sie als Verzeichnis (NoNotesPlugins.catalog([...])) vor die Liste in plugins/plugins.js. Im Dialog
    «Erweiterungen» lassen sie sich damit ein- und ausschalten, ohne eine Datei zu bearbeiten.
 */
 'use strict';
@@ -97,10 +97,13 @@ function pluginEntry(abs, file) {
   catch (e) { return { file }; }
   if (!def || typeof def !== 'object') return { file };
   const str = v => (typeof v === 'string' ? v.trim() : '');
-  return {
+  // names / descriptions (seit 3.1.1): Texte je Sprache, nur Zeichenketten
+  const map = m => (m && typeof m === 'object' && !Array.isArray(m) ? Object.fromEntries(Object.entries(m).filter(([, v]) => typeof v === 'string' && v.trim()).map(([k, v]) => [k.toLowerCase(), v.trim()])) : null);
+  const names = map(def.names), descriptions = map(def.descriptions);
+  return Object.assign({
     file, id: str(def.id), name: str(def.name) || str(def.id) || file, version: str(def.version),
     api: Number.isInteger(def.api) ? def.api : null, description: str(def.description), theme: !!(def.theme && typeof def.theme === 'object'),
-  };
+  }, names && Object.keys(names).length ? { names } : {}, descriptions && Object.keys(descriptions).length ? { descriptions } : {});
 }
 
 /** Verzeichnis aller .js im Zielordner plugins/ (ausser plugins.js), das vor die Liste in plugins/plugins.js kommt. */

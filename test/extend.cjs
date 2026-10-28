@@ -55,7 +55,8 @@ async function runPlugins(browser, part, step) {
         theme: { name: 'Test-Design', light: { bg: '#112233', radius: '2px' }, dark: { bg: '#223344' }, css: '.logo { letter-spacing: 3px; }' },
       });`,
     'test-help.js': `
-      NoNotesPlugins.register({ id: 'test-help', name: 'Test Hilfe', api: 1,
+      NoNotesPlugins.register({ id: 'test-help', name: 'Test Hilfe', api: 1, description: 'Beschreibung',
+        names: { de: 'Hilfe-Test', en: 'Help test', 'de-de': 'Hilfe-Test (Deutschland)' }, descriptions: { DE: 'Beschreibung je Sprache', en: 'Description' },
         help: { de: '# Titel\\n\\nHilfe **fett** <b>x</b>', en: 'English help' } });`,
     'test-bad-help.js': `NoNotesPlugins.register({ id: 'test-bad-help', name: 'Schlechte Hilfe', api: 1, help: 42 });`,
     'test-bad-api.js': `NoNotesPlugins.register({ id: 'test-bad-api', name: 'Zu neu', api: 99 });`,
@@ -246,12 +247,13 @@ async function runPlugins(browser, part, step) {
     await helpTab.click();
     const secs = await page.locator('#helpPlugins .help-plugin').count();
     assert.equal(secs, 1, 'ein Abschnitt (nur test-help hat Hilfe)');
-    assert.equal(await page.locator('#helpPlugins .help-plugin h3').innerText(), 'Test Hilfe');
+    assert.equal(await page.locator('#helpPlugins .help-plugin h3').innerText(), 'Hilfe-Test', 'Name aus names (seit 3.1.1), Sprache der Oberfläche');
+    assert.equal(await page.evaluate(() => NoNotesPlugins.all().find(p => p.id === 'test-help').description), 'Beschreibung je Sprache', 'descriptions, Schlüssel ohne Rücksicht auf Gross-/Kleinschreibung');
     assert.equal(await page.locator('#helpPlugins .help-plugin h4').innerText(), 'Titel', 'Überschrift rückt unter den Abschnittstitel');
     assert.equal(await page.locator('#helpPlugins strong').innerText(), 'fett');
     assert.equal(await page.locator('#helpPlugins b').count(), 0, 'HTML im Hilfetext wird maskiert');
     await page.keyboard.press('Escape');
-    part('Hilfefenster: Tab «Erweiterungen» mit Abschnitt je Erweiterung, Markdown, maskiertes HTML, ungültige help gemeldet');
+    part('Hilfefenster: Tab «Erweiterungen» mit Abschnitt je Erweiterung, Markdown, maskiertes HTML, ungültige help gemeldet; Name und Beschreibung je Sprache');
 
     // Toolleistenknopf und Editor-Schnittstelle, Ereignisse beim Öffnen und Schreiben
     await page.dblclick('.mm-node:not(.mm-root)');
@@ -616,7 +618,7 @@ async function runPlugins(browser, part, step) {
     await p5.keyboard.press('Escape');
     await p5.click('#menuBtn');
     await p5.click('#pluginMenu button:has-text("Notizen zählen")');
-    await p5.waitForFunction(() => /1 Notizen \(ohne Archiv\)/.test(document.querySelector('#status').textContent));
+    await p5.waitForFunction(() => /Notizen ohne Archiv: 1/.test(document.querySelector('#status').textContent));
     await p5.click('#menuBtn');
     await p5.selectOption('#themeSelect', 'sepia');
     await p5.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() === '#f3ead8');

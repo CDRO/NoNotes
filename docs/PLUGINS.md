@@ -86,6 +86,7 @@ gilt für eine Erweiterung, deren `activate` oder deren Ereignisrückruf einen F
 | `api` | ja | Schnittstellenversion, heute `1`. Eine höhere Zahl als die der App wird abgelehnt |
 | `name` | nein | Anzeigename (sonst die `id`) |
 | `version`, `description` | nein | Anzeige im Dialog |
+| `names`, `descriptions` | nein | Seit 3.1.1. Name und Beschreibung je Sprache, `{ de: '…', en: '…', fr: '…', 'pt-br': '…' }`; gewählt wie beim Hilfetext (genau, dann die Sprache vor dem Bindestrich, dann `en`, dann `de`). `name` und `description` bleiben Pflicht für ältere NoNotes, die die neuen Felder nicht kennen |
 | `activate(ctx)` | nein | Wird nach dem ersten Zeichnen aufgerufen (beim Einschalten zur Laufzeit sofort); darf `async` sein |
 | `deactivate()` | nein | Seit 1.7.0. Wird beim Ausschalten gerufen; nimmt zurück, was `activate` ausserhalb von `ctx` eingerichtet hat (Zeitgeber, eigene Elemente). `ctx`-Beiträge räumt die App selbst |
 | `help` | nein | Seit 1.9.0. Hilfetext für das Hilfefenster, siehe unten; er erscheint, solange die Erweiterung eingeschaltet ist |
@@ -371,8 +372,21 @@ NoNotesPlugins.register({
 ## Texte der Erweiterung
 
 Die Texte einer Erweiterung gehören ihr: Sie stehen nicht in den Sprachpaketen von NoNotes. Wer mehrere Sprachen
-anbieten will, wählt anhand von `ctx.language()` selbst aus, am besten nach der Sprache vor dem Bindestrich
-(`ctx.language().split('-')[0]`: `de-DE` und `de` sind beide Deutsch) und mit Englisch als Rückfall.
+anbieten will, wählt anhand von `ctx.language()` selbst aus, am besten so wie NoNotes beim Hilfetext: die genaue Kennung
+(klein geschrieben, `pt-br`), dann die Sprache vor dem Bindestrich (`de-DE` und `de` sind beide Deutsch), dann Englisch.
+Name, Beschreibung und Hilfetext nimmt `register()` je Sprache entgegen (`names`, `descriptions`, `help`).
+
+```js
+const HALLO_TEXTE = {
+  de: { gruss: 'Grüezi' }, 'de-de': { gruss: 'Guten Tag' }, en: { gruss: 'Hello' }, fr: { gruss: 'Bonjour' },
+};
+// in activate(ctx):
+const l = String(ctx.language() || 'de').toLowerCase();
+const T = HALLO_TEXTE[l] || HALLO_TEXTE[l.split('-')[0]] || HALLO_TEXTE.en;
+```
+
+Die mitgelieferten Erweiterungen sprechen seit 3.1.1 alle Sprachen von NoNotes. Namen auf oberster Ebene einer Erweiterung
+(`const`, `function`) teilen sich die Seite mit den anderen Erweiterungen: mit eigenem Vorsatz benennen (`HALLO_TEXTE`).
 
 ## Stabilität
 
@@ -381,6 +395,7 @@ anbieten will, wählt anhand von `ctx.language()` selbst aus, am besten nach der
   (`if (ctx.ui.addSomething) …`).
 - Ein Bruch käme frühestens mit `api: 2` in NoNotes 2.0; die App meldet dann eine ältere Erweiterung
   deutlich, statt sie still falsch zu behandeln.
+- Seit 3.1.1 (ohne Änderung an `api`): `names` und `descriptions` in `register()`.
 - Seit 3.1.0 (ohne Änderung an `api`): `ctx.export.addMapStyle` (Farben im Mindmap-Bild).
 - Seit 3.0.0 (ohne Änderung an `api`): `reminders` in `questions:rendered`, `side` in `getTree()`, `setSides` im Backend; Termine im
   Text mit `>` (siehe oben).

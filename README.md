@@ -822,6 +822,9 @@ Ausgeliefert werden neun Sprachen: **Deutsch (Schweiz)** (Quellsprache), **Engli
 - **Beim ersten Start** gilt die Sprache des Browsers: dieselbe Kennung, sonst eine Sprache für die Region (`de-AT` →
   Deutsch (Deutschland), `es-AR` → Español (México), `pt-AO` → Português (Portugal)), sonst die Sprache selbst (`fr-FR` →
   Français (Suisse), `pt` → Português (Brasil)), sonst Deutsch (Schweiz).
+- **Erweiterungen** (seit 3.1.1): die mitgelieferten (*Farben über Tags*, *Tabellen formatieren*, *Sprung zu Unternotizen*,
+  *Tag-Designs*, *Szenen-Hintergründe* und die Beispiele) zeigen Name, Beschreibung, Hilfe und Beschriftungen in der gewählten
+  Sprache. Eigene Erweiterungen bringen ihre Texte selbst mit ([docs/PLUGINS.md](docs/PLUGINS.md)).
 - Weitere Sprachen sind Dateien in `lang/` und kommen mit einem Release dazu: `npm run i18n -- init nl-NL Nederlands nl-NL` legt
   ein Paket mit allen Texten an, `check` prüft es. Einzelheiten in [docs/LANGUAGES.md](docs/LANGUAGES.md).
 

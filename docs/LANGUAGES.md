@@ -31,6 +31,10 @@ sind Dateien im Ordner `lang/` und lassen sich mit jedem Release ergänzen. Ausg
 - Texte in Tabellen und Konstanten werden mit `N_('…')` markiert und später mit `t()` übersetzt.
 - Eine Ausprägung oder Erweiterung ergänzt ein Sprachpaket mit `NoNotesI18n.extend('en', { 'Deutscher Text': 'English text' })`, auch wenn das
   Paket erst danach geladen wird. Texte, die das Paket schon hat, werden nicht ersetzt.
+- **Erweiterungen** bringen ihre Texte selbst mit: Name, Beschreibung und Hilfe je Sprache in `register({ names, descriptions,
+  help })` (Name und Beschreibung je Sprache seit 3.1.1), Beschriftungen nach `ctx.language()`. Gewählt wird die Kennung, sonst
+  die Sprache vor dem Bindestrich, sonst Englisch, sonst Deutsch ([PLUGINS.md](PLUGINS.md), Abschnitt «Texte der Erweiterung»).
+  Die mitgelieferten Erweiterungen sprechen alle neun Sprachen.
 - Die Sprache wählt der Benutzer mit dem **Sprachwechsel** oben rechts (seit 3.1.0; nur sichtbar, wenn mehr als eine Sprache
   da ist): ein Knopf mit Flagge und Kürzel (`DE`, `FR` …), dahinter die Liste aller Sprachen mit Flagge und Namen, nach Namen
   sortiert, mit Maus oder Tastatur (Pfeile, `Pos1`/`Ende`, Anfangsbuchstabe, `Enter`, `Esc`). Gemerkt wird sie im Browser

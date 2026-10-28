@@ -71,8 +71,8 @@
       const file = e && cleanFile(e.file);
       if (!file || available.some(a => a.file === file)) continue;
       available.push({
-        file, id: str(e.id), name: str(e.name) || file, version: str(e.version),
-        api: Number.isInteger(e.api) ? e.api : null, description: str(e.description), theme: !!e.theme,
+        file, id: str(e.id), name: localized(e.names, str(e.name) || file), version: str(e.version),
+        api: Number.isInteger(e.api) ? e.api : null, description: localized(e.descriptions, str(e.description)), theme: !!e.theme,
       });
     }
   }
@@ -109,6 +109,20 @@
     return Object.keys(out).length ? out : null;
   }
 
+  /** names / descriptions (seit 3.1.1): { sprache: text } wie bei help, kurze Texte; sonst null. */
+  function textMap(map) {
+    if (!map || typeof map !== 'object' || Array.isArray(map)) return null;
+    const out = {};
+    for (const [k, v] of Object.entries(map)) if (typeof v === 'string' && v.trim() && v.length <= 2000) out[k.toLowerCase()] = v.trim();
+    return Object.keys(out).length ? out : null;
+  }
+
+  /** Name oder Beschreibung in der Sprache der Oberfläche: aus names/descriptions, sonst der Text aus name/description. */
+  function localized(map, fallback) {
+    const m = textMap(map);
+    return (m && pickHelp(m, global.NoNotesI18n.language())) || fallback;
+  }
+
   /** Text in der Sprache lang: genau, dann ihre Hauptsprache (de-ch → de), dann en, dann de, dann irgendeiner. */
   function pickHelp(map, lang) {
     const l = String(lang || '').toLowerCase();
@@ -125,9 +139,9 @@
     if (!def || typeof def !== 'object') return fail(t('register() braucht ein Objekt'));
     if (!ID_RE.test(entry.id)) return fail(t('id fehlt oder ist ungültig (a-z, 0-9, Bindestrich, 2 bis 41 Zeichen)'));
     if (plugins.some(p => p !== entry && p.id === entry.id && p.valid)) return fail(t('id «{id}» ist schon vergeben', { id: entry.id }));
-    entry.name = typeof def.name === 'string' && def.name.trim() ? def.name.trim() : entry.id;
+    entry.name = localized(def.names, typeof def.name === 'string' && def.name.trim() ? def.name.trim() : entry.id);
     entry.version = typeof def.version === 'string' ? def.version : '';
-    entry.description = typeof def.description === 'string' ? def.description : '';
+    entry.description = localized(def.descriptions, typeof def.description === 'string' ? def.description : '');
     if (!Number.isInteger(def.api)) return fail(t('api fehlt (Schnittstellenversion, heute 1)'));
     if (def.api > API) return fail(t('braucht die Schnittstelle {api}, diese App bietet {angebot}', { api: def.api, angebot: API }));
     if (def.api < 1) return fail(t('api muss mindestens 1 sein'));
