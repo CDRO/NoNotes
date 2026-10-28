@@ -18,6 +18,8 @@
   const GAP_Y = 10;
   const MIN_W = 56;
   const MAX_W = 260;
+  const LINK_W = 20;      // Platz für das Link-Symbol rechts im Knoten (v3.2.0)
+  const LINK_PATH = 'M -3.5 3.5 L 3.5 -3.5 M -0.5 -3.5 H 3.5 V 0.5'; // Pfeil nach rechts oben
   const MIN_ZOOM = 0.2;
   const MAX_ZOOM = 3;
   const GLIDE_MS = 200;   // so lange gleiten die Knoten an ihren neuen Platz (v3.0.0)
@@ -54,6 +56,7 @@
         id: r.id, title: r.title, parentId: r.parent_id, order: r.sort_order,
         collapsed: !!r.collapsed, badge: r.badge || 0, dbadge: r.dbadge || 0, tbadge: r.tbadge || 0, archived: !!r.archived_at, children: [],
         side: r.side === 'left' || r.side === 'right' ? r.side : null,
+        link: typeof r.link === 'string' && r.link ? r.link : null,
       });
     }
     const root = { id: 'root', isRoot: true, title: mapTitle, children: [], badge: 0, dbadge: 0, tbadge: 0 };
@@ -74,7 +77,7 @@
       const font = n.isRoot ? ROOT_FONT : FONT;
       const fit = fitLabel((n.title || '').trim() || t('Ohne Titel'), font, MAX_W);
       n.label = fit.label;
-      n.w = Math.max(MIN_W, Math.ceil(fit.width) + 2 * PAD_X + (n.isRoot ? 14 : 0));
+      n.w = Math.max(MIN_W, Math.ceil(fit.width) + 2 * PAD_X + (n.isRoot ? 14 : 0) + (n.link ? LINK_W : 0));
       n.h = n.isRoot ? ROOT_H : NODE_H;
       n.visibleChildren = (!n.isRoot && n.collapsed) ? [] : n.children;
       n.hiddenCount = n.visibleChildren.length ? 0 : countDescendants(n);
@@ -353,11 +356,18 @@
       }, nodesG);
       svgEl('rect', { width: n.w, height: n.h, rx: n.isRoot ? 12 : 9, ry: n.isRoot ? 12 : 9 }, g);
       const text = svgEl('text', {
-        x: n.w / 2, y: n.h / 2, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+        x: n.link ? (n.w - LINK_W) / 2 + 2 : n.w / 2, y: n.h / 2, 'text-anchor': 'middle', 'dominant-baseline': 'central',
       }, g);
       text.textContent = n.label;
       if (n.label !== ((n.title || '').trim() || t('Ohne Titel'))) {
         svgEl('title', null, g).textContent = n.title;
+      }
+      if (n.link) {
+        // Link am Knoten (v3.2.0): ein Klick aufs Symbol öffnet das Ziel, der Rest des Knotens bleibt, wie er war
+        const icon = svgEl('g', { class: 'mm-linkicon', transform: `translate(${n.w - PAD_X / 2 - 8} ${n.h / 2})` }, g);
+        svgEl('circle', { r: 9 }, icon);
+        svgEl('path', { d: LINK_PATH }, icon);
+        svgEl('title', null, icon).textContent = handlers.linkTitle ? handlers.linkTitle(n.link) : n.link;
       }
       if (!n.isRoot && n.children.length) {
         const cx = n.dir > 0 ? n.w + 11 : -11;
@@ -767,7 +777,7 @@
 
     svg.addEventListener('pointerdown', e => {
       if (e.button !== 0) return;
-      if (e.target.closest('.mm-toggle')) return;
+      if (e.target.closest('.mm-toggle, .mm-linkicon')) return;
       const nodeEl = e.target.closest('.mm-node');
       if (nodeEl) {
         drag = { type: 'node', id: nodeEl.dataset.id, el: nodeEl, startX: e.clientX, startY: e.clientY, moved: false, targetId: null, where: null, valid: false };
@@ -780,6 +790,12 @@
     });
 
     svg.addEventListener('click', e => {
+      const linkIcon = e.target.closest('.mm-linkicon');
+      if (linkIcon) {
+        e.stopPropagation();
+        if (handlers.onOpenLink) handlers.onOpenLink(Number(linkIcon.closest('.mm-node').dataset.id));
+        return;
+      }
       const toggle = e.target.closest('.mm-toggle');
       if (toggle) {
         e.stopPropagation();
@@ -795,7 +811,7 @@
 
     svg.addEventListener('dblclick', e => {
       const nodeEl = e.target.closest('.mm-node');
-      if (!nodeEl || e.target.closest('.mm-toggle')) return;
+      if (!nodeEl || e.target.closest('.mm-toggle, .mm-linkicon')) return;
       e.preventDefault();
       if (nodeEl.dataset.id === 'root') { if (handlers.onOpenRoot) handlers.onOpenRoot(); }
       else if (handlers.onOpen) handlers.onOpen(Number(nodeEl.dataset.id));
@@ -832,7 +848,7 @@
       getSelected: () => inst.selectedId,
       nodeInfo: id => {
         const n = nodeOf(id);
-        return n ? { id: n.id, isRoot: !!n.isRoot, title: n.title, parentId: n.isRoot ? undefined : n.parentId, childCount: n.children.length, collapsed: !!n.collapsed, archived: !!n.archived, dir: n.dir, side: n.isRoot || n.parentId != null ? null : (n.dir < 0 ? 'left' : 'right') } : null;
+        return n ? { id: n.id, isRoot: !!n.isRoot, title: n.title, parentId: n.isRoot ? undefined : n.parentId, childCount: n.children.length, collapsed: !!n.collapsed, archived: !!n.archived, link: n.link || null, dir: n.dir, side: n.isRoot || n.parentId != null ? null : (n.dir < 0 ? 'left' : 'right') } : null;
       },
       nodeCount: () => inst.byId.size,
     };
@@ -943,7 +959,8 @@
       const font = n.isRoot ? '700 16px' : '600 14px';
       parts.push(`<g transform="translate(${n.x} ${n.y})"${n.archived ? ' opacity="0.6"' : ''}>`);
       parts.push(`<rect width="${n.w}" height="${n.h}" rx="${n.isRoot ? 12 : 9}" fill="${fill}" stroke="${stroke}" stroke-width="1.5"${n.archived ? ' stroke-dasharray="5 3"' : ''}/>`);
-      parts.push(`<text x="${n.w / 2}" y="${n.h / 2}" text-anchor="middle" dominant-baseline="central" fill="${textFill}" style="font: ${font} ${esc(FONT_FAMILY.replace(/"/g, "'"))}">${esc(n.label)}</text>`);
+      parts.push(`<text x="${n.link ? (n.w - LINK_W) / 2 + 2 : n.w / 2}" y="${n.h / 2}" text-anchor="middle" dominant-baseline="central" fill="${textFill}" style="font: ${font} ${esc(FONT_FAMILY.replace(/"/g, "'"))}">${esc(n.label)}</text>`);
+      if (n.link) parts.push(`<g transform="translate(${n.w - PAD_X / 2 - 8} ${n.h / 2})"><circle r="9" fill="${c.tint}" stroke="${c.accent}" stroke-width="1.2"/><path d="${LINK_PATH}" fill="none" stroke="${c.accent}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></g>`);
       if (!n.isRoot && n.collapsed && n.children.length) {
         const tx = n.dir > 0 ? n.w + 11 : -11;
         parts.push(`<g transform="translate(${tx} ${n.h / 2})"><circle r="10" fill="${c.tint}" stroke="${c.accent}" stroke-width="1.5"/><text text-anchor="middle" dominant-baseline="central" fill="${c.text}" style="font: 600 11px ${esc(FONT_FAMILY.replace(/"/g, "'"))}">${n.hiddenCount}</text></g>`);

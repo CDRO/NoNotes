@@ -25,6 +25,8 @@
     // Notizen und Baum
     'getTree', 'getNote', 'getPath', 'listNotes', 'countNotes', 'createNote', 'updateNote', 'renameNote',
     'setParent', 'moveNote', 'moveAmongSiblings', 'setCollapsed', 'setAllCollapsed', 'setSides',
+    // Link am Knoten (v3.2.0)
+    'setNoteLink',
     // Papierkorb
     'deleteNote', 'purgeNote', 'restoreNote', 'emptyTrash', 'countTrash',
     // Archiv
@@ -47,7 +49,7 @@
    *  Ausprägung speichern kann. */
   const MUTATING = new Set([
     'setMeta', 'setMapTitle', 'createNote', 'updateNote', 'renameNote', 'setParent', 'moveNote',
-    'moveAmongSiblings', 'setCollapsed', 'setAllCollapsed', 'setSides', 'deleteNote', 'purgeNote', 'restoreNote',
+    'moveAmongSiblings', 'setCollapsed', 'setAllCollapsed', 'setSides', 'setNoteLink', 'deleteNote', 'purgeNote', 'restoreNote',
     'emptyTrash', 'archiveNote', 'unarchiveNote', 'setTags', 'answerQuestion', 'setTaskDone',
     'toggleTaskTree', 'addAttachment', 'deleteAttachment', 'restoreHistoryVersion', 'clearHistory',
   ]);
@@ -83,6 +85,7 @@
     TEMPLATE_EMPTY: N_('Die Vorlage ist leer.'),
     TEMPLATE_NOT_FOUND: N_('Vorlage nicht gefunden.'),
     TEMPLATE_INVALID: N_('Diese Datei ist keine Vorlage (Markdown, höchstens 1 MB).'),
+    INVALID_LINK: N_('Dieser Link lässt sich nicht hinterlegen. Erlaubt sind Webadressen, Mailadressen, Pfade und Links auf Notizen oder Bereiche.'),
   };
 
   /** Ergänzt Fehlerkennungen und ihre (deutschen) Meldungen, zum Beispiel für ein Backend über das Netz. Bestehende Kennungen

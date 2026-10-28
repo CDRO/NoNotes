@@ -3,7 +3,7 @@
 (function (global) {
   'use strict';
 
-  const SCHEMA_VERSION = 17; // 16: Personen an Aufgaben (v2.11.0); 17: Termine mit ">", Erinnerungen (v3.0.0)
+  const SCHEMA_VERSION = 18; // 16: Personen an Aufgaben (v2.11.0); 17: Termine mit ">", Erinnerungen (v3.0.0); 18: Link am Knoten (v3.2.0)
   // Regeln, nach denen die Indexe (Fragen, Aufgaben, Querverweise) aus den Texten entstehen. Steigt die Zahl ohne neues Schema
   // (2: Blöcke in Listen, v2.6.0; 3: Aufgaben, Fragen und Entscheide in Tabellenfeldern, v2.11.0), füllt das Öffnen die Indexe
   // neu; ältere Versionen öffnen die Datei weiter.
@@ -92,6 +92,7 @@
       ['archived_at', 'TEXT'],                  // gesetzt = im Archiv (ausgeblendet, durchsuchbar, schreibgeschützt)
       ['updated_by', 'TEXT'],                   // wer den heutigen Stand geschrieben hat (Anzeigename, leer = unbekannt)
       ['side', 'TEXT'],                         // Hauptast der Mindmap: 'left' | 'right', NULL = die Mindmap wählt (Schema 17)
+      ['link', 'TEXT'],                         // Link am Knoten: Webadresse, Mail, Pfad, Notiz oder Bereich dieser App (Schema 18)
     ], indexes: [
       'CREATE INDEX IF NOT EXISTS idx_notes_updated ON notes (updated_at DESC)',
       'CREATE INDEX IF NOT EXISTS idx_notes_parent ON notes (parent_id, sort_order)',
@@ -353,7 +354,7 @@
   function getTree(db, options) {
     const archive = options && options.archive;
     const rows = selectAll(db,
-      `SELECT id, title, parent_id, sort_order, collapsed, archived_at, updated_at, side,
+      `SELECT id, title, parent_id, sort_order, collapsed, archived_at, updated_at, side, link,
               CASE WHEN archived_at IS NULL THEN (SELECT count(*) FROM questions q WHERE q.note_id = notes.id AND q.answer IS NULL) ELSE 0 END AS badge,
               CASE WHEN archived_at IS NULL THEN (SELECT count(*) FROM questions q WHERE q.note_id = notes.id AND q.answer IS NULL AND q.kind = 'decision') ELSE 0 END AS dbadge,
               CASE WHEN archived_at IS NULL THEN (SELECT count(*) FROM tasks t WHERE t.note_id = notes.id AND t.done = 0) ELSE 0 END AS tbadge
@@ -445,6 +446,34 @@
     if (old) recordHistory(db, id, old, title, old.body, ts, (old.updated_by || null) !== author);
     db.run('UPDATE notes SET title = ?, updated_at = ?, updated_by = ? WHERE id = ?', [title, ts, author, id]);
     return ts;
+  }
+
+  // ---------- Link am Knoten (v3.2.0) ----------
+
+  const LINK_MAX = 2000;
+
+  /** Prüft einen Link für einen Knoten und gibt ihn bereinigt zurück (leer: null). Erlaubt sind Webadressen (http, https, auch
+   *  «www.…»), mailto:, Pfade auf Dateien und Ordner (file://, \\server\freigabe, C:\…) und Adressen dieser App (#w=…, #n=…, /w/…).
+   *  Andere Schemata (javascript:, data:) und Steuerzeichen werden abgelehnt (INVALID_LINK). */
+  function normalizeLink(value) {
+    const v = String(value == null ? '' : value).trim();
+    if (!v) return null;
+    const ok = v.length <= LINK_MAX && !/[\u0000-\u001f\u007f]/.test(v) && (
+      /^(https?:\/\/[^\s]+|mailto:[^\s]+|file:\/\/[^\n]+)$/i.test(v)
+      || /^#[^\s]*$/.test(v) || /^\/(?![/\\])[^\s]*$/.test(v)
+      || /^\\\\[^\\/\s]+\\/.test(v) || /^[a-z]:[\\/]/i.test(v) || /^www\.[^\s]+$/i.test(v));
+    if (!ok) throw fail('INVALID_LINK', 'Dieser Link lässt sich nicht hinterlegen. Erlaubt sind Webadressen, Mailadressen, Pfade und Links auf Notizen oder Bereiche.');
+    return /^www\./i.test(v) ? 'https://' + v : v;
+  }
+
+  /** Hinterlegt am Knoten einen Link (oder entfernt ihn mit leerem Wert). Gibt den gespeicherten Link zurück. «Geändert» bleibt. */
+  function setNoteLink(db, id, link) {
+    const note = getNote(db, id);
+    if (!note || note.deleted_at) throw fail('NOTE_NOT_FOUND', 'Notiz nicht gefunden.');
+    if (note.archived_at) throw fail('ARCHIVED_READONLY', 'Archivierte Notizen sind schreibgeschützt. Erst zurückholen.');
+    const clean = normalizeLink(link);
+    db.run('UPDATE notes SET link = ? WHERE id = ?', [clean, id]);
+    return clean;
   }
 
   // ---------- Verlauf ----------
@@ -729,6 +758,114 @@
     db.run('DELETE FROM note_history WHERE note_id = ?', [id]);
     db.run('DELETE FROM notes WHERE id = ?', [id]);
     pruneTags(db);
+  }
+
+  // ---------- In einen anderen Bereich auslösen (v3.2.0) ----------
+  // Ein Knoten wird zur Wurzel eines neuen Bereichs: seine Unternotizen (auch archivierte, nicht die im Papierkorb) ziehen samt Tags,
+  // Bildern und Verlauf in eine andere Datenbank um und werden dort Hauptäste. Der Knoten selbst bleibt im alten Bereich, mit seinem
+  // Text und einem Link auf den neuen; die Unternotizen kommen dort in den Papierkorb. Texte schreibt NoNotesMove um (rewrite).
+
+  /** Paket für importSubtree: { root: { id, title }, notes (Tiefensuche, Eltern vor Kindern; parent_id null = Hauptast), attachments
+   *  (mit Daten), history (älteste zuerst), titles (titleIndex dieses Bereichs, für die [[…]]-Verweise) }. */
+  function exportSubtree(db, rootId) {
+    const root = getNote(db, rootId);
+    if (!root || root.deleted_at) throw fail('NOTE_NOT_FOUND', 'Notiz nicht gefunden.');
+    const ids = subtreeNoteIds(db, rootId).filter(id => id !== rootId);
+    const notes = ids.map(id => {
+      const n = getNote(db, id);
+      return {
+        id: n.id, parent_id: n.parent_id === rootId ? null : n.parent_id, title: n.title, body: n.body, created_at: n.created_at,
+        updated_at: n.updated_at, sort_order: n.sort_order, collapsed: n.collapsed, archived_at: n.archived_at || null,
+        updated_by: n.updated_by || null, link: n.link || null, tags: getTags(db, id),
+      };
+    });
+    const list = ids.length ? ids.join(',') : 'NULL';
+    const attachments = selectAll(db, `SELECT * FROM attachments WHERE note_id IN (${list}) ORDER BY id`)
+      .map(a => Object.assign(a, { data: a.data instanceof Uint8Array ? a.data : new Uint8Array(a.data || []) }));
+    const history = selectAll(db, `SELECT note_id, at, started_at, open, title, p, s, r, author FROM note_history WHERE note_id IN (${list}) ORDER BY id`);
+    return { root: { id: root.id, title: root.title }, notes, attachments, history, titles: titleIndex(db) };
+  }
+
+  /** Text oder Link einer Notiz neu setzen, ohne den Verlauf zu brechen: zuerst eine Fassung des alten Stands, dann der neue Text.
+   *  touch: «Geändert» auf jetzt (für Notizen, die jemand offen haben kann). */
+  function replaceBody(db, id, body, touch) {
+    const old = selectOne(db, 'SELECT title, body, updated_at, created_at, updated_by FROM notes WHERE id = ?', [id]);
+    if (!old || old.body === body) return;
+    const ts = nowIso();
+    recordHistory(db, id, old, old.title, body, ts, true);
+    db.run(touch ? 'UPDATE notes SET body = ?, updated_at = ? WHERE id = ?' : 'UPDATE notes SET body = ? WHERE id = ?', touch ? [body, ts, id] : [body, id]);
+    syncQuestions(db, id, body);
+    syncTasks(db, id, body);
+    syncLinks(db, id, body);
+  }
+
+  /** Legt ein Paket aus exportSubtree an der Wurzel dieser Datenbank an (gewöhnlich eine neue, leere). rewrite(kind, value, maps):
+   *  kind 'body' oder 'link', maps { notes, atts } (Map alt → neu); gibt den neuen Wert zurück. Ergebnis: { notes, atts } als Paare
+   *  [alt, neu]. «Erstellt» und «Geändert» bleiben, wie sie waren. */
+  function importSubtree(db, pkg, rewrite) {
+    const notes = new Map();
+    const atts = new Map();
+    for (const n of pkg.notes || []) {
+      const parent = n.parent_id == null ? null : notes.get(n.parent_id);
+      if (n.parent_id != null && parent == null) continue; // Eltern fehlen im Paket: nicht anlegen
+      db.run(`INSERT INTO notes (title, body, created_at, updated_at, parent_id, sort_order, collapsed, archived_at, updated_by, link)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [n.title || '', n.body || '', n.created_at || nowIso(), n.updated_at || nowIso(), parent, parent == null ? nextSortOrder(db, null) : n.sort_order,
+          n.collapsed ? 1 : 0, n.archived_at || null, n.updated_by || null, n.link || null]);
+      const id = scalar(db, 'SELECT last_insert_rowid()');
+      notes.set(n.id, id);
+      for (const name of n.tags || []) {
+        const clean = normalizeTag(name);
+        if (!clean) continue;
+        db.run('INSERT OR IGNORE INTO tags (name) VALUES (?)', [clean]);
+        db.run('INSERT OR IGNORE INTO note_tags (note_id, tag_id) VALUES (?, ?)', [id, scalar(db, 'SELECT id FROM tags WHERE name = ? COLLATE NOCASE', [clean])]);
+      }
+    }
+    for (const a of pkg.attachments || []) {
+      if (!notes.has(a.note_id)) continue;
+      const bytes = a.data instanceof Uint8Array ? a.data : new Uint8Array(a.data || []);
+      db.run('INSERT INTO attachments (note_id, name, mime, size, data, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+        [notes.get(a.note_id), a.name || 'bild', a.mime || 'application/octet-stream', bytes.length, bytes, a.created_at || nowIso()]);
+      atts.set(a.id, scalar(db, 'SELECT last_insert_rowid()'));
+    }
+    for (const h of pkg.history || []) {
+      if (!notes.has(h.note_id)) continue;
+      db.run('INSERT INTO note_history (note_id, at, started_at, open, title, p, s, r, author) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [notes.get(h.note_id), h.at, h.started_at, h.open ? 1 : 0, h.title, h.p, h.s, h.r, h.author || null]);
+    }
+    const maps = { notes, atts };
+    for (const n of pkg.notes || []) {
+      const id = notes.get(n.id);
+      if (id == null) continue;
+      syncQuestions(db, id, n.body || '');
+      syncTasks(db, id, n.body || '');
+      syncLinks(db, id, n.body || '');
+      if (!rewrite) continue;
+      replaceBody(db, id, rewrite('body', n.body || '', maps), false);
+      const link = n.link ? rewrite('link', n.link, maps) : null;
+      if (link !== (n.link || null)) db.run('UPDATE notes SET link = ? WHERE id = ?', [link || null, id]);
+    }
+    return { notes: [...notes], atts: [...atts] };
+  }
+
+  /** Der alte Bereich nach dem Umzug: die mitgenommenen Notizen kommen in den Papierkorb (sie behalten ihren Platz, damit «Zurückholen»
+   *  sie unter ihre Eltern bringt), der Knoten bekommt den Link auf den neuen Bereich. rewrite(kind, value) schreibt Texte und Links
+   *  der übrigen Notizen um, die auf mitgenommene zeigen. Gibt die Zahl der Notizen im Papierkorb zurück. */
+  function finishDetach(db, rootId, pkg, link, rewrite) {
+    const ts = nowIso();
+    const moved = (pkg.notes || []).map(n => n.id);
+    for (const id of moved) db.run('UPDATE notes SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL', [ts, ts, id]);
+    db.run('UPDATE notes SET link = ?, collapsed = 0, updated_at = ? WHERE id = ?', [normalizeLink(link), ts, rootId]);
+    if (rewrite) {
+      for (const row of selectAll(db, 'SELECT id, body, link FROM notes WHERE deleted_at IS NULL')) {
+        replaceBody(db, row.id, rewrite('body', row.body), true);
+        if (row.id !== rootId && row.link) {
+          const next = rewrite('link', row.link);
+          if (next !== row.link) db.run('UPDATE notes SET link = ?, updated_at = ? WHERE id = ?', [next || null, ts, row.id]);
+        }
+      }
+    }
+    return moved.length;
   }
 
   // ---------- Aufgaben ----------
@@ -1242,6 +1379,11 @@
 
   global.NoNotesDB = {
     SCHEMA_VERSION,
+    normalizeLink,
+    setNoteLink,
+    exportSubtree,
+    importSubtree,
+    finishDetach,
     configure,
     open,
     inspect,

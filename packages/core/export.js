@@ -176,6 +176,7 @@
     lines.push(`*${t('Erstellt {erstellt} · Geändert {geaendert}', { erstellt: fmtDate(note.created_at), geaendert: fmtDate(note.updated_at) })}${note.archived_at ? ' · ' + t('Archiviert {datum}', { datum: fmtDate(note.archived_at) }) : ''}*  `);
     const tags = await backend.getTags(node.id);
     if (tags.length) lines.push(`*${t('Tags: {tags}', { tags: tags.join(', ') })}*  `);
+    if (note.link) lines.push(`*${t('Link: {link}', { link: `<${note.link}>` })}*  `); // Link am Knoten (v3.2.0)
     return lines;
   }
 

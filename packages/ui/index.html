@@ -180,6 +180,8 @@
                 <button type="button" id="insertTemplateBtn" data-write role="menuitem" title="Den Text einer Vorlage an der Cursorstelle einfügen, ihre Unternotizen unter dieser Notiz" hidden><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 1.5h6l3 3v10h-9z M9.5 1.5v3h3 M5.5 7.5h5 M5.5 10h5 M5.5 12.5h3"/></svg>Vorlage einfügen…</button>
                 <button type="button" id="saveTemplateBtn" role="menuitem" title="Diese Notiz (mit Unternotizen) als Vorlage speichern" hidden><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 1.5h6l3 3v10h-9z M9.5 1.5v3h3 M5.5 7.5h5 M5.5 10h5 M5.5 12.5h3"/></svg>Als Vorlage speichern…</button>
                 <button type="button" id="historyBtn" role="menuitem" title="Frühere Fassungen dieser Notiz ansehen und wiederherstellen"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9 M2.5 2.5v3h3 M8 5v3.5l2.3 1.4"/></svg>Verlauf…</button>
+                <button type="button" id="nodeLinkBtn" data-write role="menuitem" title="Am Knoten einen Link auf eine Webseite, eine Datei, eine Notiz oder einen Bereich hinterlegen"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 11l6-6 M6.5 5H11v4.5 M3.5 3.5v9h9"/></svg>Link am Knoten…</button>
+                <button type="button" id="detachBtn" data-write role="menuitem" title="Diese Notiz wird die Wurzel eines neuen Bereichs, ihre Unternotizen ziehen mit" hidden><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h5v4h-5z M8.5 8.5h5v4h-5z M5 7.5v3h3.5"/></svg>In neuen Bereich auslösen…</button>
                 <button type="button" id="copyLinkBtn" role="menuitem" title="Adresse dieser Notiz in die Zwischenablage kopieren"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 9.5l3-3 M7 4.5l1.3-1.3a2.5 2.5 0 0 1 3.5 3.5L10.5 8 M9 11.5l-1.3 1.3a2.5 2.5 0 0 1-3.5-3.5L5.5 8"/></svg>Link kopieren</button>
                 <button type="button" id="printBtn" role="menuitem" title="Diese Notiz drucken"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6V2.5h7V6 M4.5 11H3a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1.5 M4.5 9.5h7v4h-7z"/></svg>Drucken… (Ctrl+P)</button>
                 <div class="sep" role="separator"></div>
@@ -198,6 +200,7 @@
             <button type="button" id="purgeBtn" data-write class="danger">Endgültig löschen</button>
           </div>
           <input type="text" id="title" class="title" placeholder="Titel" aria-label="Titel" autocomplete="off" spellcheck="true">
+          <div id="nodeLinkBar" class="node-link-bar" hidden><span class="node-link-icon" aria-hidden="true">↗</span><a id="nodeLinkOpen" href="#" data-i18n-skip></a><button type="button" id="nodeLinkEditBtn" data-write class="ghost small">Ändern…</button></div>
           <div class="tags-row">
             <div id="tagChips" class="chips" aria-label="Tags"></div>
             <input type="text" id="tagInput" data-write class="tag-input" list="tagSuggestions" placeholder="Tag hinzufügen…" aria-label="Tag hinzufügen" autocomplete="off">
@@ -469,6 +472,40 @@
     </form>
   </dialog>
 
+  <dialog id="nodeLinkDialog" class="dialog" aria-labelledby="nodeLinkTitle">
+    <form method="dialog" id="nodeLinkForm">
+      <h2 id="nodeLinkTitle">Link am Knoten</h2>
+      <p class="dialog-lead" id="nodeLinkLead"></p>
+      <label class="dialog-field"><span>Ziel</span><input type="text" id="nodeLinkInput" maxlength="2000" autocomplete="off" spellcheck="false" data-i18n-skip></label>
+      <label class="dialog-field" id="nodeLinkAreaRow" hidden><span>Oder einen Bereich wählen</span><select id="nodeLinkArea"></select></label>
+      <p class="hint">Eine Webadresse, eine Mailadresse (mailto:), ein Pfad auf eine Datei oder einen Ordner, ein Link auf eine Notiz («Link kopieren») oder auf einen Bereich. Ein Klick auf ↗ am Knoten öffnet das Ziel.</p>
+      <p class="hint form-error" id="nodeLinkError" role="alert" hidden></p>
+      <div class="row">
+        <button type="button" id="nodeLinkSaveBtn" class="primary">Speichern</button>
+        <button type="button" id="nodeLinkRemoveBtn" class="ghost danger">Link entfernen</button>
+        <button type="submit" value="cancel" class="ghost">Abbrechen</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="detachDialog" class="dialog" aria-labelledby="detachTitle">
+    <form method="dialog" id="detachForm">
+      <h2 id="detachTitle">In neuen Bereich auslösen</h2>
+      <label class="dialog-field"><span>Name des neuen Bereichs</span><input type="text" id="detachName" maxlength="60" autocomplete="off" data-i18n-skip></label>
+      <p class="dialog-lead" id="detachLead"></p>
+      <ul class="dialog-list">
+        <li>Der Knoten wird die Wurzel des neuen Bereichs, seine Unternotizen werden dessen Hauptäste – mit Tags, Bildern, Fragen, Aufgaben und Verlauf.</li>
+        <li>Hier bleibt der Knoten mit seinem eigenen Text und einem Link auf den neuen Bereich. Die Unternotizen kommen hier in den Papierkorb.</li>
+        <li>Verweise auf die ausgelösten Notizen werden zu Links in den neuen Bereich.</li>
+      </ul>
+      <p class="hint form-error" id="detachError" role="alert" hidden></p>
+      <div class="row">
+        <button type="button" id="detachGoBtn" class="primary">Auslösen</button>
+        <button type="submit" value="cancel" class="ghost">Abbrechen</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="templatePickDialog" class="dialog dialog-wide" aria-labelledby="templatePickTitle">
     <form method="dialog" id="templatePickForm">
       <h2 id="templatePickTitle">Neue Notiz aus Vorlage</h2>
@@ -702,6 +739,7 @@ Firmenname wie im Handelsregister, **ohne** Rechtsform.
   <script src="../core/editing.js"></script>
   <script src="../core/templates.js"></script>
   <script src="../core/routes.js"></script>
+  <script src="../core/move.js"></script>
   <script src="../core/backend.js"></script>
   <script src="../agent/catalog.js"></script>
   <script src="../agent/protocol.js"></script>

@@ -15,7 +15,7 @@ const DIST = path.join(ROOT, 'dist', 'NoNotes');
 const APP_URL = 'file://' + path.join(DIST, 'index.html');
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '17'; // muss zu packages/data/db.js passen
+const SCHEMA_VERSION = '18'; // muss zu packages/data/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 // ============================================================
@@ -2507,10 +2507,10 @@ async function runDatesV3(browser, part, step) {
     const versions = json(DB.listHistory(m, id));
     assert.ok(versions.length >= 1, 'Verlauf bleibt');
     assert.ok(DB.getHistoryVersion(m, id, versions[0].id).body.includes('Erst @anna'), 'ältere Fassung lässt sich weiter herstellen');
-    assert.equal(json(DB.inspect(SQL, DB.exportBytes(m))).version, 17);
+    assert.equal(json(DB.inspect(SQL, DB.exportBytes(m))).version, Number(SCHEMA_VERSION));
     m.close();
   }
-  part('Umstellung Schema 16 → 17: inspect vorher, alle @Datum zu >Datum, nicht in Code, «Geändert» und Verlauf bleiben, Zeitpunkt in meta, Index mit Frist und Erinnerungen');
+  part('Umstellung Schema 16 → 17 (heute 18): inspect vorher, alle @Datum zu >Datum, nicht in Code, «Geändert» und Verlauf bleiben, Zeitpunkt in meta, Index mit Frist und Erinnerungen');
 
   // ---------- Speichern, Index, Vorschau, Kalender ----------
   const d = DB.open(SQL, null);

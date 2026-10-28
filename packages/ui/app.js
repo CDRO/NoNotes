@@ -131,6 +131,11 @@
     qaScopeAll: $('#qaScopeAll'), qaLinesLabel: $('#qaLinesLabel'),
     mapTemplateBtn: $('#mapTemplateBtn'), newTemplateBtn: $('#newTemplateBtn'), templatesBtn: $('#templatesBtn'),
     childTemplateBtn: $('#childTemplateBtn'), insertTemplateBtn: $('#insertTemplateBtn'), saveTemplateBtn: $('#saveTemplateBtn'),
+    nodeLinkDialog: $('#nodeLinkDialog'), nodeLinkLead: $('#nodeLinkLead'), nodeLinkInput: $('#nodeLinkInput'), nodeLinkAreaRow: $('#nodeLinkAreaRow'),
+    nodeLinkArea: $('#nodeLinkArea'), nodeLinkError: $('#nodeLinkError'), nodeLinkSaveBtn: $('#nodeLinkSaveBtn'), nodeLinkRemoveBtn: $('#nodeLinkRemoveBtn'),
+    nodeLinkBtn: $('#nodeLinkBtn'), nodeLinkBar: $('#nodeLinkBar'), nodeLinkOpen: $('#nodeLinkOpen'), nodeLinkEditBtn: $('#nodeLinkEditBtn'),
+    detachDialog: $('#detachDialog'), detachName: $('#detachName'), detachLead: $('#detachLead'), detachError: $('#detachError'),
+    detachGoBtn: $('#detachGoBtn'), detachBtn: $('#detachBtn'),
     templateSaveDialog: $('#templateSaveDialog'), templateName: $('#templateName'), templateDescription: $('#templateDescription'),
     templateChildren: $('#templateChildren'), templateChildrenLabel: $('#templateChildrenLabel'), templateStripAnswers: $('#templateStripAnswers'),
     templateReopenTasks: $('#templateReopenTasks'), templateStripDates: $('#templateStripDates'), templateToday: $('#templateToday'), templateTodayLabel: $('#templateTodayLabel'), templateSaveFields: $('#templateSaveFields'),
@@ -405,6 +410,8 @@
       onSides: sides => keepSides(sides),
       onToggleCollapse: id => toggleCollapse(id),
       onContextMenu: (id, x, y) => showNodeMenu(id, x, y),
+      onOpenLink: id => openNodeLink(id),
+      linkTitle: url => nodeLinkTitle(url),
     });
 
     wireEvents();
@@ -1803,6 +1810,9 @@
     el.childBtn.hidden = locked;
     syncTemplateMenu(locked, trashed);
     el.archiveBtn.hidden = locked;
+    el.nodeLinkBtn.hidden = locked;
+    el.detachBtn.hidden = locked || !canDetach();
+    renderNodeLink(note, locked);
     for (const b of el.mdToolbar.querySelectorAll('button')) b.disabled = locked;
     el.headingSelect.disabled = locked;
     if (state.editorMode !== 'edit') await renderPreview();
@@ -2468,9 +2478,189 @@
         try { ok = await r.enter(target); } finally { state.navApplying = false; }
         if (ok === false) return;
       }
+      if (target.note == null) { // nur der Bereich (Link am Knoten, v3.2.0): die Hülle hat ihn geöffnet; ein Schritt im Verlauf
+        if (state.navReady) writeNav(true);
+        return;
+      }
       const note = await noteForNav(target.note);
       if (note) await openNote(note.id);
     });
+  }
+
+  // ---------- Link am Knoten (v3.2.0) ----------
+  // Jeder Knoten kann einen Link tragen: eine Webadresse, eine Mailadresse, einen Pfad auf eine Datei oder einen Ordner, eine Notiz oder
+  // einen Bereich dieser App. Die Mindmap zeigt ↗ im Knoten, ein Klick darauf öffnet das Ziel; der Editor zeigt ihn unter dem Titel.
+
+  /** Art eines Links: 'area' (Bereich dieser App), 'note' (Notiz dieser App), 'path', 'mail' oder 'web'. */
+  function nodeLinkKind(url) {
+    const target = routes().parse(url);
+    if (target) return target.note == null ? 'area' : 'note';
+    if (M.pathInfo(url)) return 'path';
+    if (/^mailto:/i.test(url)) return 'mail';
+    return 'web';
+  }
+
+  /** Name eines Bereichs dieser App aus seiner Kennung (lokal), sonst die Kennung. */
+  function areaName(id) {
+    const list = shell && Array.isArray(shell.areas) ? shell.areas : [];
+    const a = list.find(x => x.id === id || x.name === id);
+    return a ? a.name : id;
+  }
+
+  /** Kurzer Text zum Link (Tooltip in der Mindmap, Anzeige im Editor). */
+  function nodeLinkTitle(url) {
+    const target = routes().parse(url);
+    if (target && target.note == null) return t('Bereich „{name}“ öffnen', { name: areaName(target.area) });
+    if (target) return target.area ? t('Notiz in „{name}“ öffnen', { name: areaName(target.area) }) : t('Notiz öffnen: {link}', { link: url });
+    const info = M.pathInfo(url);
+    if (info) return (localFiles() ? t('Öffnen: {pfad}', { pfad: info.path }) : t('Pfad kopieren: {pfad}', { pfad: info.path }));
+    return t('Link öffnen: {link}', { link: url });
+  }
+
+  /** Öffnet den Link eines Knotens: Bereich oder Notiz in der App, Pfad (lokal öffnen, im Dienst kopieren), sonst im neuen Tab. */
+  async function openNodeLink(id) {
+    const note = await B.getNote(id).catch(() => null);
+    const url = note && note.link;
+    if (!url) return;
+    const target = routes().parse(url);
+    if (target) {
+      if (target.note == null && isEditorOpen()) await closeEditor(); // in einen anderen Bereich: die offene Notiz zuerst schliessen
+      await followNoteLink(url);
+      return;
+    }
+    const info = M.pathInfo(url);
+    if (info) {
+      if (localFiles()) window.open(info.href, '_blank', 'noopener');
+      else await copyPath(info.path);
+      return;
+    }
+    window.open(url, '_blank', 'noopener');
+  }
+
+  /** Dialog «Link am Knoten». */
+  async function openNodeLinkDialog(id) {
+    hideContextMenu();
+    closeNoteMenu();
+    if (denyWrite()) return;
+    const note = await B.getNote(id).catch(() => null);
+    if (!note || note.deleted_at) return;
+    state.nodeLinkFor = id;
+    el.nodeLinkLead.textContent = t('Knoten „{titel}“', { titel: note.title.trim() || t('Ohne Titel') });
+    el.nodeLinkInput.value = note.link || '';
+    el.nodeLinkRemoveBtn.hidden = !note.link;
+    el.nodeLinkError.hidden = true;
+    const others = (shell && Array.isArray(shell.areas) ? shell.areas : []).filter(a => !shell.area || a.id !== shell.area.id);
+    el.nodeLinkAreaRow.hidden = !(others.length && typeof shell.areaHref === 'function');
+    el.nodeLinkArea.replaceChildren(new Option('–', ''), ...others.map(a => new Option(a.name, a.id)));
+    showDialog(el.nodeLinkDialog);
+    el.nodeLinkInput.focus();
+    el.nodeLinkInput.select();
+  }
+
+  async function saveNodeLink(value) {
+    const id = state.nodeLinkFor;
+    if (id == null) return;
+    el.nodeLinkSaveBtn.disabled = true;
+    try {
+      await B.setNoteLink(id, value);
+      el.nodeLinkDialog.close();
+      markEdited();
+      state.mapDirty = true;
+      await renderAll();
+      setStatus(value && value.trim() ? t('Link hinterlegt') : t('Link entfernt'), 'saved');
+    } catch (e) {
+      el.nodeLinkError.textContent = errorText(e);
+      el.nodeLinkError.hidden = false;
+    } finally {
+      el.nodeLinkSaveBtn.disabled = false;
+    }
+  }
+
+  async function removeNodeLink(id) {
+    hideContextMenu();
+    if (denyWrite()) return;
+    await B.setNoteLink(id, '');
+    markEdited();
+    state.mapDirty = true;
+    await renderAll();
+    setStatus(t('Link entfernt'), 'saved');
+  }
+
+  /** Streifen unter dem Titel im Editor: das Ziel des Links und «Ändern…». */
+  function renderNodeLink(note, locked) {
+    const url = note && note.link;
+    el.nodeLinkBar.hidden = !url;
+    if (!url) return;
+    el.nodeLinkOpen.textContent = nodeLinkKind(url) === 'area' ? nodeLinkTitle(url) : url;
+    el.nodeLinkOpen.title = nodeLinkTitle(url);
+    el.nodeLinkOpen.setAttribute('href', url);
+    el.nodeLinkEditBtn.hidden = locked;
+  }
+
+  // ---------- In einen neuen Bereich auslösen (v3.2.0) ----------
+  // Nur, wo die Hülle es kann (shell.detachToArea: lokal ein neuer Bereich, im Dienst ein neuer Arbeitsbereich).
+
+  const canDetach = () => !!(shell && typeof shell.detachToArea === 'function') && !readOnly();
+
+  async function openDetachDialog(id) {
+    hideContextMenu();
+    closeNoteMenu();
+    if (denyWrite() || !canDetach()) return;
+    const note = await B.getNote(id).catch(() => null);
+    if (!note || note.deleted_at || note.archived_at) return;
+    const count = countBelow(await B.getTree({ archive: true }), id);
+    state.detachFor = id;
+    el.detachName.value = note.title.trim();
+    el.detachLead.textContent = count
+      ? tn('„{titel}“ mit {n} Unternotiz', '„{titel}“ mit {n} Unternotizen', count, { titel: note.title.trim() || t('Ohne Titel') })
+      : t('„{titel}“ hat keine Unternotizen: der neue Bereich beginnt leer.', { titel: note.title.trim() || t('Ohne Titel') });
+    el.detachError.hidden = true;
+    el.detachGoBtn.disabled = false;
+    showDialog(el.detachDialog);
+    el.detachName.focus();
+    el.detachName.select();
+  }
+
+  /** Zahl der Unternotizen (alle Ebenen, auch archivierte) aus den Zeilen von getTree. */
+  function countBelow(rows, id) {
+    const kids = new Map();
+    for (const r of rows) {
+      if (!kids.has(r.parent_id)) kids.set(r.parent_id, []);
+      kids.get(r.parent_id).push(r.id);
+    }
+    let n = 0;
+    const stack = [...(kids.get(id) || [])];
+    while (stack.length) { const x = stack.pop(); n++; stack.push(...(kids.get(x) || [])); }
+    return n;
+  }
+
+  async function detachNode() {
+    const id = state.detachFor;
+    const name = el.detachName.value.trim();
+    if (id == null) return;
+    if (!name) { el.detachError.textContent = t('Bitte einen Namen angeben.'); el.detachError.hidden = false; return; }
+    el.detachGoBtn.disabled = true;
+    setStatus(t('Wird ausgelöst…'), 'dirty');
+    try {
+      const r = await shell.detachToArea({ noteId: id, name });
+      if (!r) { el.detachGoBtn.disabled = false; setStatus(t('Nicht ausgelöst'), 'saved'); return; }
+      el.detachDialog.close();
+      state.mapDirty = true;
+      state.multi.delete(id);
+      await renderAll();
+      if (state.currentId != null) await renderEditor();
+      setStatus(tn('{n} Notiz in den neuen Bereich „{name}“ ausgelöst', '{n} Notizen in den neuen Bereich „{name}“ ausgelöst', r.moved, { name: r.area.name }), 'saved');
+      showBanner(t('Neuer Bereich „{name}“. Hier bleibt der Knoten mit einem Link dorthin; die ausgelösten Notizen liegen im Papierkorb.', { name: r.area.name }), [
+        { label: t('Bereich öffnen'), primary: true, onClick: () => { hideBanner(); followNoteLink(r.area.url); } },
+        { label: t('Schliessen'), onClick: () => hideBanner() },
+      ]);
+    } catch (e) {
+      console.error(e);
+      el.detachError.textContent = errorText(e);
+      el.detachError.hidden = false;
+      el.detachGoBtn.disabled = false;
+      setStatus(t('Auslösen fehlgeschlagen: {fehler}', { fehler: errorText(e) }), 'error');
+    }
   }
 
   // ---------- Ausfüllbare Platzhalter in Vorlagen (v2.12.0) ----------
@@ -2879,7 +3069,7 @@
     for (const text of texts) {
       for (const m of String(text || '').matchAll(/(?:https?|file):\/\/[^\s<>()\]]+/g)) {
         const target = r.parse(m[0].replace(/[.,;:!?'"]+$/, ''));
-        if (target && local(target)) ids.add(target.note);
+        if (target && target.note != null && local(target)) ids.add(target.note);
         if (ids.size > 50) break;
       }
     }
@@ -2888,7 +3078,7 @@
     return url => {
       const target = r.parse(url);
       if (!target) return null;
-      if (!local(target)) return { id: target.note, title: null, missing: false, area: target.area };
+      if (target.note == null || !local(target)) return { id: target.note, title: null, missing: false, area: target.area };
       const n = notes.get(target.note);
       return { id: target.note, title: n ? n.title.trim() || t('Ohne Titel') : null, missing: !n || !!n.deleted_at, area: null };
     };
@@ -5014,7 +5204,7 @@
 
   function anyDialogOpen() {
     return [el.exportDialog, el.printDialog, el.qaPrintDialog, el.taskPrintDialog, el.helpDialog, el.calDialog, el.pluginsDialog, el.historyDialog, el.conflictDialog,
-      el.templateSaveDialog, el.templatePickDialog, el.templatesDialog].some(d => d.open);
+      el.templateSaveDialog, el.templatePickDialog, el.templatesDialog, el.nodeLinkDialog, el.detachDialog].some(d => d.open);
   }
 
   function onQuestionSearchInput() {
@@ -5549,6 +5739,12 @@
     }
     if (templateStore() && canSaveTemplates()) items.push({ label: t('Als Vorlage speichern…'), action: () => openTemplateSave(id) });
     items.push(
+      ...(info && info.link
+        ? [{ label: t('Link öffnen'), title: nodeLinkTitle(info.link), action: () => { hideContextMenu(); openNodeLink(id); } },
+          { write: true, label: t('Link ändern…'), action: () => openNodeLinkDialog(id) },
+          { write: true, label: t('Link entfernen'), action: () => removeNodeLink(id) }]
+        : [{ write: true, label: t('Link hinterlegen…'), title: t('Am Knoten einen Link auf eine Webseite, eine Datei, eine Notiz oder einen Bereich hinterlegen'), action: () => openNodeLinkDialog(id) }]),
+      ...(canDetach() ? [{ write: true, label: t('In neuen Bereich auslösen…'), title: t('Diese Notiz wird die Wurzel eines neuen Bereichs, ihre Unternotizen ziehen mit'), action: () => openDetachDialog(id) }] : []),
       { label: t('Link kopieren'), action: () => copyNoteLink(id) },
       { label: t('Als Bild kopieren'), key: 'Ctrl+C', title: t('Den Weg von der Wurzel und diesen Ast als Bild in die Zwischenablage kopieren'), action: () => copyMapImage(state.multi.has(id) ? [...state.multi] : [id]) },
       { label: t('Drucken…'), action: () => openPrintDialog({ noteId: id, scope: 'subtree' }) },
@@ -5914,6 +6110,17 @@
     el.attachBtn.addEventListener('click', () => { el.attachInput.value = ''; el.attachInput.click(); });
     el.printBtn.addEventListener('click', () => openPrintDialog({ noteId: state.currentId }));
     el.copyLinkBtn.addEventListener('click', () => copyNoteLink(state.currentId));
+    // Link am Knoten und Auslösen in einen neuen Bereich (v3.2.0)
+    el.nodeLinkBtn.addEventListener('click', () => openNodeLinkDialog(state.currentId));
+    el.nodeLinkEditBtn.addEventListener('click', () => openNodeLinkDialog(state.currentId));
+    el.nodeLinkOpen.addEventListener('click', e => { e.preventDefault(); openNodeLink(state.currentId); });
+    el.nodeLinkSaveBtn.addEventListener('click', () => saveNodeLink(el.nodeLinkInput.value));
+    el.nodeLinkRemoveBtn.addEventListener('click', () => saveNodeLink(''));
+    el.nodeLinkInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); saveNodeLink(el.nodeLinkInput.value); } });
+    el.nodeLinkArea.addEventListener('change', () => { if (el.nodeLinkArea.value && shell.areaHref) el.nodeLinkInput.value = shell.areaHref(el.nodeLinkArea.value, null); });
+    el.detachBtn.addEventListener('click', () => openDetachDialog(state.currentId));
+    el.detachGoBtn.addEventListener('click', detachNode);
+    el.detachName.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); detachNode(); } });
     el.preview.addEventListener('contextmenu', onPreviewContextMenu);
     el.mapPrintBtn.addEventListener('click', () => openPrintDialog({}));
     el.mapCopyBtn.addEventListener('click', () => copyMapImage());

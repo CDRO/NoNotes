@@ -495,6 +495,13 @@ body:not(.view-list).editor-open #editorPane { max-width: 1000px; }
 .mm-toggle.mm-collapsed text { fill: var(--text); }
 .mm-toggle:hover circle { stroke: var(--accent); }
 
+.mm-linkicon { cursor: pointer; }
+.mm-linkicon circle { fill: var(--active); stroke: var(--accent); stroke-width: 1.2; }
+.mm-linkicon path { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.mm-linkicon:hover circle { fill: var(--accent); }
+.mm-linkicon:hover path { stroke: var(--accent-contrast); }
+.mm-root .mm-linkicon circle { fill: var(--accent-contrast); }
+
 .mm-badge circle { fill: var(--warn); }
 .mm-badge text { fill: #fff; font: 700 11px system-ui, sans-serif; pointer-events: none; }
 
@@ -1087,3 +1094,10 @@ body:not(.view-tasks) .tasks-view { display: none; }
 @media (max-width: 760px) {
   .template-pick { grid-template-columns: 1fr; }
 }
+
+/* Link am Knoten (v3.2.0) */
+.node-link-bar { display: flex; align-items: center; gap: 8px; margin: 2px 0 6px; font-size: 13px; min-width: 0; }
+.node-link-bar a { color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.node-link-icon { color: var(--accent); font-weight: 700; }
+.dialog-list { margin: 0; padding-left: 20px; font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+.dialog .form-error { color: var(--danger); }

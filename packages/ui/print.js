@@ -79,6 +79,7 @@
     parts.push(esc(t('Erstellt {erstellt} · Geändert {geaendert}', { erstellt: fmtDate(note.created_at), geaendert: fmtDate(note.updated_at) })) + (note.archived_at ? ' · ' + esc(t('Archiviert {datum}', { datum: fmtDate(note.archived_at) })) : ''));
     const tags = await backend.getTags(n.id);
     if (tags.length) parts.push(esc(t('Tags: {tags}', { tags: tags.join(', ') })));
+    if (note.link) parts.push(esc(t('Link: {link}', { link: note.link }))); // Link am Knoten (v3.2.0)
     return `<p class="print-meta">${parts.join(' · ')}</p>`;
   }
 

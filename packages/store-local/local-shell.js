@@ -956,8 +956,9 @@
         if (!R.samePage(u, new URL(global.location.href))) return null;
         const h = R.hashParams(u);
         const note = R.noteOf(h.get(NOTE_PARAM));
-        if (note == null) return null;
-        return { note, area: h.get(AREA_PARAM) || u.searchParams.get(AREA_PARAM) || null };
+        const area = h.get(AREA_PARAM) || u.searchParams.get(AREA_PARAM) || null;
+        if (note == null) return area ? { note: null, area } : null; // nur der Bereich (Link am Knoten, v3.2.0)
+        return { note, area };
       },
       /** Gehört das Ziel zum offenen Bereich? */
       isHere(target) {
@@ -974,6 +975,64 @@
         return switchArea(a.id);
       },
     };
+
+    /** Adresse einer Notiz (note null: nur der Bereich) in einem beliebigen Bereich dieses Browsers. */
+    function areaHref(areaId, note, title) {
+      const u = new URL(global.location.href);
+      u.search = '';
+      const h = new URLSearchParams();
+      h.set(AREA_PARAM, areaId);
+      if (note != null) h.set(NOTE_PARAM, R.segment(note, title));
+      u.hash = h.toString();
+      return u.href;
+    }
+
+    /** Knoten in einen neuen Bereich auslösen (v3.2.0): legt den Bereich an (Name und Wurzel wie angegeben), zieht die Unternotizen
+     *  samt Tags, Bildern und Verlauf dorthin um (Hauptäste), legt sie hier in den Papierkorb und hinterlegt am Knoten den Link auf den
+     *  neuen Bereich. Querverweise und Links auf Notizen werden in beiden Bereichen umgeschrieben (NoNotesMove). Bleibt im aktiven
+     *  Bereich. Ergebnis: { area: { id, name, url }, moved } oder null (abgebrochen). */
+    async function detachToArea({ noteId, name: rawName }) {
+      const Move = global.NoNotesMove;
+      const name = cleanName(rawName);
+      if (!name || !Move) return null;
+      if (host.ensureSaved && !(await host.ensureSaved())) return null;
+      if (s.external) { setStatus(t('Bitte zuerst entscheiden, welche Fassung gilt (Leiste oben).'), 'error'); return null; }
+      const pkg = DB.exportSubtree(s.db, noteId);
+      const area = await changeAreas(reg => {
+        const a = { id: Store.newAreaId(name, reg.list), name: uniqueName(name, reg.list), createdAt: new Date().toISOString() };
+        reg.list.push(a);
+        return a;
+      });
+      const sourceId = s.area.id;
+      const resolve = global.NoNotesLinks.resolver(pkg.titles);
+      const parse = url => {
+        const target = routes.parse(url);
+        if (!target) return null;
+        return { note: target.note, area: target.area && !routes.isHere(target) ? target.area : null };
+      };
+      const opts = maps => ({
+        notes: maps.notes, atts: maps.atts, resolve, parse,
+        source: (id, label) => areaHref(sourceId, id, label), target: (id, label) => areaHref(area.id, id, label),
+      });
+      const target = DB.open(s.SQL, null);
+      let bytes;
+      let notes;
+      try {
+        DB.setMapTitle(target, area.name);
+        const res = DB.importSubtree(target, pkg, (kind, v, maps) => (kind === 'body' ? Move.rewriteMoved(v, opts(maps)) : Move.rewriteLink(v, opts(maps), true)));
+        notes = new Map(res.notes);
+        bytes = DB.exportBytes(target);
+      } finally { target.close(); }
+      await Store.browserStore.saveDb(bytes, area.id);
+      const o = opts({ notes, atts: new Map() });
+      DB.finishDetach(s.db, noteId, pkg, areaHref(area.id, null),
+        (kind, v) => (kind === 'body' ? Move.rewriteStaying(v, o) : Move.rewriteLink(v, o, false)));
+      s.editedSinceStart = true;
+      scheduleSave();
+      await persistNow();
+      updateStorageInfo();
+      return { area: { id: area.id, name: area.name, url: areaHref(area.id, null) }, moved: pkg.notes.length };
+    }
 
     /** Adresse, die genau diesen Bereich öffnet (für Lesezeichen und Verknüpfungen auf dem Desktop). */
     function areaUrl() {
@@ -1140,6 +1199,8 @@
       get area() { return s.area ? { id: s.area.id, name: s.area.name } : null; },
       get areas() { return s.areas ? s.areas.list.map(a => ({ id: a.id, name: a.name })) : []; },
       switchArea,
+      detachToArea,
+      areaHref,
       areaUrl: () => (s.area ? areaUrl() : null),
       flush: persistNow,
       isDirty,

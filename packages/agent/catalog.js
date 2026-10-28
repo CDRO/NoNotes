@@ -327,7 +327,7 @@
     },
     {
       name: 'get_note', title: 'Read a note', readOnly: true,
-      description: 'A note in full: title, Markdown body, path in the tree, tags, timestamps, image attachments (names only), plus the questions, decisions and tasks found in it with their ids. Use updated_at as base_updated_at when you later change the note.',
+      description: 'A note in full: title, Markdown body, path in the tree, tags, link of the node (if any), timestamps, image attachments (names only), plus the questions, decisions and tasks found in it with their ids. Use updated_at as base_updated_at when you later change the note.',
       inputSchema: schema({ id: ID('Note id.') }, ['id']),
       async run(B, input) {
         const n = await liveNote(B, input.id, { trash: true });
@@ -339,11 +339,11 @@
         const ts = tasks.filter(t => t.note_id === n.id);
         const structured = {
           id: n.id, title: n.title, body: n.body, path: path.map(p => ({ id: p.id, title: p.title })), parent_id: n.parent_id, tags,
-          created_at: n.created_at, updated_at: n.updated_at, updated_by: n.updated_by || null, archived: !!n.archived_at, in_trash: !!n.deleted_at,
+          created_at: n.created_at, updated_at: n.updated_at, updated_by: n.updated_by || null, archived: !!n.archived_at, in_trash: !!n.deleted_at, link: n.link || null,
           attachments: attachments.map(a => ({ id: a.id, name: a.name, mime: a.mime, size: a.size })),
           questions: qs.map(questionItem), tasks: ts.map(taskItem),
         };
-        const meta = [`id ${n.id}`, path.length ? `path: ${pathText(path)}` : 'at the root', tags.length ? `tags: ${tags.join(', ')}` : null, `updated ${n.updated_at}`, n.archived_at ? 'archived' : null, n.deleted_at ? 'in trash' : null].filter(Boolean).join(' · ');
+        const meta = [`id ${n.id}`, path.length ? `path: ${pathText(path)}` : 'at the root', tags.length ? `tags: ${tags.join(', ')}` : null, n.link ? `link: ${n.link}` : null, `updated ${n.updated_at}`, n.archived_at ? 'archived' : null, n.deleted_at ? 'in trash' : null].filter(Boolean).join(' · ');
         const text = [`# ${n.title || '(untitled)'}`, `(${meta})`, '', n.body || '(empty)'];
         if (qs.length) text.push('', 'Questions and decisions in this note:', ...qs.map(questionLine));
         if (ts.length) text.push('', 'Tasks in this note:', ...ts.map(taskLine));

@@ -142,7 +142,7 @@
   /** Link auf eine Notiz dieser App (v2.7.0, ctx.noteLink): öffnet sich in der App; ohne eigenen Linktext steht der Titel der Notiz da. */
   function noteLinkHtml(nl, url, labelHtml, ctx) {
     const label = labelHtml || ctx.text(nl.title || url);
-    return `<a href="${escapeHtml(url)}" class="md-note${nl.missing ? ' missing' : ''}" data-note-id="${nl.id}"${nl.area ? ` data-area="${escapeHtml(nl.area)}"` : ''}` +
+    return `<a href="${escapeHtml(url)}" class="md-note${nl.missing ? ' missing' : ''}"${nl.id != null ? ` data-note-id="${nl.id}"` : ''}${nl.area ? ` data-area="${escapeHtml(nl.area)}"` : ''}` +
       `${nl.missing ? ` title="${escapeHtml(t('Diese Notiz gibt es nicht (mehr).'))}"` : ''}>${label}</a>`;
   }
 
