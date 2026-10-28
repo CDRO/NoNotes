@@ -38,6 +38,7 @@ Die Argumente entsprechen den Funktionen in `packages/data/db.js` ohne das erste
 | Einstellungen | `getMeta(key)`, `setMeta(key, value)`, `getMapTitle()`, `setMapTitle(title)` |
 | Notizen lesen | `getTree({ archive })` (Zeilen mit `updated_at` seit 2.9.0, mit `side` seit 3.0.0: Seite eines Hauptasts in der Mindmap, `'left'`, `'right'` oder `null`), `getNote(id)`, `getPath(id)`, `listNotes(query, { tag, scope })`, `countNotes({ archived })`, `findNoteByTitle(title)`, `titleIndex()`, `getLinks()` (Querverweise `[[Titel*]]` als `{ from_id, to_id, title }`, seit v1.8.0, Schema 13) |
 | Notizen ändern | `createNote(parentId)`, `updateNote(id, title, body, options)`, `renameNote(id, title, options)`, `setParent(id, parentId)`, `moveNote(id, anchorId, 'before' \| 'after')`, `moveAmongSiblings(id, direction)`, `setCollapsed(id, collapsed)`, `setAllCollapsed(collapsed)`, `setSides({ id: 'left' \| 'right' \| null })` (seit 3.0.0, Schema 17: Seiten der Hauptäste; `moveNote` neben einen Hauptast übernimmt dessen Seite, `setParent` unter eine Notiz löscht sie). Seit 3.0.0 schreibt `updateNote` ein `@Datum` am Zeilenende still zu `>Datum` um (`NoNotesDates.rewriteLegacy`) |
+| Link am Knoten | `setNoteLink(id, link)` (seit 3.2.0, Schema 18): hinterlegt am Knoten einen Link oder entfernt ihn (leer); erlaubt sind Webadressen (`www.…` wird zu `https://www.…`), `mailto:`, Pfade (`\\server\…`, `C:\…`, `file://`) und Adressen dieser App (`#…`, `/…`), sonst `INVALID_LINK`. Gibt den gespeicherten Link zurück; `getTree` und `getNote` tragen `link` |
 | Papierkorb | `deleteNote(id)`, `restoreNote(id)`, `purgeNote(id)`, `emptyTrash()`, `countTrash()` |
 | Archiv | `isArchived(id)`, `archiveCount(ids)`, `archiveNote(id)`, `unarchiveNote(id)`, `countArchived()` |
 | Tags | `getTags(noteId)`, `setTags(noteId, names)`, `listAllTags()` |
@@ -80,6 +81,7 @@ Ein Backend darf ein Feld `capabilities` tragen. Heute ausgewertet: `files: fals
 | `ARCHIVED_READONLY` | Archivierte Notizen sind schreibgeschützt (Wiederherstellen einer Fassung) |
 | `SUBTASKS_OPEN` | Eine Aufgabe lässt sich nicht abschliessen, solange Unteraufgaben offen sind (`open` = Anzahl) |
 | `NOTE_CONFLICT` | Die Notiz wurde inzwischen von jemand anderem geändert (`params.updated_at` = aktueller Stand); nichts wurde geschrieben |
+| `INVALID_LINK` | Der Link am Knoten ist keine erlaubte Adresse (seit 3.2.0) |
 
 Neue Kennungen gehören mit ihrem deutschen Text in `NoNotesBackend.ERRORS` (mit `N_()` markiert),
 damit sie übersetzt werden.
@@ -129,7 +131,7 @@ Neuladen), «Link kopieren» und erkennt eingefügte Links auf Notizen; das Form
 | --- | --- |
 | `current()` | `{ note, area? }` aus der jetzigen Adresse (`note` null: keine Notiz) |
 | `href({ note, title })` | volle Adresse für diese Notiz oder (`note` null) die Übersicht; andere Teile der Adresse bleiben |
-| `parse(url)` | `{ note, area? }`, wenn `url` eine Notiz dieser App ist (lokal: dieselbe Seite; im Dienst: derselbe Arbeitsbereich), sonst null |
+| `parse(url)` | `{ note, area? }`, wenn `url` eine Notiz dieser App ist (lokal: dieselbe Seite; im Dienst: derselbe Arbeitsbereich), sonst null. Seit 3.2.0 auch `{ note: null, area }` für einen Bereich ohne Notiz (Link am Knoten); `enter` wechselt dann nur hinein |
 | `enter(target)` | wahlweise: `Promise<boolean>`, macht die Daten passend, bevor der Kern die Notiz öffnet (lokal: Wechsel in den Bereich `target.area`); false bricht ab |
 
 Die lokale Hülle setzt die Notiz hinter das `#` (`#w=arbeit&n=42-…`, `pushState` geht auch unter `file://`, solange sich nur der Teil
@@ -137,3 +139,11 @@ nach `#` ändert). Der Dienst nutzt den Pfad (`/w/<id>/42-…`), damit auch ein 
 muss dafür die App unter diesen Pfaden ausliefern. Der Kern speichert vor jedem Schritt und legt `{ nn: { note, view, depth,
 fromOverview } }` in `history.state` (andere Felder dort bleiben). `host.replaceNav()` schreibt die
 Adresse neu (etwa nach einem Wechsel des Bereichs) und gibt false zurück, solange die Navigation noch nicht läuft.
+
+**`detachToArea({ noteId, name })`** (seit 3.2.0, wahlweise): «In neuen Bereich auslösen». Die Hülle legt einen neuen Bereich (im Dienst: einen
+Arbeitsbereich) mit dem Namen `name` an; der Knoten `noteId` wird dort die Wurzel, seine Unternotizen samt Tags, Bildern und Verlauf die
+Hauptäste. Im alten Bereich bleibt der Knoten mit einem Link auf den neuen, die Unternotizen kommen in den Papierkorb. Ergebnis
+`{ area: { id, name, url }, moved }` oder null (abgebrochen); Fehler kommen als abgelehntes Promise mit `code`. Ohne die Methode fehlt der
+Eintrag. Die Arbeit über zwei Datenbanken machen `NoNotesDB.exportSubtree(db, id)`, `importSubtree(db, paket, rewrite)` und
+`finishDetach(db, id, paket, link, rewrite)`; Texte, Bilder (`att:…`), `[[…]]` und Links auf Notizen schreibt `NoNotesMove` (packages/core/move.js)
+um, mit den Adressen, die die Hülle bildet. Die lokale Hülle bietet dazu `areaHref(bereich, notiz, titel)` (Adresse in einen anderen Bereich).

@@ -496,6 +496,21 @@ Mit Leerzeichen: <\\srv01\Projekte\Angebot 2026.docx> oder [Angebot](<\\srv01\Pr
 - Der Text bleibt, wie er geschrieben ist (Export, Agenten). Andere Markdown-Programme zeigen einen Netzwerkpfad mit nur einem `\` am Anfang,
   weil sie `\\` als maskierten Backslash lesen.
 
+### Link am Knoten und neuer Bereich (seit 3.2.0)
+
+- **Link am Knoten:** Rechtsklick auf einen Knoten → **Link hinterlegen…** (oder *Notiz → Link am Knoten…*). Ziel ist eine Webadresse,
+  eine Mailadresse (`mailto:`), ein Pfad auf eine Datei oder einen Ordner, ein Link auf eine Notiz (*Link kopieren*) oder ein anderer
+  Bereich (Auswahl im Dialog). Der Knoten zeigt ↗; ein Klick darauf öffnet das Ziel, ein Doppelklick auf den Knoten wie immer den Editor.
+  Der Link steht in einem eigenen Feld, nicht im Text; im Editor erscheint er unter dem Titel, beim Drucken und im Export als eigene Zeile.
+- **In neuen Bereich auslösen…** (Rechtsklick auf einen Knoten): Der Knoten wird die Wurzel eines neuen Bereichs (im Dienst: eines neuen
+  Arbeitsbereichs), seine Unternotizen werden dessen Hauptäste, samt Tags, Bildern, Fragen, Entscheiden, Aufgaben, Archiv und Verlauf. Im
+  alten Bereich bleibt der Knoten mit seinem eigenen Text und einem Link auf den neuen Bereich; die Unternotizen liegen dort im Papierkorb
+  und lassen sich zurückholen.
+- **Verweise:** `[[…]]` und Links zwischen Notizen, die zusammen umziehen, bleiben. Zeigt ein Verweis aus dem neuen Bereich auf eine Notiz,
+  die geblieben ist (oder umgekehrt), wird er zum Link in den anderen Bereich. Text in Code bleibt, wie er ist.
+- **Im Dienst** kann das nur, wer den Arbeitsbereich besitzt. Der neue Arbeitsbereich hat dieselben Mitglieder mit denselben Rollen, den
+  kostenlosen Plan und zählt zur Zahl der kostenlosen Arbeitsbereiche.
+
 ### Termine, Frist und Erinnerungen (seit 3.0.0)
 
 Ein Termin steht am Ende einer Aufgabe, einer Frage oder eines Entscheids, hinter `>` mit einem Leerzeichen davor:

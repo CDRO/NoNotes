@@ -2610,6 +2610,130 @@ async function runDatesV3(browser, part, step) {
   part('Programm: eine Datei von v2.x wird gelesen; vor dem ersten Schreiben liegt der alte Stand als …-vor-3.0.0.sqlite daneben');
 }
 
+async function runNodeLinks(browser, part, step) {
+  const sandbox = { console };
+  sandbox.window = sandbox;
+  const context = vm.createContext(sandbox);
+  for (const f of ['packages/core/i18n.js', 'packages/core/history.js', 'packages/core/dates.js', 'packages/core/questions.js', 'packages/core/tasks.js',
+    'packages/core/links.js', 'packages/core/backend.js', 'packages/core/merge.js', 'packages/core/move.js', 'packages/data/db.js']) {
+    vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
+  }
+  const SQL = await require(path.join(ROOT, 'vendor', 'sql.js', 'sql-asm.js'))();
+  const DB = sandbox.NoNotesDB;
+  const Move = sandbox.NoNotesMove;
+  const Links = sandbox.NoNotesLinks;
+  const json = v => JSON.parse(JSON.stringify(v));
+
+  // ---------- Link am Knoten (Schema 18) ----------
+  {
+    const old = new SQL.Database();
+    old.exec(`CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL, parent_id INTEGER, sort_order INTEGER NOT NULL DEFAULT 0, collapsed INTEGER NOT NULL DEFAULT 0, deleted_at TEXT, archived_at TEXT,
+      updated_by TEXT, side TEXT); CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      INSERT INTO meta VALUES ('schema_version', '17'); INSERT INTO notes (title, created_at, updated_at) VALUES ('Alt', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');`);
+    const info = {};
+    const db = DB.open(SQL, old.export(), info);
+    assert.equal(info.upgradedFrom, 17);
+    assert.equal(DB.getMeta(db, 'schema_version'), SCHEMA_VERSION);
+    assert.equal(DB.getTree(db)[0].link, null, 'Spalte link kommt dazu, leer');
+    const ok = {
+      'https://example.ch/a?b=1': 'https://example.ch/a?b=1', 'www.example.ch': 'https://www.example.ch', 'mailto:anna@example.ch': 'mailto:anna@example.ch',
+      '\\\\server\\Projekte\\Angebot 2026.docx': '\\\\server\\Projekte\\Angebot 2026.docx', 'C:\\Daten\\Plan.xlsx': 'C:\\Daten\\Plan.xlsx',
+      'file:///C:/Daten/': 'file:///C:/Daten/', '#w=projekt': '#w=projekt', '/w/abc123/42-plan': '/w/abc123/42-plan', '  https://x.ch  ': 'https://x.ch',
+    };
+    for (const [input, want] of Object.entries(ok)) assert.equal(DB.setNoteLink(db, 1, input), want, input);
+    assert.equal(DB.getNote(db, 1).link, 'https://x.ch');
+    for (const bad of ['javascript:alert(1)', 'data:text/html,x', 'ftp://x', '//evil.example', 'nur text', 'https://a b', 'https://x\nhttps://y', 'x'.repeat(2001)]) {
+      assert.throws(() => DB.setNoteLink(db, 1, bad), e => e.code === 'INVALID_LINK', bad);
+    }
+    assert.equal(DB.setNoteLink(db, 1, ''), null, 'leer entfernt den Link');
+    assert.equal(DB.getNote(db, 1).link, null);
+    DB.archiveNote(db, 1);
+    assert.throws(() => DB.setNoteLink(db, 1, 'https://x.ch'), e => e.code === 'ARCHIVED_READONLY');
+    assert.throws(() => DB.setNoteLink(db, 99, 'https://x.ch'), e => e.code === 'NOTE_NOT_FOUND');
+    assert.ok(sandbox.NoNotesBackend.METHODS.includes('setNoteLink') && sandbox.NoNotesBackend.MUTATING.has('setNoteLink'));
+    db.close();
+  }
+  part('Link am Knoten: Schema 17 → 18 (Spalte link), erlaubte Ziele (Web, www., mailto, Pfade, Bereich, Notiz), abgelehnte (javascript:, data:, //…, Leerzeichen, zu lang), leer entfernt, Archiv schreibgeschützt');
+
+  // ---------- Texte umschreiben (NoNotesMove) ----------
+  {
+    const notes = new Map([[3, 1], [4, 2]]);
+    const atts = new Map([[7, 1]]);
+    const titles = Links.resolver([['budget', 10], ['heizung', 3], ['offerte', 4], ['projekt', 2]]);
+    const parse = url => { const m = /^#(?:w=([^&]+)&)?n=(\d+)/.exec(url) || /^#w=([^&]+)$/.exec(url); if (!m) return null; return m[2] ? { note: Number(m[2]), area: m[1] && m[1] !== 'alt' ? m[1] : null } : { note: null, area: m[1] }; };
+    const o = { notes, atts, resolve: titles, parse, source: (id, l) => `#w=alt&n=${id}`, target: (id, l) => `#w=neu&n=${id}` };
+    const moved = 'Kosten [[Budget]], Teil [[Heizung]] und [[Offerte#4*]], offen [[Gibts nicht]].\n![Plan](att:7) ![Fremd](att:9)\n[Link](#n=10) und [hier](#w=alt&n=3) und [anderswo](#w=x&n=3)\n`[[Budget]]` im Code\n```\n[[Budget]]\n```';
+    assert.equal(Move.rewriteMoved(moved, o),
+      'Kosten [Budget](#w=alt&n=10), Teil [[Heizung]] und [[Offerte#2*]], offen [[Gibts nicht]].\n![Plan](att:1) ![Fremd](att:9)\n[Link](#w=alt&n=10) und [hier](#w=neu&n=1) und [anderswo](#w=x&n=3)\n`[[Budget]]` im Code\n```\n[[Budget]]\n```');
+    assert.equal(Move.rewriteStaying('Siehe [[Heizung]], [[Budget]] und [Offerte](#n=4), Bereich #w=neu', o),
+      'Siehe [Heizung](#w=neu&n=1), [[Budget]] und [Offerte](#w=neu&n=2), Bereich #w=neu');
+    assert.equal(Move.rewriteMoved('[[Titel [x]]]', o), '[[Titel [x]]]', 'Klammern im Text stören nicht');
+    assert.equal(Move.rewriteStaying('?!```\nEntscheid zu [[Heizung]]\n```', o), '?!```\nEntscheid zu [Heizung](#w=neu&n=1)\n```', 'ein Entscheid-Block ist kein Code');
+    assert.equal(Move.rewriteLink('#n=4', o, false), '#w=neu&n=2', 'Link am Knoten auf eine mitgenommene Notiz');
+    assert.equal(Move.rewriteLink('#n=10', o, true), '#w=alt&n=10', 'aus dem neuen Bereich zurück in den alten');
+    assert.equal(Move.rewriteLink('https://example.ch', o, true), 'https://example.ch');
+  }
+  part('Umschreiben beim Auslösen: [[…]] bleibt, wenn das Ziel mitgeht (Nummer neu), sonst Link in den anderen Bereich; Bilder att:…, Links auf Notizen, Code bleibt');
+
+  // ---------- Auslösen zwischen zwei Datenbanken ----------
+  {
+    const src = DB.open(SQL, null);
+    const mk = (parent, title, body) => { const id = DB.createNote(src, parent); DB.updateNote(src, id, title, body || ''); return id; };
+    const budget = mk(null, 'Budget', 'Siehe [[Heizung]].');
+    const proj = mk(null, 'Projekt', 'Eigener Text bleibt\n- [ ] Aufgabe des Knotens');
+    const heiz = mk(proj, 'Heizung', 'Kosten [[Budget]]\n- [ ] Offerte einholen @anna >30.10.2026\n? Reicht die Leistung?');
+    const off = mk(heiz, 'Offerte', 'Erste Fassung');
+    DB.updateNote(src, off, 'Offerte', 'Zweite Fassung mit [[Heizung]]', { newVersion: true });
+    const att = DB.addAttachment(src, off, { name: 'plan.png', mime: 'image/png', bytes: new Uint8Array([1, 2, 3]) });
+    DB.updateNote(src, off, 'Offerte', `Zweite Fassung mit [[Heizung]] ![Plan](att:${att})`, { newVersion: true });
+    DB.setTags(src, heiz, ['farbe:rot', 'wichtig']);
+    const alt = mk(heiz, 'Alt', 'archiviert');
+    DB.archiveNote(src, alt);
+    const geloescht = mk(heiz, 'Weg', 'im Papierkorb');
+    DB.deleteNote(src, geloescht);
+    DB.setNoteLink(src, off, 'https://example.ch/offerte');
+
+    const pkg = DB.exportSubtree(src, proj);
+    assert.deepEqual(json(pkg.notes.map(n => [n.title, n.parent_id])), [['Heizung', null], ['Offerte', heiz], ['Alt', heiz]], 'Tiefensuche, ohne Papierkorb, mit Archiv; Kinder des Knotens werden Hauptäste');
+    const resolve = Links.resolver(pkg.titles);
+    const parse = url => { const m = /^#(?:w=([^&]+)&)?n=(\d+)/.exec(url); return m ? { note: Number(m[2]), area: m[1] && m[1] !== 'alt' ? m[1] : null } : null; };
+    const opts = maps => ({ notes: maps.notes, atts: maps.atts, resolve, parse, source: id => `#w=alt&n=${id}`, target: id => `#w=neu&n=${id}` });
+    const dst = DB.open(SQL, null);
+    DB.setMapTitle(dst, 'Projekt');
+    const res = DB.importSubtree(dst, pkg, (kind, v, maps) => (kind === 'body' ? Move.rewriteMoved(v, opts(maps)) : Move.rewriteLink(v, opts(maps), true)));
+    const map = new Map(res.notes);
+    const tree = json(DB.getTree(dst, { archive: true }));
+    assert.deepEqual(tree.map(r => [r.title, r.parent_id == null ? null : tree.find(x => x.id === r.parent_id).title, !!r.archived_at]).sort(),
+      [['Alt', 'Heizung', true], ['Heizung', null, false], ['Offerte', 'Heizung', false]], 'Hauptast Heizung, darunter Offerte und das archivierte Alt');
+    const heizNeu = map.get(heiz), offNeu = map.get(off);
+    assert.equal(DB.getNote(dst, heizNeu).body.split('\n')[0], 'Kosten [Budget](#w=alt&n=' + budget + ')', 'Verweis auf eine Notiz, die bleibt, wird zum Link');
+    assert.equal(DB.getNote(dst, offNeu).body, `Zweite Fassung mit [[Heizung]] ![Plan](att:${new Map(res.atts).get(att)})`);
+    assert.equal(DB.getNote(dst, offNeu).link, 'https://example.ch/offerte', 'der Link am Knoten zieht mit');
+    assert.deepEqual(json(DB.getTags(dst, heizNeu)), ['farbe:rot', 'wichtig']);
+    assert.deepEqual(json(DB.getAttachment(dst, new Map(res.atts).get(att)).data), json(new Uint8Array([1, 2, 3])));
+    assert.deepEqual(json(DB.listTasks(dst, { status: 'all' })).map(t => t.text), ['Offerte einholen @anna']);
+    assert.deepEqual(json(DB.listQuestions(dst, {})).map(q => q.text), ['Reicht die Leistung?']);
+    const versions = json(DB.listHistory(dst, offNeu));
+    assert.ok(versions.length >= 2, 'Verlauf zieht mit');
+    assert.equal(DB.getHistoryVersion(dst, offNeu, versions[versions.length - 1].id).body, 'Erste Fassung', 'die älteste Fassung lässt sich weiter herstellen');
+    assert.equal(DB.getNote(dst, offNeu).created_at, DB.getNote(src, off).created_at, '«Erstellt» bleibt');
+
+    const moved = DB.finishDetach(src, proj, pkg, '#w=neu', (kind, v) => (kind === 'body' ? Move.rewriteStaying(v, opts({ notes: map, atts: new Map() })) : Move.rewriteLink(v, opts({ notes: map, atts: new Map() }), false)));
+    assert.equal(moved, 3);
+    assert.deepEqual(json(DB.getTree(src)).map(r => [r.title, r.link]), [['Budget', null], ['Projekt', '#w=neu']], 'hier bleibt der Knoten mit dem Link');
+    assert.equal(DB.getNote(src, proj).body, 'Eigener Text bleibt\n- [ ] Aufgabe des Knotens', 'sein Text bleibt');
+    assert.equal(DB.getNote(src, budget).body, `Siehe [Heizung](#w=neu&n=${heizNeu}).`, 'Verweis auf eine ausgelöste Notiz wird zum Link in den neuen Bereich');
+    assert.equal(DB.countTrash(src), 4, 'die drei ausgelösten und die schon gelöschte im Papierkorb');
+    assert.equal(DB.getNote(src, off).parent_id, heiz, 'im Papierkorb mit Platz im Baum');
+    DB.restoreNote(src, heiz);
+    assert.equal(DB.getNote(src, heiz).parent_id, proj, 'Zurückholen bringt die Notiz unter den Knoten');
+    src.close();
+    dst.close();
+  }
+  part('Auslösen: Unterbaum samt Tags, Bildern, Archiv, Fragen, Aufgaben, Verlauf und Link in eine andere Datenbank; hier Papierkorb mit Platz im Baum, Link am Knoten, Verweise umgeschrieben');
+}
+
 suite('Kern-Test', [
   { name: 'Zusammenführen: Myers-Vergleich, Dreiwege-Zusammenführung mit Zufallsdaten, Konflikte, Cursor', run: runMerge },
   { name: 'Datenbank: Standardschema, Angleichen alter Dateien (Schema 1, 11, 12, 13), Konflikterkennung, Autor im Verlauf, Querverweise, Entscheide und Personen', run: runDb },
@@ -2624,5 +2748,6 @@ suite('Kern-Test', [
   { name: 'Agenten: Werkzeugkatalog (Notizen, Fragen, Entscheide, Aufgaben, Verlauf, Archiv, Papierkorb, Lesemodus, Ressourcen) und MCP-Protokoll aller Fassungen', run: runAgent },
   { name: 'Programm für den eigenen Rechner: Einträge für Claude Code und andere, Datei, MCP über die Standardeingabe, Änderungen von aussen, zwei Prozesse mit Sperre, Lesemodus', run: runAgentProgram },
   { name: 'Termine mit «>» (v3.0.0): Schreibweise, Frist und Erinnerungen, Umstellung alter Dateien, Speichern, Index, Vorschau, Kalender, Agenten, Programm mit Sicherung, Seiten der Mindmap', run: runDatesV3 },
+  { name: 'Link am Knoten und Auslösen in einen neuen Bereich (v3.2.0): Schema 18, Prüfung der Links, Umschreiben, Umzug zwischen zwei Datenbanken', run: runNodeLinks },
   { name: 'Release-Notizen: Pflicht ab v2.12.0, Prüfung, Beschreibung für GitHub, Screenshots aus einem Drehbuch, alle Ordner im Repository', run: runReleaseNotes },
 ]);

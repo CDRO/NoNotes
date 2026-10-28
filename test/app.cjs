@@ -15,7 +15,7 @@ const DIST = path.join(ROOT, 'dist', 'NoNotes');
 const APP_URL = 'file://' + path.join(DIST, 'index.html');
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 const READY = 'body[data-ready="true"]';
-const SCHEMA_VERSION = '17'; // muss zu packages/data/db.js passen
+const SCHEMA_VERSION = '18'; // muss zu packages/data/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
 // ============================================================
@@ -2161,7 +2161,8 @@ async function runBackend(browser, part, step) {
     const miss = C.missing(B);
     if (miss.length) fail('Methoden fehlen: ' + miss.join(', '));
     // Jede Funktion in db.js, die mit db als erstem Argument arbeitet, ist Teil des Vertrags oder bewusst intern.
-    const INTERNAL = new Set(['open', 'exportBytes', 'configure', 'normalizeTag', 'syncQuestions', 'syncTasks', 'syncLinks', 'subtreeNoteIds', 'inspect']);
+    const INTERNAL = new Set(['open', 'exportBytes', 'configure', 'normalizeTag', 'syncQuestions', 'syncTasks', 'syncLinks', 'subtreeNoteIds', 'inspect',
+      'normalizeLink', 'exportSubtree', 'importSubtree', 'finishDetach']); // die letzten drei arbeiten über zwei Datenbanken (Auslösen, v3.2.0)
     for (const [name, fn] of Object.entries(DB)) {
       if (typeof fn !== 'function' || INTERNAL.has(name)) continue;
       if (!C.METHODS.includes(name)) fail(`db.js-Funktion ${name} ist weder im Vertrag noch als intern vermerkt`);
@@ -2206,6 +2207,8 @@ async function runBackend(browser, part, step) {
     await call('clearHistory', a);
     window.Date = RealDate;
     await call('setTags', a, ['x', 'y']);
+    if ((await call('setNoteLink', b, 'www.example.ch')) !== 'https://www.example.ch') throw new Error('setNoteLink: Link nicht vereinheitlicht');
+    await call('setNoteLink', b, '');
     await call('setMeta', 'testkey', 'wert');
     await call('setMapTitle', 'Karte');
     await call('getMeta', 'testkey');
@@ -3077,10 +3080,113 @@ async function runPaths(browser, part, step) {
   }
 }
 
+async function runNodeLinkUi(browser, part, step) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'de-CH' });
+  await ctx.addInitScript(() => {
+    window.__opened = [];
+    window.open = (url, target) => { window.__opened.push(url); return null; };
+  });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  await page.goto(APP_URL);
+  await page.waitForSelector(READY, { timeout: 30000 });
+  const node = title => page.locator(`g.mm-node:has(> text:text-is("${title}"))`);
+  const icon = title => page.locator(`g.mm-node:has(> text:text-is("${title}")) .mm-linkicon`);
+  const add = async (title, parent) => {
+    if (parent) await node(parent).click(); else await page.click('#mindmap', { position: { x: 30, y: 700 } });
+    await page.keyboard.press('Tab');
+    await page.waitForSelector('#renameInput:not([hidden])');
+    await page.keyboard.type(title);
+    await page.keyboard.press('Enter');
+    await node(title).waitFor();
+  };
+  const menu = async (title, label) => {
+    await node(title).click({ button: 'right' });
+    await page.waitForSelector('#contextMenu:not([hidden])');
+    await page.click(`#contextMenu button:has-text("${label}")`);
+  };
+  try {
+    await add('Projekt');
+    await add('Heizung', 'Projekt');
+    await add('Offerte', 'Heizung');
+    await add('Budget');
+
+    // Link hinterlegen, prüfen, öffnen
+    await menu('Budget', 'Link hinterlegen…');
+    await page.waitForSelector('#nodeLinkDialog[open]');
+    await page.fill('#nodeLinkInput', 'javascript:alert(1)');
+    await page.click('#nodeLinkSaveBtn');
+    await page.waitForSelector('#nodeLinkError:not([hidden])');
+    assert.match(await page.textContent('#nodeLinkError'), /Webadressen/);
+    await page.fill('#nodeLinkInput', 'www.example.ch/plan');
+    await page.keyboard.press('Enter');
+    await icon('Budget').waitFor();
+    assert.ok(!(await page.evaluate(() => document.getElementById('nodeLinkDialog').open)), 'Dialog zu');
+    assert.equal(await icon('Budget').locator('title').textContent(), 'Link öffnen: https://www.example.ch/plan');
+    await icon('Budget').click();
+    await page.waitForFunction(() => window.__opened.length === 1);
+    assert.deepEqual(await page.evaluate(() => window.__opened), ['https://www.example.ch/plan'], 'Klick aufs Symbol öffnet die Webseite');
+    assert.ok(!(await page.evaluate(() => document.body.classList.contains('editor-open'))), 'der Klick öffnet nicht den Editor');
+    await node('Budget').dblclick();
+    await page.waitForFunction(() => document.body.classList.contains('editor-open'));
+    await page.waitForSelector('#nodeLinkBar:not([hidden])');
+    assert.equal(await page.textContent('#nodeLinkOpen'), 'https://www.example.ch/plan', 'Streifen unter dem Titel');
+    await page.click('#nodeLinkEditBtn');
+    await page.waitForSelector('#nodeLinkDialog[open]');
+    await page.fill('#nodeLinkInput', '\\\\server\\Projekte\\Budget 2027.xlsx');
+    await page.click('#nodeLinkSaveBtn');
+    await page.waitForFunction(() => document.getElementById('nodeLinkOpen').textContent.includes('Budget 2027.xlsx'));
+    await page.click('#backBtn');
+    await page.waitForSelector('body:not(.editor-open)');
+    part('Link am Knoten: hinterlegen per Rechtsklick, ungültige Ziele abgewiesen, Symbol im Knoten öffnet das Ziel (nicht den Editor), Streifen im Editor, ändern');
+
+    // Auslösen
+    await menu('Projekt', 'In neuen Bereich auslösen…');
+    await page.waitForSelector('#detachDialog[open]');
+    assert.equal(await page.inputValue('#detachName'), 'Projekt');
+    assert.match(await page.textContent('#detachLead'), /2 Unternotizen/);
+    await page.fill('#detachName', 'Projekt Süd');
+    await page.click('#detachGoBtn');
+    await page.waitForSelector('#banner:not([hidden])');
+    assert.match(await page.textContent('#banner'), /Neuer Bereich „Projekt Süd“/);
+    assert.equal(await node('Heizung').count(), 0, 'Unternotizen weg');
+    await icon('Projekt').waitFor();
+    assert.equal(await icon('Projekt').locator('title').textContent(), 'Bereich „Projekt Süd“ öffnen');
+    await page.click('#viewListBtn');
+    await page.selectOption('#listScope', 'trash');
+    await page.waitForFunction(() => document.querySelectorAll('#list li[data-id]').length === 2);
+    await page.selectOption('#listScope', 'live');
+    await page.click('#viewMapBtn');
+    await page.waitForSelector('body.view-map');
+    part('Auslösen: Dialog mit Name und Zahl der Unternotizen, Hinweis mit «Bereich öffnen», hier bleibt der Knoten mit Link, die Unternotizen im Papierkorb');
+
+    // In den neuen Bereich und zurück
+    await icon('Projekt').click();
+    await page.waitForFunction(() => /(^|&|#)w=projekt-sued(&|$)/.test(location.hash));
+    await node('Heizung').waitFor();
+    assert.equal(await page.locator('g.mm-root text').first().textContent(), 'Projekt Süd', 'Wurzel = Name des Bereichs');
+    await node('Offerte').waitFor();
+    await page.goBack();
+    await page.waitForFunction(() => /(^|&|#)w=main(&|$)/.test(location.hash));
+    await icon('Projekt').waitFor();
+    await page.reload();
+    await page.waitForSelector(READY, { timeout: 30000 });
+    await icon('Projekt').waitFor();
+    assert.equal(await node('Heizung').count(), 0, 'nach dem Neuladen gespeichert');
+    assert.deepEqual(errors, []);
+    part('Link auf den Bereich: Klick wechselt hinein (Wurzel, Hauptäste), Zurück kehrt in den alten Bereich zurück, alles gespeichert');
+  } finally {
+    await ctx.close();
+  }
+}
+
 suite('App-Test', [
   { name: null, run: runSmoke }, // druckt seine Gruppen selbst
   { name: 'Bereiche: anlegen, wechseln (Statusleiste, Menü, Alt+1 … 9), Adresse #w=… und ?w=…, Weiterleitung eines Webservers, Datei und Hauptfarbe je Bereich, umbenennen, entfernen, Datei als Bereich, zwei Tabs', run: runAreas },
   { name: 'Navigation: Zurück und Vor, Adresse mit Notiz, Neuladen, Pfeil im Editor, Ansichten, Link kopieren, eingefügte Links, Umbenennen, direkter Einstieg, fehlende Notiz, anderer Bereich', run: runNavigation },
   { name: 'Pfade auf Dateien und Ordner: Netz, Laufwerk, file://, Leerzeichen, Bilder, neuer Tab, Pfad kopieren, Einfügen aus dem Explorer, über eine Webseite', run: runPaths },
+  { name: 'Link am Knoten und Auslösen in einen neuen Bereich (v3.2.0): Dialog, Symbol, Editor, Papierkorb, Wechsel und Zurück', run: runNodeLinkUi },
   { name: 'Backend-Vertrag: Methodenliste, JSON-sichere Rückgaben, Änderungsmeldung, Fehlerkennungen', run: runBackend },
 ], { browser: true });

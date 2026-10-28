@@ -25,7 +25,7 @@ Namen und Beschreibungen sind Englisch, weil Agenten sie lesen. Inhalte bleiben,
 | `get_overview` | Titel der Karte, Zahl der Notizen, offene Fragen, Entscheide und Aufgaben (mit Überfälligem), Tags, Personen |
 | `list_notes` | der Baum oder ein Teilbaum als eingerückte Liste mit Kennungen und Marken (offene Fragen, Entscheide, Aufgaben) |
 | `search_notes` | Volltext über Titel und Text, wahlweise Tag; `scope` `archive` oder `trash`; ohne Suchbegriff die zuletzt geänderten Notizen |
-| `get_note` | Titel, Text, Pfad, Tags, Zeitstempel, Bilder (nur Namen), dazu die Fragen, Entscheide und Aufgaben der Notiz mit ihren Kennungen |
+| `get_note` | Titel, Text, Pfad, Tags, Link am Knoten (seit 3.2.0), Zeitstempel, Bilder (nur Namen), dazu die Fragen, Entscheide und Aufgaben der Notiz mit ihren Kennungen |
 | `create_note` | neue Notiz mit Titel, Text und Tags, unter einer Notiz oder an der Wurzel |
 | `update_note` | Titel und/oder Text ersetzen, mit `base_updated_at` gegen gleichzeitige Änderungen |
 | `append_to_note` | Text anhängen (der sicherste Schreibweg) |
