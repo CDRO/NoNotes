@@ -1903,6 +1903,212 @@ async function runTables(browser, part, step) {
   part('Angaben von Erweiterungen: Tabelle, Kopf, Spalten, Zeilen, Felder (Reihenfolge), Format aus der Datei, Klassen und Werte geprüft, Fehler schaden nicht');
 }
 
+async function runGridTables(browser, part, step) {
+  globalThis.window = globalThis;
+  for (const f of ['i18n.js', 'dates.js', 'questions.js', 'embeds.js', 'tables.js', 'tasks.js', 'markdown.js']) require(path.join(__dirname, '..', 'packages', 'core', f));
+  const Tb = globalThis.NoNotesTables;
+  const M = globalThis.NoNotesMarkdown;
+  const Tk = globalThis.NoNotesTasks;
+  const Q = globalThis.NoNotesQuestions;
+  const sel = r => r.text.slice(r.selStart, r.selEnd);
+  const caretLine = r => r.text.slice(0, r.selStart).split('\n').length - 1;
+  const json = v => JSON.parse(JSON.stringify(v));
+  const posOf = (text, line, col) => text.split('\n').slice(0, line).join('\n').length + (line ? 1 : 0) + col;
+
+  // ---------- Lesen ----------
+  const user = [
+    '+ -------- + -------- + -------- + -------- +',
+    '| Spalte 1 | Spalte 2 | Spalte 3 | Spalte 4 |',
+    '| -------- | -------- | -------- | -------- |',
+    '| Zeile 1  (4 Spalten breit)                |',
+    '+ ----------------------------------------- +',
+    '| Zeile 2,      |          |          |          |',
+    '| über 2 Zeilen |          |          |          |',
+    '+ ----------------------------------------- +',
+    'danach',
+  ];
+  let t = Tb.parseAt(user, 0);
+  assert.deepEqual(json({ kind: t.kind, cols: t.cols, end: t.end, header: t.header, rows: t.rows, spans: t.spans }), {
+    kind: 'grid', cols: 4, end: 8, header: ['Spalte 1', 'Spalte 2', 'Spalte 3', 'Spalte 4'],
+    rows: [['Zeile 1  (4 Spalten breit)', '', '', ''], ['Zeile 2,<br>über 2 Zeilen', '', '', '']],
+    spans: { h: [1, 1, 1, 1], rows: [[4, 0, 0, 0], [1, 1, 1, 1]] },
+  }, 'Schreibweise aus der Anfrage: Leerzeichen im Rahmen, «| --- |» als Trennlinie der Titelzeile, Feld über vier Spalten, verrutschte «|»');
+  assert.equal(Tb.hasGrid(user.join('\n')), true, 'hasGrid: die Schreibweise aus der Anfrage');
+  assert.equal(Tb.hasGrid('| a | b |\n| --- | --- |\n| 1 | 2 |'), false, 'hasGrid: einfache Tabelle');
+  assert.equal(Tb.hasGrid('Text\n+---+\nmehr Text\n\n---'), false, 'hasGrid: Linie ohne Zeile mit «|» daneben');
+  assert.equal(Tb.hasGrid(''), false);
+  const pandoc = [
+    '<!-- tabelle: {"kopfspalte":true} -->',
+    '+---------------+---------------+--------------------+',
+    '| Frucht        | Preis         | Vorteile           |',
+    '+:==============+==============:+:==================:+',
+    '| Bananen       | 1.34          | - gelb             |',
+    '|               |               | - mit Schale       |',
+    '+---------------+---------------+--------------------+',
+    '| Orangen, über zwei Spalten    | Vitamin C \\| D     |',
+    '+-------------------------------+--------------------+',
+  ];
+  t = Tb.parseAt(pandoc, 1);
+  assert.deepEqual(json({ start: t.start, head: t.head, end: t.end, meta: t.meta, align: t.align, rows: t.rows, spans: t.spans.rows }), {
+    start: 0, head: 1, end: 9, meta: { kopfspalte: true }, align: ['left', 'right', 'center'],
+    rows: [['Bananen', '1.34', '- gelb<br>- mit Schale'], ['Orangen, über zwei Spalten', '', 'Vitamin C \\| D']],
+    spans: [[1, 1, 1], [2, 0, 1]],
+  }, 'wie bei Pandoc: Format-Zeile darüber, Ausrichtung in der Trennlinie der Titelzeile, mehrzeilige Felder, Feld über zwei Spalten, «\\|»');
+  t = Tb.parseAt(['+:--+--:+', '| a | b |', '+---+---+', '| über beide |'], 0);
+  assert.deepEqual(json({ header: t.header, align: t.align, rows: t.rows, spans: t.spans.rows, end: t.end }),
+    { header: null, align: ['left', 'right'], rows: [['a', 'b'], ['über beide', '']], spans: [[1, 1], [2, 0]], end: 4 },
+    'ohne Titelzeile (Ausrichtung in der obersten Linie), letzte Zeile ohne Rahmen darunter');
+  t = Tb.parseAt(['+---+---+---+---+', '| a | b | c | d |', '+---+---+---+---+', '| drei Spalten | d |', '+---+---+---+---+', '| x | über drei     |', '| y | noch eine Zeile |', '| z |', '+---+---+---+---+'], 0);
+  assert.deepEqual(json(t.spans.rows.slice(1)), [[3, 0, 0, 1], [1, 3, 0, 0]], 'welche Spalten ein Feld umfasst, bestimmt die Lage der «|» zu den «+», auch wenn sie nicht genau untereinander stehen');
+  assert.deepEqual(t.rows[2], ['x<br>y<br>z', 'über drei<br>noch eine Zeile', '', ''], 'die häufigste Zahl der Felder einer Zeile gilt, fehlende Felder sind leer');
+  assert.equal(Tb.parseAt(['+---+---+', 'Text'], 0), null, 'ein Rahmen allein ist keine Tabelle');
+  assert.ok(!Tb.isBorder('+ Punkt einer Liste') && Tb.isBorder('+---+') && Tb.isBorder('  +===+===+') && Tb.isBorder('+ --- + --- +'));
+  assert.equal(Tb.at('```\n+---+\n| a |\n+---+\n```', 10), null, 'in einem Codeblock keine Tabelle');
+  part('Lesen: Schreibweise aus der Anfrage, Pandoc mit Ausrichtung und Format, ohne Titelzeile, Felder über Spalten aus der Lage der «|», keine Tabelle ohne Zeile und im Code');
+
+  // ---------- Schreiben ----------
+  let f = Tb.format(Tb.parseAt(user, 0));
+  assert.equal(f.lines.join('\n'), [
+    '+---------------+----------+----------+----------+',
+    '| Spalte 1      | Spalte 2 | Spalte 3 | Spalte 4 |',
+    '+===============+==========+==========+==========+',
+    '| Zeile 1  (4 Spalten breit)                     |',
+    '+---------------+----------+----------+----------+',
+    '| Zeile 2,      |          |          |          |',
+    '| über 2 Zeilen |          |          |          |',
+    '+---------------+----------+----------+----------+',
+  ].join('\n'), 'ausgerichtet wie bei Pandoc');
+  f = Tb.format(Tb.parseAt(pandoc, 1));
+  assert.deepEqual(f.lines, [
+    '<!-- tabelle: {"kopfspalte":true} -->',
+    '+---------+------------------+----------------+',
+    '| Frucht  | Preis            | Vorteile       |',
+    '+:========+=================:+:==============:+',
+    '| Bananen | 1.34             | - gelb         |',
+    '|         |                  | - mit Schale   |',
+    '+---------+------------------+----------------+',
+    '| Orangen, über zwei Spalten | Vitamin C \\| D |',
+    '+----------------------------+----------------+',
+  ], 'Format-Zeile bleibt, Ausrichtung in der Trennlinie, das Feld über zwei Spalten macht die zweite breiter, «+» nur an Feldgrenzen');
+  const again = Tb.parseAt(f.lines, 1);
+  assert.deepEqual(json([again.rows, again.spans, again.align]), json([Tb.parseAt(pandoc, 1).rows, Tb.parseAt(pandoc, 1).spans, Tb.parseAt(pandoc, 1).align]), 'lesen, schreiben, lesen ergibt dasselbe');
+  let r = Tb.insert('Text', 4, 4, 3, 3, { header: true, grid: true });
+  assert.equal(r.text, 'Text\n\n+----------+----------+----------+\n| Spalte 1 | Spalte 2 | Spalte 3 |\n+==========+==========+==========+\n|          |          |          |\n+----------+----------+----------+\n|          |          |          |\n+----------+----------+----------+\n');
+  assert.equal(sel(r), 'Spalte 1', 'erster Titel markiert');
+  r = Tb.insert('', 0, 0, 2, 1, { header: false, grid: true });
+  assert.equal(r.text, '+-----+-----+\n|     |     |\n+-----+-----+\n', 'ohne Titelzeile: keine «=»-Linie');
+  part('Schreiben: ausgerichtet wie Pandoc, Format-Zeile, Ausrichtung, «+» nur an Feldgrenzen, lesen-schreiben-lesen, Einfügen mit und ohne Titelzeile');
+
+  // ---------- Tasten im Editor ----------
+  let text = 'Vorher\n\n' + Tb.format(Tb.parseAt(['+---+---+', '| A | B |', '+===+===+', '| a | b |', '+---+---+', '| beide |', '+---+---+'], 0)).lines.join('\n') + '\n\nNachher';
+  const L0 = 2;
+  r = Tb.move(text, posOf(text, L0 + 1, 2), 1);
+  assert.equal(sel(r), 'B', 'Tab: nächstes Feld');
+  r = Tb.move(r.text, posOf(r.text, L0 + 3, 8), 1);
+  assert.equal(sel(r), 'beide', 'Tab: das Feld über zwei Spalten ist ein Feld');
+  r = Tb.move(r.text, r.selStart, 1);
+  assert.equal(caretLine(r), L0 + 7, 'Tab hinter dem letzten Feld: neue Zeile');
+  assert.deepEqual(r.text.split('\n').slice(L0 + 6, L0 + 9), ['+-----+-----+', '|     |     |', '+-----+-----+'], 'mit Rahmen darunter');
+  r = Tb.enter(text, posOf(text, L0 + 3, 3));
+  assert.deepEqual(r.text.split('\n').slice(L0 + 3, L0 + 6), ['| a   | b   |', '|     |     |', '+-----+-----+'], 'Enter am Ende eines Felds: neue Textzeile im Feld');
+  assert.equal(caretLine(r), L0 + 4);
+  r = Tb.enter(text, posOf(text, L0 + 5, 4));
+  assert.deepEqual(r.text.split('\n').slice(L0 + 5, L0 + 7), ['| be        |', '| ide       |'], 'Enter mitten im Text teilt die Textzeile');
+  assert.equal(Tb.joinLine(r.text, r.selStart, -1).text, text, 'Rücktaste am Anfang der Textzeile verbindet sie wieder');
+  assert.deepEqual(Tb.joinLine(text, posOf(text, L0 + 5, 2), -1), { text, selStart: posOf(text, L0 + 5, 2), selEnd: posOf(text, L0 + 5, 2) }, 'Rücktaste am Anfang der ersten Zeile: nichts, der Rahmen bleibt');
+  assert.equal(Tb.joinLine(text, posOf(text, L0 + 5, 4), -1), null, 'mitten im Text: normale Rücktaste');
+  assert.equal(Tb.joinLine(Tb.enter(text, posOf(text, L0 + 5, 4)).text, posOf(text, L0 + 5, 4), 1).text, text, 'Entf am Ende der Textzeile verbindet mit der nächsten');
+  r = Tb.newRow(text, posOf(text, L0 + 3, 2));
+  assert.equal(caretLine(r), L0 + 5, 'Strg+Enter: neue Zeile darunter');
+  const withLast = Tb.newRow(text, posOf(text, L0 + 5, 2));
+  r = Tb.newRow(withLast.text, withLast.selStart);
+  assert.equal(r.text, text.replace('\n\nNachher', '\n\n\n\nNachher'), 'Strg+Enter in der leeren letzten Zeile: die Tabelle endet');
+  assert.equal(caretLine(r), L0 + 8, 'Cursor unter der Tabelle');
+  assert.equal(Tb.enter(text, posOf(text, L0 + 6, 13)), null, 'Enter am Ende der untersten Linie: normale neue Zeile');
+  r = Tb.lineBreak(text, posOf(text, L0 + 1, 3));
+  assert.deepEqual(r.text.split('\n').slice(L0 + 1, L0 + 3), ['| A   | B   |', '|     |     |'], 'Umschalt+Enter wie Enter (auch im Kopf)');
+  part('Tasten: Tab über Felder und verbundene Felder, neue Zeile am Ende, Enter teilt die Textzeile, Rücktaste verbindet, Rahmen bleibt heil, Strg+Enter, Ende der Tabelle');
+
+  // ---------- Tippen: die Striche bleiben untereinander ----------
+  const base = Tb.insert('', 0, 0, 2, 3, { header: true, grid: true, label: n => ['Name', 'Wer'][n - 1] }).text
+    .replace('|      |     |\n+------+-----+\n|      |     |', '| längerer Text | x |\n+------+-----+\n| über beide |');
+  const baseT = Tb.format(Tb.parseAt(base.split('\n'), 0)).lines.join('\n');
+  assert.deepEqual(Tb.parseAt(baseT.split('\n'), 0).spans.rows, [[1, 1], [2, 0]]);
+  const typeAt = (src, pos, ch) => { const n = src.slice(0, pos) + ch + src.slice(pos); return Tb.typed(src, n, pos + ch.length) || { text: n, selStart: pos + ch.length, selEnd: pos + ch.length }; };
+  const sameWidth = src => new Set(src.split('\n').filter(Boolean).map(l => Array.from(l).length)).size === 1;
+  let cur = typeAt(baseT, posOf(baseT, 1, 6), 'x');
+  assert.equal(cur.text.split('\n')[1], '| Namex         | Wer |', 'Platz im Feld: der Zwischenraum nimmt das Zeichen auf');
+  assert.ok(sameWidth(cur.text));
+  for (const ch of ' mit Text') cur = typeAt(cur.text, cur.selStart, ch);
+  assert.equal(cur.text.split('\n')[1], '| Namex mit Text | Wer |', 'kein Platz mehr: neu ausgerichtet, Leerzeichen im Text bleiben');
+  assert.ok(sameWidth(cur.text), 'alle Linien gleich breit');
+  assert.deepEqual(Tb.parseAt(cur.text.split('\n'), 0).spans.rows, [[1, 1], [2, 0]], 'das verbundene Feld bleibt verbunden');
+  assert.equal(cur.text.slice(cur.selStart - 4, cur.selStart), 'Text', 'Cursor hinter dem Getippten');
+  cur = typeAt(cur.text, cur.selStart, '|');
+  assert.ok(cur.text.split('\n')[1].startsWith('| Namex mit Text\\| '), 'ein getipptes «|» wird zu «\\|»');
+  const del = baseT.slice(0, posOf(baseT, 1, 5)) + baseT.slice(posOf(baseT, 1, 6));
+  assert.equal(Tb.typed(baseT, del, posOf(baseT, 1, 5)).text.split('\n')[1], '| Nam           | Wer |', 'Löschen: der Zwischenraum wächst');
+  assert.equal(Tb.snap(baseT, posOf(baseT, 1, 10)), posOf(baseT, 1, 6), 'Klick in den Zwischenraum: hinter den Text');
+  assert.equal(Tb.snap(baseT, posOf(baseT, 1, 4)), null);
+  part('Tippen: Zwischenraum nimmt Zeichen auf, sonst neu ausrichten mit den Spannen von vorher, Leerzeichen bleiben, «|» maskiert, Löschen, Klick in den Zwischenraum');
+
+  // ---------- Rechtsklick: verbinden, teilen, Spalten, umwandeln ----------
+  const four = Tb.insert('', 0, 0, 4, 2, { header: true, grid: true, label: n => 'S' + n }).text;
+  r = Tb.mergeRight(four, 0, 0, 1);
+  assert.deepEqual(Tb.parseAt(r.text.split('\n'), 0).spans.rows[0], [1, 2, 0, 1], 'Feld mit dem rechts daneben verbinden');
+  r = Tb.mergeRight(r.text, 0, 0, 1);
+  assert.deepEqual(Tb.parseAt(r.text.split('\n'), 0).spans.rows[0], [1, 3, 0, 0]);
+  let g = Tb.insertColumn(r.text, 0, 2, 'right', n => 'S' + n);
+  assert.deepEqual(json(Tb.parseAt(g.text.split('\n'), 0).spans), { h: [1, 1, 1, 1, 1], rows: [[1, 4, 0, 0, 0]] }, 'neue Spalte mitten im verbundenen Feld: es wird breiter');
+  g = Tb.deleteColumn(g.text, 0, 1);
+  assert.deepEqual(json(Tb.parseAt(g.text.split('\n'), 0).spans), { h: [1, 1, 1, 1], rows: [[1, 3, 0, 0]] }, 'Spalte löschen, wo das Feld beginnt: es wird schmaler');
+  g = Tb.splitCell(g.text, 0, 0, 2);
+  assert.deepEqual(Tb.parseAt(g.text.split('\n'), 0).spans.rows[0], [1, 1, 1, 1], 'teilen');
+  g = Tb.toggleHeader(Tb.mergeRight(four, 0, -1, 0).text, 0);
+  t = Tb.parseAt(g.text.split('\n'), 0);
+  assert.deepEqual(json([t.header, t.spans.rows[0], t.rows[0]]), [null, [2, 0, 1, 1], ['S1<br>S2', '', 'S3', 'S4']], 'Titelzeile aus: der verbundene Kopf wird zur ersten Zeile');
+  const pipe = 'x\n\n| a | b |\n|---|---|\n| [ ] eins<br>zwei | z |\n\ny';
+  g = Tb.convert(pipe, 2, 'grid');
+  assert.equal(g.text, 'x\n\n+----------+-----+\n| a        | b   |\n+==========+=====+\n| [ ] eins | z   |\n| zwei     |     |\n+----------+-----+\n\ny', 'einfache Tabelle → mit Rahmen: «<br>» wird zur Textzeile');
+  assert.equal(Tb.convert(g.text, 2, 'pipe').text, 'x\n\n| a                | b   |\n| ---------------- | --- |\n| [ ] eins<br>zwei | z   |\n\ny', 'und zurück');
+  g = Tb.mergeRight(pipe, 2, 0, 0);
+  assert.equal(Tb.parseAt(g.text.split('\n'), 2).kind, 'grid', 'Verbinden in einer einfachen Tabelle macht eine mit Rahmen');
+  g = Tb.setMeta(Tb.convert(pipe, 2, 'grid').text, 2, m => { m.hervorheben = true; });
+  assert.ok(g.text.includes('<!-- tabelle: {"hervorheben":true} -->\n+---'), 'Format-Zeile auch über einer Tabelle mit Rahmen');
+  part('Rechtsklick: verbinden, Spalte in und an einem verbundenen Feld, teilen, Titelzeile, umwandeln in beide Richtungen, verbinden in einer einfachen Tabelle, Format');
+
+  // ---------- Aufgaben, Fragen, Vorschau ----------
+  const body = [
+    '+---------+----------------------+',
+    '| Wer     | Was                  |',
+    '+=========+======================+',
+    '| Anna    | [ ] Offerte @anna    |',
+    '|         | [x] Termin >13.11.2026 |',
+    '+---------+----------------------+',
+    '| ? Budget reicht? | [ ] Plan  |',
+    '| ! Ja, knapp      |           |',
+    '+---------+----------------------+',
+    '| über beide Spalten             |',
+    '+--------------------------------+',
+  ].join('\n');
+  assert.deepEqual(Tk.parse(body).map(x => [x.text, x.lineIndex, x.slot, x.done, x.due]), [['Offerte @anna', 3, 0, false, null], ['Termin', 4, 0, true, '2026-11-13'], ['Plan', 6, 0, false, null]], 'Aufgaben je Textzeile eines Felds');
+  assert.equal(Tk.parse(body)[0].people[0].handle, 'anna');
+  assert.equal(Tk.setDone(body, 4, false, 0).split('\n')[4], '|         | [ ] Termin >13.11.2026 |', 'Kästchen in der zweiten Textzeile');
+  const qs = Q.parse(body);
+  assert.deepEqual(qs.map(x => [x.kind, x.text, x.answer, x.lineIndex]), [['question', 'Budget reicht?', 'Ja, knapp', 6]], 'die Antwort in der nächsten Textzeile des Felds gehört zur Frage');
+  const answered = Q.writeAnswer(body, qs[0], 'Nein\nzu knapp');
+  assert.deepEqual(answered.split('\n').slice(6, 10), ['| ? Budget reicht? | [ ] Plan               |', '| ! Nein           |                        |', '| ! zu knapp       |                        |', '+------------------+------------------------+'], 'Antwort schreiben: je Zeile eine Textzeile im Feld, neu ausgerichtet');
+  const html = M.render(body, { tableSrc: true, lineMap: true, interactiveTasks: true });
+  assert.ok(html.includes('<td data-col="0" colspan="2">über beide Spalten</td>'), 'Feld über zwei Spalten');
+  assert.ok(html.includes('data-line="3" data-slot="0"') && html.includes('data-line="4" data-slot="0"'), 'Kästchen kennen ihre Textzeile');
+  assert.ok(/Anna<\/td><td data-col="1"><span class="md-cell-task task"[^]*<br><span class="md-cell-task task done"/.test(html), 'Textzeilen im Feld untereinander');
+  let info = null;
+  M.render(body, { tableFormat: x => { info = x; return null; } });
+  assert.deepEqual(json([info.grid, info.spans.rows]), [true, [[1, 1], [1, 1], [2, 0]]], 'Erweiterungen erfahren die Spannen');
+  part('Aufgaben, Fragen und Vorschau: je Textzeile, Kästchen setzen, Antwort in der nächsten Textzeile, Antwort schreiben, colspan, Angaben für Erweiterungen');
+}
+
+
 /* v2.11.0: Personen an Aufgaben (auch geerbt), Aufgaben, Fragen und Entscheide in Tabellenfeldern, Zeilenumbruch im Feld,
    Index (Schema 16, Regeln 3), Abhaken nach slot, Antwort ins Feld, Vorschau, Agenten, Abschnitte unter der Mindmap im Export. */
 async function runCellsPeople(browser, part, step) {
@@ -2742,6 +2948,7 @@ suite('Kern-Test', [
   { name: 'Build: fremde Ausprägung, Verzeichnis der Erweiterungen, --plugins, klare Fehler', run: runBuild },
   { name: 'Videoadressen: YouTube, Vimeo, Dailymotion, Fälschungen, Karte im Markdown, maskierte Titel', run: runEmbeds },
   { name: 'Tabellen: Lesen, Einfügen, Tab und Enter, Rechtsklick-Schritte, Vorschau, Angaben von Erweiterungen', run: runTables },
+  { name: 'Tabellen mit Rahmen (v3.3.0): Lesen wie Pandoc und nachsichtig, Schreiben, Tasten, Tippen, verbinden und teilen, umwandeln, Aufgaben, Fragen, Vorschau', run: runGridTables },
   { name: 'Pfade auf Dateien und Ordner: Netz, Laufwerk, file://, Kodierung, Kopieren, in der Zeile, Bilder, Einfügen aus dem Explorer', run: runPathsCore },
   { name: 'Ausfüllbare Platzhalter: Erkennen, Werte im Index, Vorschau, Druck, Export, Beschreibungen, Vorlagen anlegen und einfügen, Agenten', run: runPlaceholdersCore },
   { name: 'Personen an Aufgaben und Tabellenfelder: Parser, Editor, Vorschau, Index (Schema 16), Abhaken, Antwort ins Feld, Agenten, Export-Abschnitte', run: runCellsPeople },

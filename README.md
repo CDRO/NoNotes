@@ -641,6 +641,29 @@ und Erinnerungen (siehe oben). Dasselbe gilt für Fragen und Entscheide.
   - Ein Feld enthält Text mit Markdown (fett, kursiv, Links, `[[Verweise]]`, Code); ein `|` im
     Feld schreibt sich `\|`.
   - **Mehrere Zeilen im Feld** (seit 2.11.0): `<br>` trennt sie; `Umschalt+Enter` im Feld setzt es.
+  - **Tabellen mit Rahmen** (seit 3.3.0), wie die «Grid Tables» von Pandoc: jede Zeile der Tabelle steht zwischen zwei Linien, ein
+    Feld darf mehrere Zeilen haben und sich über mehrere Spalten ziehen:
+
+    ```
+    +------+----------------------+
+    | Wer  | Was                  |
+    +======+======================+
+    | Anna | [ ] Offerte einholen |
+    |      | [ ] Termin >6.11.2026 |
+    +------+----------------------+
+    | über beide Spalten          |
+    +-----------------------------+
+    ```
+
+    Beim Einfügen ist **Mit Rahmen (mehrzeilige Felder)** vorgegeben (die Wahl merkt sich der Browser). `Enter` beginnt eine neue
+    Zeile im Feld, `Strg+Enter` eine neue Zeile der Tabelle (in einer leeren letzten Zeile endet sie), `Tab` springt wie gewohnt.
+    Beim Tippen bleiben die Striche untereinander (solange die Notiz eine Tabelle mit Rahmen enthält, schreibt der Editor dafür
+    in Festbreitenschrift); Rücktaste am Anfang und Entf am Ende einer Zeile im Feld verbinden die Zeilen, ohne den Rahmen zu
+    zerstören. Rechtsklick in der Vorschau: **Mit dem Feld rechts verbinden**, **Feld teilen**, **In einfache
+    Tabelle umwandeln** und umgekehrt (dabei wird `<br>` zu einer Zeile im Feld und zurück). Jede Zeile im Feld ist ein Teil wie bei
+    `<br>`: Aufgaben, Fragen, Entscheide und ihre Antworten stehen je auf einer Zeile. Gelesen wird nachsichtig, auch wenn die Striche
+    nicht genau untereinander stehen oder unter der Titelzeile `| --- | --- |` steht. Beide Arten bleiben gültig; andere
+    Markdown-Programme (GitHub, Obsidian) zeigen eine Tabelle mit Rahmen als Text, Pandoc liest sie.
   - **Aufgaben, Fragen und Entscheide in Feldern** (seit 2.11.0): Ein Teil, der mit `[ ]` beginnt,
     ist eine Aufgabe (mit Termin und Personen), mit `?` eine Frage, mit `?!` ein Entscheid. Die
     Antwort folgt im selben Feld: `| ? Budget?<br>! 5000 |`, ein Entscheid `<br>!! 14.10.2026: Müller`.

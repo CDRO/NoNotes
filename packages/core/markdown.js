@@ -437,9 +437,9 @@
   /** Inhalt eines Felds (v2.11.0): Teile getrennt durch «<br>»; in Zeilen (nicht in der Titelzeile) wird «[ ] Text» zur Aufgabe
    *  mit Kästchen (data-line und data-slot, wenn die Zeile im Text bekannt ist: line) und «? …» / «?! …» samt den Antwort-Teilen
    *  «! …» / «!! …» danach zum Eintrag. Personen und Termine wie in Listen und Fragen. */
-  function cellContent(text, r, slots, ctx, line) {
-    const Tb = global.NoNotesTables, D = global.NoNotesDates, Q = global.NoNotesQuestions;
-    const parts = (Tb ? Tb.splitParts(text).map(p => p.text) : [text]).map(unescapePipe);
+  function cellContent(cellParts, r, slots, ctx, lineOffset) {
+    const D = global.NoNotesDates, Q = global.NoNotesQuestions;
+    const parts = cellParts.map(p => unescapePipe(p.text));
     if (r === 'h') return parts.map(p => renderInline(p, ctx)).join('<br>');
     const withPeople = Object.assign({}, ctx, { people: true });
     const badge = (split, quiet) => dueBadges(split.due, split.reminders, quiet);
@@ -450,8 +450,12 @@
       const task = tm && D ? D.splitDue(tm[2]) : null;
       if (task && task.text) {
         const done = tm[1] !== ' ';
-        const slot = slots.n++;
-        const src = line != null ? ` data-line="${line}" data-slot="${slot}"` : '';
+        // Aufgaben einer Textzeile in der Reihenfolge der Felder (wie tasks.js sie zählt); bei Tabellen mit Rahmen hat jedes Feld
+        // mehrere Textzeilen
+        const line = cellParts[k].line;
+        const slot = slots.get(line) || 0;
+        slots.set(line, slot + 1);
+        const src = lineOffset != null && line != null ? ` data-line="${line + lineOffset}" data-slot="${slot}"` : '';
         out.push(`<span class="md-cell-task task${done ? ' done' : ''}"${src}><input type="checkbox"${ctx.interactiveTasks && src ? '' : ' disabled'}${done ? ' checked' : ''} aria-label="${escapeHtml(done ? t('erledigt') : t('offen'))}"><span class="task-text">${renderInline(task.text, withPeople)}</span>${badge(task, done)}</span>`);
         continue;
       }
@@ -474,7 +478,7 @@
     return out.join('<br>');
   }
 
-  function tableHtml(tb, ctx, lineAttr, srcLine) {
+  function tableHtml(tb, ctx, lineAttr, srcLine, lines) {
     const meta = tb.meta || {};
     const headCol = meta.kopfspalte === true;
     let results = [];
@@ -483,6 +487,8 @@
         line: srcLine, meta: JSON.parse(JSON.stringify(meta)), header: !!tb.header, headerColumn: headCol, cols: tb.cols, rows: tb.rows.length,
         cells: { header: tb.header ? tb.header.map(unescapePipe) : null, rows: tb.rows.map(r => r.map(unescapePipe)) },
       };
+      // Tabellen mit Rahmen (v3.3.0): dazu die Spannen je Spalte (0: von einem Feld links überdeckt)
+      if (tb.kind === 'grid') Object.assign(info, { grid: true, spans: JSON.parse(JSON.stringify({ header: tb.spans.h, rows: tb.spans.rows })) });
       try { const r = ctx.tableFormat(info); results = (Array.isArray(r) ? r : [r]).filter(x => x && typeof x === 'object'); } catch (e) { results = []; }
     }
     const pick = fn => results.map(r => { try { return fn(r); } catch (e) { return null; } }).filter(Boolean);
@@ -496,16 +502,27 @@
     const rowSpecs = r => pick(x => (r === 'h' ? x.header : x.rows && x.rows[r]));
     const classOnly = spec => ({ class: spec.class });
     const withoutClass = spec => { const o = Object.assign({}, spec); delete o.class; return o; };
-    const slots = { r: null, n: 0 }; // Aufgaben der Zeile in der Reihenfolge der Felder (wie tasks.js sie zählt)
-    const cell = (tag, text, r, c, scope, inRow) => `<${tag}${scope ? ` scope="${scope}"` : ''} data-col="${c}"`
-      + attrs('', [...pick(x => x.columns && x.columns[c]), ...inRow, ...pick(x => x.cells && x.cells[`${r},${c}`])], align(c))
-      + `>${cellContent(text, r, slots, ctx, srcLine == null ? null : tb.head + 2 + (r === 'h' ? 0 : r) + ctx.lineOffset)}</${tag}>`;
-    const tr = (r, extra, cells) => { const specs = rowSpecs(r); slots.r = r; slots.n = 0; return `<tr${extra}${attrs('', specs.map(classOnly))}>` + cells(specs.map(withoutClass)) + '</tr>'; };
+    const slots = new Map(); // Aufgaben je Textzeile in der Reihenfolge der Felder (wie tasks.js sie zählt)
+    // Teile der Felder mit ihrer Textzeile (Tabellen mit Rahmen: mehrere je Feld); ohne die Zeilen des Texts nur der Feldtext
+    const found = new Map();
+    const Tb = global.NoNotesTables;
+    if (Tb && lines) for (const x of Tb.cellsOf(tb, lines)) found.set(`${x.r},${x.c}`, x.parts);
+    const partsOf = (text, r, c) => found.get(`${r},${c}`) || (Tb ? Tb.splitParts(text).map(p => ({ text: p.text, line: null })) : [{ text, line: null }]);
+    const spanOf = (r, c) => (tb.kind === 'grid' ? (r === 'h' ? tb.spans.h : tb.spans.rows[r])[c] : 1);
+    const cell = (tag, text, r, c, scope, inRow) => {
+      const n = spanOf(r, c);
+      return `<${tag}${scope ? ` scope="${scope}"` : ''} data-col="${c}"${n > 1 ? ` colspan="${n}"` : ''}`
+        + attrs('', [...pick(x => x.columns && x.columns[c]), ...inRow, ...pick(x => x.cells && x.cells[`${r},${c}`])], align(c))
+        + `>${cellContent(partsOf(text, r, c), r, slots, ctx, srcLine == null ? null : ctx.lineOffset)}</${tag}>`;
+    };
+    const tr = (r, extra, cells) => { const specs = rowSpecs(r); return `<tr${extra}${attrs('', specs.map(classOnly))}>` + cells(specs.map(withoutClass)) + '</tr>'; };
     const cls = ['md-table', headCol ? 'md-table-col' : '', meta.hervorheben === true ? 'md-table-mark' : '', tb.header ? '' : 'md-table-nohead'].filter(Boolean).join(' ');
     let html = `<table${attrs(cls, pick(x => x.table))}${lineAttr}${srcLine != null ? ` data-src="${srcLine}"` : ''}>`;
-    if (tb.header) html += '<thead>' + tr('h', '', inRow => tb.header.map((x, c) => cell('th', x, 'h', c, 'col', inRow)).join('')) + '</thead>';
+    // Felder über mehrere Spalten (Tabellen mit Rahmen, v3.3.0): die überdeckten Spalten fallen weg
+    const shown = (r, c) => spanOf(r, c) > 0;
+    if (tb.header) html += '<thead>' + tr('h', '', inRow => tb.header.map((x, c) => (shown('h', c) ? cell('th', x, 'h', c, 'col', inRow) : '')).join('')) + '</thead>';
     html += '<tbody>' + tb.rows.map((row, r) => tr(r, ` data-row="${r}"`,
-      inRow => row.map((x, c) => (headCol && c === 0 ? cell('th', x, r, c, 'row', inRow) : cell('td', x, r, c, '', inRow))).join(''))).join('') + '</tbody></table>';
+      inRow => row.map((x, c) => (!shown(r, c) ? '' : headCol && c === 0 ? cell('th', x, r, c, 'row', inRow) : cell('td', x, r, c, '', inRow))).join(''))).join('') + '</tbody></table>';
     return html;
   }
 
@@ -581,14 +598,14 @@
         continue;
       }
 
-      // Tabelle (v2.10.0, packages/core/tables.js): Zeilen mit «|», darunter die Trennzeile; «<!-- tabelle: {…} -->» direkt darüber
-      // trägt das Format
+      // Tabelle (v2.10.0, packages/core/tables.js): Zeilen mit «|», darunter die Trennzeile, oder (v3.3.0) mit Rahmen aus «+---+»;
+      // «<!-- tabelle: {…} -->» direkt darüber trägt das Format
       const Tb = global.NoNotesTables;
-      if (Tb && /^\s{0,3}(?:\||<!--)/.test(line)) {
+      if (Tb && /^\s{0,3}(?:\||<!--|\+)/.test(line)) {
         const tb = Tb.readMeta(line) ? Tb.parseAt(lines, i + 1) : Tb.parseAt(lines, i);
         if (tb && (tb.head === i || tb.metaLine === i)) {
           flushParagraph();
-          out.push(tableHtml(tb, ctx, la(tb.start), ctx.tableSrc ? tb.start + ctx.lineOffset : null));
+          out.push(tableHtml(tb, ctx, la(tb.start), ctx.tableSrc ? tb.start + ctx.lineOffset : null, lines));
           i = tb.end;
           continue;
         }

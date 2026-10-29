@@ -169,7 +169,9 @@ ctx.ui.addContextMenuItem({
 
 ## Tabellen (seit 2.10.0)
 
-Tabellen sind Markdown-Tabellen wie bei GitHub. Eine Zeile direkt darüber trägt ihr Format als JSON:
+Tabellen sind Markdown-Tabellen wie bei GitHub oder (seit 3.3.0) Tabellen mit Rahmen wie die «Grid Tables» von Pandoc (`+---+`,
+mehrzeilige Felder, Felder über mehrere Spalten). Für Erweiterungen sehen beide gleich aus; ein Feld über mehrere Spalten hat seine
+Angaben an der Spalte, in der es beginnt. Eine Zeile direkt darüber trägt ihr Format als JSON:
 
 ```markdown
 <!-- tabelle: {"kopfspalte":true,"hervorheben":true,"table-format":{"cols":{"0":{"breite":"schmal"}}}} -->
@@ -199,6 +201,7 @@ unverändert, auch wenn sich die Tabelle ändert.
 | `cells` | `{ header: […] \| null, rows: [[…], …] }`, der Text der Felder |
 | `line` | Erste Zeile der Tabelle im Text der offenen Notiz (die Format-Zeile, ohne sie die Titelzeile); `null` in Zitaten, Blöcken und im Druck |
 | `noteId` | Nur im Druck: die Notiz, zu der die Tabelle gehört (die Vorschau zeigt immer die offene) |
+| `grid`, `spans` | Nur bei Tabellen mit Rahmen (seit 3.3.0): `grid: true` und `spans: { header, rows }`, je Spalte die Zahl der Spalten des Felds, das dort beginnt (`0`: von einem Feld links überdeckt, dort steht in `cells` ein leerer Text) |
 
 `fn` liefert `null`, ein Objekt oder eine Liste von Objekten der Form
 
@@ -235,6 +238,7 @@ gibt es nur für Tabellen in der offenen, beschreibbaren Notiz, nicht in Zitaten
 | `rows`, `cols` | Zahl der Zeilen (ohne Titelzeile) und Spalten |
 | `header`, `headerColumn` | Titelzeile, Titelspalte |
 | `meta` | Das Format (Kopie) |
+| `grid`, `span` | Seit 3.3.0: Tabelle mit Rahmen? Über wie viele Spalten zieht sich das angeklickte Feld (`col` ist seine erste)? |
 
 **Format schreiben.** `ctx.tables.update(target, fn)` ruft `fn(meta)` mit einer Kopie des Formats auf; `fn` ändert sie (oder
 liefert ein neues Objekt). Leere Angaben (`null`, `false`) fallen weg, ohne Angaben verschwindet die Zeile. Die App schreibt

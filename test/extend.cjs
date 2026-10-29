@@ -2755,6 +2755,8 @@ async function runTablesUi(browser, part, step) {
   assert.equal(await page.evaluate(() => document.activeElement.id), 'body', 'Esc: zurück in den Text');
   assert.equal(await body(), 'Einleitung', 'nichts eingefügt');
   await page.click('#mdToolbar [data-cmd="table"]');
+  assert.ok(await page.isChecked('#tablePicker .tp-grid-kind'), 'Tabelle mit Rahmen ist vorgegeben (v3.3.0)');
+  await page.uncheck('#tablePicker .tp-grid-kind'); // hier die einfache Tabelle; die Wahl merkt sich der Browser
   await cell(3, 3).click();
   await page.waitForSelector('#tablePicker', { state: 'hidden' });
   assert.equal(await body(), 'Einleitung\n\n| Spalte 1 | Spalte 2 | Spalte 3 |\n| -------- | -------- | -------- |\n|          |          |          |\n|          |          |          |\n');
@@ -2834,7 +2836,7 @@ async function runTablesUi(browser, part, step) {
   const rightClick = async sel => { await page.locator(sel).click({ button: 'right' }); await page.waitForSelector('#contextMenu:not([hidden])'); };
   await rightClick('#preview tbody tr[data-row="2"] td[data-col="1"]');
   assert.deepEqual(await menuItems(), ['Titelzeile ✓', 'Titelspalte', 'Titel hervorheben', 'Zeile darüber einfügen', 'Zeile darunter einfügen', 'Zeile löschen',
-    'Spalte links einfügen', 'Spalte rechts einfügen', 'Spalte löschen', 'Breite 30%', 'Feld▸']);
+    'Spalte links einfügen', 'Spalte rechts einfügen', 'Spalte löschen', 'In Tabelle mit Rahmen umwandeln', 'Breite 30%', 'Feld▸']);
   await page.click('#contextMenu button:has-text("Titelspalte")');
   await page.waitForSelector('#contextMenu', { state: 'hidden' });
   // gleich noch einmal: die Vorschau ist schon neu gezeichnet
@@ -2871,7 +2873,7 @@ async function runTablesUi(browser, part, step) {
   await page.waitForFunction(() => window.__ttOk === true);
   const got = await page.evaluate(() => window.__tt[0]);
   assert.equal(got.frozen, true, 'Ziel eingefroren');
-  assert.deepEqual(got.t, { noteId: id, line: 2, row: 0, col: 1, cols: 2, rows: 40, header: true, headerColumn: true, meta: { kopfspalte: true, hervorheben: true } });
+  assert.deepEqual(got.t, { noteId: id, line: 2, row: 0, col: 1, cols: 2, rows: 40, header: true, headerColumn: true, meta: { kopfspalte: true, hervorheben: true }, grid: false, span: 1 });
   assert.ok((await body()).includes('<!-- tabelle: {"kopfspalte":true,"hervorheben":true,"tab-test":{"breite":"30%"}} -->'));
   await page.waitForSelector('#preview tbody tr[data-row="0"] th.tt-schmal');
   assert.equal(await page.getAttribute('#preview tbody tr[data-row="0"] th', 'style'), 'width: 30%; height: 44px');
@@ -2926,6 +2928,126 @@ async function runTablesUi(browser, part, step) {
   assert.ok(await page.locator('#contextMenu').isHidden(), 'kein Tabellenmenü im Lesemodus');
   await page.evaluate(() => localStorage.removeItem('__readonly'));
   part('format() gibt ein Abmelden zurück; Lesemodus: kein Einfügen, kein Tabellenmenü');
+
+  assert.deepEqual(errors, []);
+  await ctx.close();
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
+// ============================================================
+/* v3.3.0: Tabellen mit Rahmen im Browser – Einfügen (vorgegeben), Tab, Enter für eine neue Zeile im Feld, Strg+Enter, Ausrichten beim
+   Tippen mit Rückgängig, Rücktaste, Kästchen in der Vorschau, verbinden, teilen, umwandeln. */
+async function runGridTablesUi(browser, part, step) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nonotes-grid-'));
+  const dir = path.join(tmp, 'NoNotes');
+  fs.cpSync(DIST, dir, { recursive: true });
+  const ctx = await browser.newContext({ viewport: { width: 1300, height: 820 }, locale: 'de-CH' });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  await page.goto('file://' + path.join(dir, 'index.html'));
+  await page.waitForSelector(READY, { timeout: 30000 });
+  const body = () => page.inputValue('#body');
+  const selected = () => page.evaluate(() => { const b = document.querySelector('#body'); return b.value.slice(b.selectionStart, b.selectionEnd); });
+  const tableLines = async () => (await body()).split('\n').filter(l => /^[+|]/.test(l));
+  const aligned = async () => new Set((await tableLines()).map(l => Array.from(l).length)).size === 1;
+  const gridFont = () => page.evaluate(() => document.querySelector('#editorBody').classList.contains('grid-font')
+    && /mono|consolas|menlo/i.test(getComputedStyle(document.querySelector('#body')).fontFamily));
+
+  await page.click('#mindmap', { position: { x: 30, y: 700 } });
+  await page.keyboard.press('Tab');
+  await page.waitForSelector('#renameInput:not([hidden])');
+  await page.keyboard.type('Plan');
+  await page.keyboard.press('Enter');
+  await page.dblclick('g.mm-node:has(> text:text-is("Plan"))');
+  await page.waitForSelector('#editorPane:not([hidden])');
+  await page.click('[data-mode="edit"]');
+  await page.click('#body');
+  await page.keyboard.type('Einleitung');
+  assert.equal(await gridFont(), false, 'ohne Tabelle mit Rahmen: die gewohnte Schrift');
+
+  // ---------- Einfügen, Tab, Enter im Feld, Strg+Enter ----------
+  await page.click('#mdToolbar [data-cmd="table"]');
+  await page.waitForSelector('#tablePicker:not([hidden])');
+  assert.ok(await page.isChecked('#tablePicker .tp-grid-kind'), 'mit Rahmen vorgegeben');
+  await page.locator('#tablePicker .tp-cell[data-c="2"][data-r="2"]').click();
+  await page.waitForSelector('#tablePicker', { state: 'hidden' });
+  assert.equal(await body(), 'Einleitung\n\n+----------+----------+\n| Spalte 1 | Spalte 2 |\n+==========+==========+\n|          |          |\n+----------+----------+\n');
+  assert.equal(await selected(), 'Spalte 1');
+  assert.equal(await gridFont(), true, 'mit Tabelle mit Rahmen: Festbreitenschrift im Editor');
+  await page.keyboard.type('Wer');
+  await page.keyboard.press('Tab');
+  await page.keyboard.type('Was');
+  await page.keyboard.press('Tab');
+  await page.keyboard.type('Anna');
+  await page.keyboard.press('Tab');
+  await page.keyboard.type('[ ] Offerte einholen');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('[ ] Termin');
+  assert.ok(await aligned(), 'beim Tippen bleiben alle Linien gleich breit: ' + (await tableLines()).join(' / '));
+  await page.keyboard.press('Control+Enter');
+  await page.keyboard.type('Ben');
+  await page.keyboard.press('Tab');
+  await page.keyboard.type('? Budget?');
+  assert.deepEqual(await tableLines(), [
+    '+------+----------------------+',
+    '| Wer  | Was                  |',
+    '+======+======================+',
+    '| Anna | [ ] Offerte einholen |',
+    '|      | [ ] Termin           |',
+    '+------+----------------------+',
+    '| Ben  | ? Budget?            |',
+    '+------+----------------------+',
+  ], 'Enter: neue Zeile im Feld; Strg+Enter: neue Zeile der Tabelle; ausgerichtet');
+  part('Einfügen mit Rahmen (vorgegeben), Festbreitenschrift im Editor, Tab, Enter für eine Zeile im Feld, Strg+Enter für eine Zeile der Tabelle, beim Tippen ausgerichtet');
+
+  // ---------- Rückgängig, Rücktaste, Zwischenraum ----------
+  const before = await body();
+  await page.keyboard.type('x');
+  assert.ok((await body()).includes('| Ben  | ? Budget?x           |'), 'der Zwischenraum nimmt das Zeichen auf');
+  await page.keyboard.press('Control+z');
+  await page.keyboard.press('Control+z');
+  assert.equal(await body(), before, 'Rückgängig nimmt das Zeichen samt Ausrichten zurück');
+  const termin = (await body()).indexOf('[ ] Termin');
+  await page.evaluate(p => { const b = document.querySelector('#body'); b.focus(); b.setSelectionRange(p, p); }, termin);
+  await page.keyboard.press('Backspace');
+  assert.ok((await body()).includes('| Anna | [ ] Offerte einholen[ ] Termin |'), 'Rücktaste am Anfang der Zeile im Feld verbindet sie mit der davor');
+  await page.keyboard.press('Enter');
+  assert.deepEqual((await tableLines()).slice(3, 5), ['| Anna | [ ] Offerte einholen |', '|      | [ ] Termin           |'], 'Enter teilt wieder');
+  const firstCell = (await body()).indexOf('| Anna') + 2;
+  await page.evaluate(p => { const b = document.querySelector('#body'); b.setSelectionRange(p, p); }, firstCell);
+  await page.keyboard.press('Backspace');
+  assert.ok((await body()).includes('| Anna | [ ] Offerte einholen |'), 'Rücktaste am Anfang des Felds: der Rahmen bleibt heil');
+  part('Rückgängig nach dem Ausrichten, Rücktaste verbindet Zeilen im Feld, am Anfang des Felds bleibt der Rahmen');
+
+  // ---------- Vorschau: Kästchen, verbinden, teilen, umwandeln ----------
+  await page.click('[data-mode="preview"]');
+  await page.waitForSelector('#preview table.md-table');
+  assert.equal(await page.locator('#preview .md-cell-task').count(), 2);
+  await page.locator('#preview .md-cell-task >> nth=1').locator('input').check();
+  await page.waitForFunction(() => document.querySelector('#body').value.includes('[x] Termin'));
+  assert.ok((await body()).includes('|      | [x] Termin           |'), 'Kästchen in der zweiten Zeile des Felds');
+  const rightClick = async sel => { await page.locator(sel).click({ button: 'right' }); await page.waitForSelector('#contextMenu:not([hidden])'); };
+  await rightClick('#preview tbody tr[data-row="1"] td[data-col="0"]');
+  await page.click('#contextMenu button:has-text("Mit dem Feld rechts verbinden")');
+  await page.waitForSelector('#preview tbody tr[data-row="1"] td[colspan="2"]');
+  assert.deepEqual((await tableLines()).slice(5, 9), ['+------+----------------------+', '| Ben                         |', '| ? Budget?                   |', '+-----------------------------+'], 'verbunden: der Text untereinander, ein Feld über beide Spalten');
+  await rightClick('#preview tbody tr[data-row="1"] td[data-col="0"]');
+  await page.click('#contextMenu button:has-text("Feld teilen")');
+  await page.waitForFunction(() => !document.querySelector('#preview td[colspan]'));
+  await rightClick('#preview tbody tr[data-row="0"] td[data-col="1"]');
+  await page.click('#contextMenu button:has-text("In einfache Tabelle umwandeln")');
+  await page.waitForFunction(() => document.querySelector('#body').value.includes('| ---'));
+  assert.match(await body(), /\| Anna +\| \[ \] Offerte einholen<br>\[x\] Termin +\|/, 'einfache Tabelle: Zeilen im Feld mit <br>');
+  assert.match(await body(), /\| Ben<br>\? Budget\? +\| +\|/, 'das geteilte Feld: der Text bleibt im ersten');
+  assert.equal(await gridFont(), false, 'einfache Tabelle: wieder die gewohnte Schrift');
+  await rightClick('#preview tbody tr[data-row="0"] td[data-col="1"]');
+  await page.click('#contextMenu button:has-text("In Tabelle mit Rahmen umwandeln")');
+  await page.waitForFunction(() => document.querySelector('#body').value.includes('+==='));
+  assert.equal(await gridFont(), true, 'zurück mit Rahmen: Festbreitenschrift');
+  await page.waitForFunction(SAVED, null, { timeout: 10000 });
+  part('Vorschau: Kästchen je Zeile im Feld, verbinden (colspan), teilen, in einfache Tabelle und zurück umwandeln, gespeichert');
 
   assert.deepEqual(errors, []);
   await ctx.close();
@@ -3527,6 +3649,7 @@ suite('Erweiterungs-Test', [
   { name: 'Vorlagen: Ordner verbinden, speichern, aus Vorlage anlegen und einfügen, Erlaubnis, ohne Ordner, Datei hinzufügen', run: runTemplatesUi },
   { name: 'Ausfüllbare Platzhalter: Titel zuerst, Tab, Beschreibung, gleiche Namen, behalten, Klick hinein, auflösen, Unternotizen, einfügen', run: runPlaceholdersUi },
   { name: 'Tabellen: Raster in der Toolleiste, Tab und Enter, Titelzeile oben, Rechtsklick, Schnittstelle für Erweiterungen, Druck, Lesemodus', run: runTablesUi },
+  { name: 'Tabellen mit Rahmen (v3.3.0): Einfügen, Enter im Feld, Strg+Enter, Ausrichten beim Tippen mit Rückgängig, Rücktaste, Kästchen, verbinden, teilen, umwandeln', run: runGridTablesUi },
   { name: 'Personen an Aufgaben und Tabellenfelder: Aufgaben-Ansicht (Filter, nach Person, geerbt), Druck, Kästchen und Knöpfe im Feld, Knopf und Element über der Mindmap, Abschnitt im Druck', run: runCellsPeopleUi },
   { name: 'Termine mit «>» (v3.0.0): Datumsauswahl, Knopf, Strg+Leertaste, Abzeichen, alte @Datum, Aufgabenliste, Vorlagen im Ordner, Mindmap-Seiten, Gleiten, Bild kopieren, Umstellung mit Sicherung', run: runDatesUi },
   { name: 'Mindmap ab einem Knoten als Bild (v3.1.0): Weg von der Wurzel, Überschrift, wie zu sehen, Mehrfachauswahl, Kontextmenü, Farben aus Erweiterungen in Kopie und Druck', run: runCopyNodeUi },

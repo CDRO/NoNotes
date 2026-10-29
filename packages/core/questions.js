@@ -163,23 +163,29 @@
       byCell.get(p.cell).push(p);
     }
     const out = [];
-    for (const [cell, parts] of byCell) {
-      for (let k = 0; k < parts.length; k++) {
-        const unescape = t => t.replace(/\\\|/g, '|'); // "\|" im Feld ist ein "|"
-        const m = QUESTION_RE.exec(parts[k].text);
-        if (!m || FENCED_TEXT_RE.test(m[2])) continue;
-        const head = heading(m[1] ? 'decision' : 'question', unescape(m[2]));
-        if (!head.text) continue;
-        let j = k + 1;
-        const answers = [];
-        for (; j < parts.length; j++) {
-          const a = ANSWER_RE.exec(parts[j].text);
-          if (!a) break;
-          answers.push(unescape(a[1]));
-        }
-        out.push(Object.assign(head, answerOf(head.kind, answers), { cell: { index: cell, part: k, end: j } }));
-        k = j - 1;
+    for (const [cell, parts] of byCell) for (const e of entriesOfCell(cell, parts)) { delete e.line; out.push(e); }
+    return out;
+  }
+
+  /** Einträge in einem Feld aus seinen Teilen ([{ text, line? }]; bei Tabellen mit Rahmen über mehrere Textzeilen): "? …" / "?! …" mit
+   *  den Antwort-Teilen danach. cell: { index (das wievielte Feld seiner Textzeile), part, end }; line: Textzeile des Eintrags. */
+  function entriesOfCell(cell, parts) {
+    const out = [];
+    const unescape = t => t.replace(/\\\|/g, '|'); // "\|" im Feld ist ein "|"
+    for (let k = 0; k < parts.length; k++) {
+      const m = QUESTION_RE.exec(parts[k].text);
+      if (!m || FENCED_TEXT_RE.test(m[2])) continue;
+      const head = heading(m[1] ? 'decision' : 'question', unescape(m[2]));
+      if (!head.text) continue;
+      let j = k + 1;
+      const answers = [];
+      for (; j < parts.length; j++) {
+        const a = ANSWER_RE.exec(parts[j].text);
+        if (!a) break;
+        answers.push(unescape(a[1]));
       }
+      out.push(Object.assign(head, answerOf(head.kind, answers), { cell: { index: cell, part: k, end: j }, line: parts[k].line }));
+      k = j - 1;
     }
     return out;
   }
@@ -306,11 +312,16 @@
         i = b.end - 1;
         continue;
       }
-      const table = tb && tb.isRow(line) ? tb.parseAt(lines, i) : null;
+      const table = tb && (tb.isTableLine ? tb.isTableLine(line) : tb.isRow(line)) ? tb.parseAt(lines, i) : null;
       if (table) {
-        for (let r = 0; r < table.rows.length; r++) {
-          const L = table.head + 2 + r;
-          for (const e of cellEntries(lines[L], table.cols)) push(Object.assign(e, { answerStart: L + 1, end: L + 1, indent: '' }), L, null);
+        // Einträge in den Feldern (nicht in der Titelzeile); bei Tabellen mit Rahmen darf die Antwort in der nächsten Textzeile stehen
+        for (const cell of tb.cellsOf(table, lines)) {
+          if (cell.r === 'h') continue;
+          for (const e of entriesOfCell(cell.index, cell.parts)) {
+            const L = e.line;
+            delete e.line;
+            push(Object.assign(e, { answerStart: L + 1, end: L + 1, indent: '' }), L, null);
+          }
         }
         i = table.end - 1;
         continue;
@@ -347,17 +358,16 @@
    *  "<br>!! Datum: …"), ein "|" in der Antwort wird zu "\|"; danach wird die Tabelle neu ausgerichtet. */
   function writeCellAnswer(body, question, answerText, options) {
     const tb = global.NoNotesTables;
-    const lines = (body || '').split('\n');
-    const line = lines[question.lineIndex];
-    const cell = tb && line != null ? tb.rowCells(line)[question.cell.index] : null;
-    if (!cell) return body;
-    const parts = tb.splitParts(cell.text).map(p => p.text);
+    if (!tb) return body;
     const decision = question.kind === 'decision';
     const rows = (answerText || '').split('\n').map(l => l.trim()).filter(Boolean).map(l => l.replace(/(^|[^\\])\|/g, '$1\\|'));
     if (decision && rows.length) rows[0] = decidedText(question, options) + ': ' + rows[0];
-    const next = [...parts.slice(0, question.cell.part + 1), ...rows.map(r => (decision ? '!! ' : '! ') + r), ...parts.slice(question.cell.end)];
-    lines[question.lineIndex] = line.slice(0, cell.from) + next.join('<br>') + line.slice(cell.to);
-    return tb.realign(lines.join('\n'), question.lineIndex);
+    // bei Tabellen mit Rahmen kommt jede Antwortzeile in eine eigene Textzeile des Felds (editCell richtet aus)
+    const next = tb.editCell(body || '', question.lineIndex, question.cell.index, text => {
+      const parts = tb.splitParts(text).map(p => p.text);
+      return [...parts.slice(0, question.cell.part + 1), ...rows.map(r => (decision ? '!! ' : '! ') + r), ...parts.slice(question.cell.end)].join('<br>');
+    });
+    return next == null ? body : next;
   }
 
   /** Findet im Text den Eintrag, der zu einer Indexzeile passt: zuerst über die gemerkte Zeile, sonst über den

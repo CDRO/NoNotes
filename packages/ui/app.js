@@ -1790,6 +1790,7 @@
     await renderCrumbs(note);
     if (!isLatest()) return;
     renderNoteQuestions(el.body.value);
+    updateEditorFont();
     const tags = await B.getTags(note.id);
     if (!isLatest()) return;
     renderTags(tags);
@@ -2173,6 +2174,12 @@
     } else if (a.getAttribute('href') === '#') {
       e.preventDefault();
     }
+  }
+
+  /** Tabellen mit Rahmen brauchen gleich breite Zeichen, sonst stehen die Striche schief: solange die Notiz eine enthält,
+      schreibt der Editor in Festbreitenschrift (v3.3.0). */
+  function updateEditorFont() {
+    el.body.parentElement.classList.toggle('grid-font', !!(Tables && Tables.hasGrid && Tables.hasGrid(el.body.value)));
   }
 
   function renderNoteQuestions(body) {
@@ -3184,6 +3191,7 @@
   async function onEdit() {
     if (state.currentId == null) return;
     renderNoteQuestions(el.body.value);
+    updateEditorFont();
     schedulePreview();
     markEdited();
     await saveNote();
@@ -3289,6 +3297,7 @@
     setFieldKeepingCaret(el.body, body);
     sync.base = { title: theirs.title, body: theirs.body, updatedAt: theirs.updated_at };
     renderNoteQuestions(el.body.value);
+    updateEditorFont();
     schedulePreview();
     renderMeta(sync.createdAt, theirs.updated_at, theirs.updated_by);
     if (announce) {
@@ -3418,6 +3427,26 @@
   }
 
   // ---------- Toolleiste ----------
+
+  /** Ersetzt den Text durch next, aber nur den Teil, der sich unterscheidet, und über execCommand: so bleibt Rückgängig erhalten
+   *  (für das Ausrichten beim Tippen in Tabellen mit Rahmen). Danach die Auswahl. */
+  function replaceKeepingUndo(next, selStart, selEnd) {
+    const cur = el.body.value;
+    let p = 0;
+    while (p < cur.length && p < next.length && cur[p] === next[p]) p++;
+    let q = 0;
+    while (q < cur.length - p && q < next.length - p && cur[cur.length - 1 - q] === next[next.length - 1 - q]) q++;
+    const ins = next.slice(p, next.length - q);
+    if (p < cur.length - q || ins) {
+      el.body.setSelectionRange(p, cur.length - q);
+      state.gridApplying = true;
+      let ok = false;
+      try { ok = !!(document.execCommand && document.execCommand(ins ? 'insertText' : 'delete', false, ins)); } catch (e) { ok = false; }
+      finally { state.gridApplying = false; }
+      if (!ok || el.body.value !== next) el.body.value = next;
+    }
+    el.body.setSelectionRange(selStart, selEnd);
+  }
 
   async function applyEdit(result) {
     el.body.value = result.text;
@@ -4814,8 +4843,15 @@
     };
     const head = check(t('Titelzeile'), true);
     const headCol = check(t('Titelspalte'), false);
+    // Tabellen mit Rahmen (v3.3.0): mehrzeilige Felder, vorgegeben; die Wahl merkt sich der Browser
+    let gridOn = true;
+    try { gridOn = localStorage.getItem('nonotes.tableGrid') !== '0'; } catch (e) { /* ohne Speicher gilt die Vorgabe */ }
+    const gridBox = check(t('Mit Rahmen (mehrzeilige Felder)'), gridOn);
+    gridBox.parentElement.title = t('Tabelle mit Rahmen aus «+---+»: Felder dürfen mehrere Zeilen haben und sich über mehrere Spalten ziehen. Ohne: einfache Tabelle wie bei GitHub');
     head.className = 'tp-head';
     headCol.className = 'tp-headcol';
+    gridBox.className = 'tp-grid-kind';
+    gridBox.addEventListener('change', () => { try { localStorage.setItem('nonotes.tableGrid', gridBox.checked ? '1' : '0'); } catch (e) { /* egal */ } });
     box.append(grid, size, opts);
     document.body.appendChild(box);
 
@@ -4834,7 +4870,7 @@
     const cellAt = (x, y) => { const d = document.elementFromPoint(x, y); return d && d.classList && d.classList.contains('tp-cell') && grid.contains(d) ? d : null; };
     const insertNow = async () => {
       if (!p.cols) return;
-      const r = Tables.insert(el.body.value, p.sel.s, p.sel.e, p.cols, p.rows, { header: head.checked, headerColumn: headCol.checked, label: tableLabel });
+      const r = Tables.insert(el.body.value, p.sel.s, p.sel.e, p.cols, p.rows, { header: head.checked, headerColumn: headCol.checked, label: tableLabel, grid: gridBox.checked });
       closeTablePicker();
       await applyEdit(r);
     };
@@ -4905,10 +4941,14 @@
     if (!found) return null;
     const tb = found.t;
     const tr = cellEl.parentElement;
+    const row = tr.closest('thead') ? -1 : Number(tr.dataset.row);
+    const col = Number(cellEl.dataset.col);
+    const spans = tb.kind === 'grid' ? (row < 0 ? tb.spans.h : tb.spans.rows[row]) : null;
     return Object.freeze({
-      noteId: state.currentId, line, row: tr.closest('thead') ? -1 : Number(tr.dataset.row), col: Number(cellEl.dataset.col),
+      noteId: state.currentId, line, row, col,
       cols: tb.cols, rows: tb.rows.length, header: !!tb.header, headerColumn: tb.meta.kopfspalte === true,
       meta: Object.freeze(JSON.parse(JSON.stringify(tb.meta))),
+      grid: tb.kind === 'grid', span: spans && spans[col] > 0 ? spans[col] : 1,
     });
   }
 
@@ -4935,6 +4975,13 @@
       { write: true, label: t('Spalte links einfügen'), action: run(text => Tables.insertColumn(text, tg.line, tg.col, 'left', tg.header ? tableLabel : null)) },
       { write: true, label: t('Spalte rechts einfügen'), action: run(text => Tables.insertColumn(text, tg.line, tg.col, 'right', tg.header ? tableLabel : null)) });
     if (tg.cols > 1) items.push({ write: true, label: t('Spalte löschen'), action: run(text => Tables.deleteColumn(text, tg.line, tg.col, caret())) });
+    // Felder verbinden und teilen, umwandeln (v3.3.0); Verbinden macht aus einer einfachen Tabelle eine mit Rahmen
+    items.push('sep');
+    if (tg.col + tg.span < tg.cols) items.push({ write: true, label: t('Mit dem Feld rechts verbinden'), title: tg.grid ? t('Das Feld zieht sich über beide Spalten, der Text kommt untereinander') : t('Das Feld zieht sich über beide Spalten; die Tabelle bekommt dafür einen Rahmen'), action: run(text => Tables.mergeRight(text, tg.line, tg.row, tg.col)) });
+    if (tg.span > 1) items.push({ write: true, label: t('Feld teilen'), title: t('Der Text bleibt im ersten Feld'), action: run(text => Tables.splitCell(text, tg.line, tg.row, tg.col)) });
+    items.push(tg.grid
+      ? { write: true, label: t('In einfache Tabelle umwandeln'), title: t('Ohne Rahmen, wie bei GitHub: verbundene Felder werden geteilt, Zeilen im Feld mit <br> verbunden'), action: run(text => Tables.convert(text, tg.line, 'pipe', caret())) }
+      : { write: true, label: t('In Tabelle mit Rahmen umwandeln'), title: t('Mit mehrzeiligen Feldern: aus <br> wird eine neue Zeile im Feld'), action: run(text => Tables.convert(text, tg.line, 'grid', caret())) });
     const fromPlugins = pluginContextEntries(tg, { multi: false, applied: false }, state.pluginTableItems);
     if (fromPlugins.length) items.push('sep', ...fromPlugins);
     showContextMenu(items, e.clientX, e.clientY);
@@ -5947,13 +5994,21 @@
       if (state.ph && handlePhKey(e)) return; // ausfüllbare Platzhalter einer Vorlage (v2.12.0)
       // Tabellen (v2.10.0): Tab und Umschalt+Tab springen von Feld zu Feld, Enter fügt eine Zeile an; die Striche werden ausgerichtet
       // Umschalt+Enter in einem Feld setzt «<br>» (v2.11.0): eine neue Zeile im Feld statt einer, die die Tabelle beendet
-      if (Tables && !mod && !e.altKey && (e.key === 'Tab' || e.key === 'Enter')) {
+      // Tabellen mit Rahmen (v3.3.0): Enter beginnt eine neue Zeile im Feld, Strg+Enter eine neue Zeile der Tabelle (in einer leeren
+      // letzten endet sie); Rücktaste und Entf an den Enden einer Zeile im Feld verbinden die Zeilen und lassen den Rahmen heil
+      if (Tables && !e.altKey) {
+        const value = el.body.value;
         const s = el.body.selectionStart || 0;
-        if (!el.body.value.slice(s, el.body.selectionEnd || s).includes('\n')) {
-          const r = e.key === 'Tab' ? Tables.move(el.body.value, s, e.shiftKey ? -1 : 1)
-            : e.shiftKey ? Tables.lineBreak(el.body.value, s) : Tables.enter(el.body.value, s);
-          if (r) { e.preventDefault(); await applyEdit(r); return; }
+        const end = el.body.selectionEnd || s;
+        let r = null;
+        if (!mod && (e.key === 'Tab' || e.key === 'Enter') && !value.slice(s, end).includes('\n')) {
+          r = e.key === 'Tab' ? Tables.move(value, s, e.shiftKey ? -1 : 1) : e.shiftKey ? Tables.lineBreak(value, s) : Tables.enter(value, s);
+        } else if (mod && !e.shiftKey && e.key === 'Enter' && s === end) {
+          r = Tables.newRow(value, s);
+        } else if (!mod && !e.shiftKey && (e.key === 'Backspace' || e.key === 'Delete') && s === end) {
+          r = Tables.joinLine(value, s, e.key === 'Backspace' ? -1 : 1);
         }
+        if (r) { e.preventDefault(); if (r.text !== value || r.selStart !== s || r.selEnd !== end) await applyEdit(r); return; }
       }
       // Listen, Aufgaben, Zitate und Antworten weiterführen; Shift+Enter bleibt die normale neue Zeile.
       if (e.key === 'Enter' && !mod && !e.shiftKey && !e.altKey) {
@@ -5979,8 +6034,28 @@
       else if (k === 'k') { e.preventDefault(); await runCommand('link'); }
     });
 
+    // Tabellen mit Rahmen (v3.3.0): beim Tippen bleiben die Striche untereinander (Tables.typed); der Text davor kommt aus beforeinput
+    // Rückgängig und Wiederholen bleiben, wie sie sind (sonst entstünde dabei ein neuer Schritt)
+    el.body.addEventListener('beforeinput', e => {
+      if (state.gridApplying) return;
+      state.gridPrev = e.inputType && e.inputType.startsWith('history') ? null : el.body.value;
+    });
+    el.body.addEventListener('input', () => {
+      const prev = state.gridPrev;
+      state.gridPrev = null;
+      if (!Tables || !Tables.typed || state.gridApplying || prev == null) return;
+      const s = el.body.selectionStart || 0;
+      if (s !== (el.body.selectionEnd || s)) return;
+      const r = Tables.typed(prev, el.body.value, s);
+      if (r) replaceKeepingUndo(r.text, r.selStart, r.selEnd);
+    });
     el.body.addEventListener('input', e => { updateMentionPopup(); updateWikiPopup(); onDateInput(e); });
     el.body.addEventListener('click', () => {
+      // Klick in den Zwischenraum eines Felds einer Tabelle mit Rahmen: der Cursor kommt hinter den Text (v3.3.0)
+      if (Tables && Tables.snap && el.body.selectionStart === el.body.selectionEnd) {
+        const p = Tables.snap(el.body.value, el.body.selectionStart || 0);
+        if (p != null) el.body.setSelectionRange(p, p);
+      }
       if (state.mention) updateMentionPopup();
       if (state.wiki) updateWikiPopup();
       if (state.dp) closeDatePicker();

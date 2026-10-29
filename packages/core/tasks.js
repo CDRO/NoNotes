@@ -65,14 +65,22 @@
     const code = tb ? tb.codeMask(lines) : null;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      const table = tb && !code[i] && tb.isRow(line) ? tb.parseAt(lines, i) : null;
+      const table = tb && !code[i] && (tb.isTableLine ? tb.isTableLine(line) : tb.isRow(line)) ? tb.parseAt(lines, i) : null;
       if (table) {
         stack.length = 0; // eine Tabelle beendet jede Liste darüber
-        for (let r = 0; r < table.rows.length; r++) {
-          const L = table.head + 2 + r;
-          cellTasks(lines[L], table.cols).forEach((c, slot) => {
-            out.push({ text: c.text, norm: normalize(c.text), done: c.done, due: c.due, reminders: c.reminders, lineIndex: L, slot, cell: true, indent: 0, parent: -1, depth: 0, people: peopleIn(c.text) });
-          });
+        // Aufgaben in den Feldern (nicht in der Titelzeile); slot zählt je Textzeile von links nach rechts, wie cellTasks(Zeile)
+        const slots = new Map();
+        for (const cell of tb.cellsOf(table, lines)) {
+          if (cell.r === 'h') continue;
+          for (const p of cell.parts) {
+            const m = CELL_TASK_RE.exec(p.text);
+            if (!m) continue;
+            const { text, due, reminders } = D().splitDue(m[2]);
+            if (!text) continue;
+            const slot = slots.get(p.line) || 0;
+            slots.set(p.line, slot + 1);
+            out.push({ text, norm: normalize(text), done: m[1] !== ' ', due, reminders, lineIndex: p.line, slot, cell: true, indent: 0, parent: -1, depth: 0, people: peopleIn(text) });
+          }
         }
         i = table.end - 1;
         continue;

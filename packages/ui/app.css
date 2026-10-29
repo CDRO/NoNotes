@@ -598,6 +598,8 @@ body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-
 .editor-tools .segmented { margin-left: 8px; }
 .editor-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr; gap: 12px; position: relative; }
 .editor-body .body { height: 100%; }
+/* Notiz mit Tabelle mit Rahmen: Festbreitenschrift, damit + und | untereinander stehen (v3.3.0); gilt auch für den Spiegel */
+.editor-body.grid-font .body { font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace; font-size: 14px; }
 /* Unsichtbarer Spiegel des Textes mit denselben Schriftmassen: misst die Pixelhöhe jeder Quellzeile. */
 #editorPane .editor-body .body-mirror {
   display: block; position: absolute; top: 0; left: 0; z-index: -1;
