@@ -845,7 +845,8 @@ Ausgeliefert werden neun Sprachen: **Deutsch (Schweiz)** (Quellsprache), **Engli
 
 ## Release
 
-Der Workflow `.github/workflows/package.yml` läuft bei jedem Push: Smoke-Test, dann zwei ZIPs
+Der Workflow `.github/workflows/package.yml` läuft bei jedem Push auf `main` und bei Pull Requests nach `main` (Pushes auf
+andere Zweige lösen nichts aus): Smoke-Test, dann zwei ZIPs
 als Artefakte: `NoNotes-<Version>.zip` und `NoNotes-with-Plugins-<Version>.zip`. Für das zweite holt der
 Workflow das Repository `CDRO/NoNotes-plugins` und baut mit `node tools/build.cjs --plugins <Ordner>`; die
 Unterordner dieses Repositorys landen in `plugins/` und stehen im Verzeichnis des Dialogs «Erweiterungen».
