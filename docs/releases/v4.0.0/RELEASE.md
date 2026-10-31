@@ -76,7 +76,7 @@ Paket (`require('nonotes-editor').engine`) und lädt `labels.js` vor der Engine.
 ## Für Entwickler
 
 - **Paket NoNotes-editor:** `tools/build.cjs` liest dessen Dateiliste (`files.cjs`) und setzt Skripte und Stylesheet an zwei neuen
-  Platzhaltern der Seitenvorlage ein (`<!-- NONOTES-EDITOR-SCRIPTS -->`, `<!-- NONOTES-EDITOR-STYLES -->`); kopiert wird wie bisher flach
+  Platzhaltern der Seitenvorlage ein (die HTML-Kommentare `NONOTES-EDITOR-SCRIPTS` und `NONOTES-EDITOR-STYLES`); kopiert wird wie bisher flach
   nach `js/` und `css/`, dazu die Lizenz nach `js/nonotes-editor-LICENSE.txt` (siehe NOTICE). `tools/editor-package.cjs` findet das Paket
   für Build, Sprachwerkzeug und Tests. Aufbau: [ARCHITECTURE.md](../../ARCHITECTURE.md).
 - **Editor in app.js:** `NoNotesEditor.create(#editorPane, { ids, onInput, attachments, refs, render, placeholders, … })` ersetzt rund
