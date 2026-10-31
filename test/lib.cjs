@@ -11,6 +11,13 @@ function loadPlaywright() {
   }
 }
 
+/** Startoptionen für Chromium: NONOTES_CHROMIUM nennt ein vorhandenes Programm (Chromium, Chrome oder chrome-headless-shell),
+ *  sonst nimmt Playwright sein eigenes (npx playwright install chromium). */
+function launchOptions(options) {
+  const exe = process.env.NONOTES_CHROMIUM;
+  return Object.assign({}, exe ? { executablePath: exe } : {}, options);
+}
+
 const state = { part: null };
 const step = name => console.log('  ✓ ' + name);
 const part = name => { state.part = name; if (process.env.NONOTES_TEST_VERBOSE) console.log('      · ' + name); };
@@ -30,7 +37,7 @@ async function suite(title, sections, options) {
   let browser = null;
   const started = Date.now();
   try {
-    if (options && options.browser) browser = calm(await loadPlaywright().chromium.launch());
+    if (options && options.browser) browser = calm(await loadPlaywright().chromium.launch(launchOptions()));
     const only = process.env.NONOTES_TEST_ONLY; // nur Abschnitte, deren Name das Wort enthält (Entwicklung)
     for (const s of sections) {
       if (only && !(s.name || '').includes(only)) continue;
@@ -49,4 +56,4 @@ async function suite(title, sections, options) {
   if (process.exitCode) process.exit(process.exitCode);
 }
 
-module.exports = { loadPlaywright, suite, step, part };
+module.exports = { loadPlaywright, launchOptions, suite, step, part };

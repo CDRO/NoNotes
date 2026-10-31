@@ -88,7 +88,7 @@ async function shoot(args) {
   const app = buildApp(args, script);
 
   const { chromium } = loadPlaywright();
-  const browser = await chromium.launch();
+  const browser = await chromium.launch(process.env.NONOTES_CHROMIUM ? { executablePath: process.env.NONOTES_CHROMIUM } : {});
   const made = [];
   const errors = [];
   try {

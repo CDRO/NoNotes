@@ -2281,7 +2281,8 @@ async function runI18n(browser, part, step) {
     part(qps ? 'Pseudo-Sprache: jeder feste Text der Oberfläche läuft über das Sprachsystem' : 'Englisch: in allen Ansichten, Dialogen und Rückfragen steht kein Deutsch mehr');
   }
 
-  /** Baut eine Kopie des Builds mit einem kleinen Testpaket «tt» (Testsprache) hinter den echten Paketen. */
+  /** Baut eine Kopie des Builds mit einem kleinen Testpaket «tt» (Testsprache) hinter den echten Paketen. Dazu zwei Ergänzungen
+   *  (NoNotesI18n.extend, seit v4.0.0 gewinnt die Ergänzung gegen das Paket): eine vor dem Paket geladen, eine danach. */
   function buildWithTestPack(tmp) {
     const dir = path.join(tmp, 'NoNotes');
     fs.cpSync(DIST, dir, { recursive: true });
@@ -2297,9 +2298,12 @@ async function runI18n(browser, part, step) {
     'Meine Notizen': 'TT my notes',
   }, { locale: 'en' });
   `);
+    fs.writeFileSync(path.join(dir, 'lang', 'tt-early.js'), `NoNotesI18n.extend('tt', { 'Mindmap': 'TT map early', 'Ohne Titel': 'TT untitled early' });\n`);
+    fs.writeFileSync(path.join(dir, 'lang', 'tt-late.js'), `NoNotesI18n.extend('tt', { 'Mindmap': 'TT map late', 'Liste': 'TT list extended', 'Sprache': '' });\n`);
     const html = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
     assert.ok(html.includes('<script src="lang/en.js"></script>'), 'en.js eingebunden');
-    fs.writeFileSync(path.join(dir, 'index.html'), html.replace('<script src="lang/en.js"></script>', '<script src="lang/en.js"></script>\n  <script src="lang/tt.js"></script>'));
+    fs.writeFileSync(path.join(dir, 'index.html'), html.replace('<script src="lang/en.js"></script>',
+      '<script src="lang/en.js"></script>\n  <script src="lang/tt-early.js"></script>\n  <script src="lang/tt.js"></script>\n  <script src="lang/tt-late.js"></script>'));
     return dir;
   }
 
@@ -2501,7 +2505,11 @@ async function runI18n(browser, part, step) {
     assert.equal(await page.evaluate(() => NoNotesI18n.language()), 'tt');
     assert.equal(await page.evaluate(() => document.documentElement.lang), 'tt');
     assert.equal(await page.locator('#menuBtn').innerText(), 'TT db ▾');
-    assert.equal(await page.locator('#viewMapBtn').innerText(), 'TT map');
+    // NoNotesI18n.extend (v4.0.0): die Ergänzung gewinnt gegen das Paket, vor und nach ihm geladen; eine spätere gegen eine frühere;
+    // ein leerer Text ersetzt nichts
+    assert.equal(await page.locator('#viewMapBtn').innerText(), 'TT map late', 'spätere Ergänzung gewinnt gegen Paket und frühere Ergänzung');
+    assert.equal(await page.locator('#viewListBtn').innerText(), 'TT list extended', 'Ergänzung nach dem Paket gewinnt');
+    assert.equal(await page.evaluate(() => NoNotesI18n.t('Ohne Titel')), 'TT untitled early', 'Ergänzung vor dem Paket gewinnt');
     assert.equal(await page.locator('#mapNewBtn').innerText(), 'TT new note');
     assert.equal(await page.locator('#langMenu').isVisible(), true, 'Sprachwechsel sichtbar bei mehr als einer Sprache');
     assert.equal(await page.locator('#langBtn').innerText(), 'TT');

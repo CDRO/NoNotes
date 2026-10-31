@@ -19,8 +19,11 @@ const { spawnSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const LANG_DIR = path.join(ROOT, 'lang');
-const SOURCE_DIRS = ['packages', 'editions'];
-const SKIP_FILES = new Set(['packages/core/i18n.js']);
+// Die Texte des Editors (Paket nonotes-editor, seit v4.0.0) gehören zur App: die Sprachpakete in lang/ übersetzen sie mit (labels.js
+// nimmt NoNotesI18n als Übersetzer). Das Paket liegt unter node_modules, bei einem Submodul auch weiter oben (require.resolve).
+const EDITOR_SRC = path.relative(ROOT, path.join(require('./editor-package.cjs').editorPackage().root, 'src')).split(path.sep).join('/');
+const SOURCE_DIRS = ['packages', 'editions', EDITOR_SRC];
+const SKIP_FILES = new Set(['packages/core/i18n.js', `${EDITOR_SRC}/labels.js`]);
 
 // ---------- Quelltext lesen ----------
 
@@ -124,7 +127,7 @@ function scanMarkup() {
     const path = require('node:path');
     let pw; try { pw = require('playwright'); } catch (e) { if (process.env.PLAYWRIGHT_MODULE) pw = require(process.env.PLAYWRIGHT_MODULE); else throw e; }
     (async () => {
-      const browser = await pw.chromium.launch();
+      const browser = await pw.chromium.launch(process.env.NONOTES_CHROMIUM ? { executablePath: process.env.NONOTES_CHROMIUM } : {});
       const page = await browser.newPage();
       await page.goto('file://' + path.join(${JSON.stringify(ROOT)}, 'dist', 'NoNotes', 'index.html'));
       await page.waitForSelector('body[data-ready="true"]', { timeout: 30000 });

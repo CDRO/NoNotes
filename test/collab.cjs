@@ -11,6 +11,9 @@ const { spawnSync } = require('node:child_process');
 const { suite } = require('./lib.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
+// Markdown-Engine und Editor liegen seit v4.0.0 im Paket nonotes-editor (devDependency): ED('tasks.js') ist der Pfad relativ zu ROOT
+const { editorFile } = require('../tools/editor-package.cjs');
+const ED = f => path.relative(ROOT, editorFile(f)).split(path.sep).join('/');
 const DIST = path.join(ROOT, 'dist', 'NoNotes');
 const APP_URL = 'file://' + path.join(DIST, 'index.html');
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
@@ -549,7 +552,7 @@ async function runExternal(browser, part, step) {
     const sandbox = { console };
     sandbox.window = sandbox;
     const context = vm.createContext(sandbox);
-    for (const f of ['packages/core/i18n.js', 'packages/core/history.js', 'packages/core/dates.js', 'packages/core/questions.js', 'packages/core/tasks.js', 'packages/core/backend.js', 'packages/data/db.js']) {
+    for (const f of ['packages/core/i18n.js', ED('labels.js'), 'packages/core/history.js', ED('dates.js'), ED('questions.js'), ED('tasks.js'), 'packages/core/backend.js', 'packages/data/db.js']) {
       vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
     }
     return { SQL: await initSqlJs(), DB: sandbox.NoNotesDB };
