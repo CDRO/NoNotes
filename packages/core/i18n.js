@@ -1,7 +1,8 @@
 /* NoNotes – Sprachen.
    Der deutsche Text im Quelltext ist der Schlüssel (wie bei gettext). Ohne Sprachpaket bleibt es deutsch.
    Weitere Sprachen liegen als Dateien in lang/ und werden mit register() angemeldet; extend() ergänzt ein Paket um Texte
-   einer Ausprägung oder Erweiterung (auch wenn es erst später geladen wird).
+   einer Ausprägung oder Erweiterung (auch wenn es erst später geladen wird) und ersetzt dabei seit v4.0.0 auch Texte, die das
+   Paket schon hat: die Ergänzung gewinnt.
 
    Im Code:   t('Neue Notiz')                               einfacher Text
               t('{n} Treffer in {ort}', { n: 3, ort: 'X' })  mit Platzhaltern
@@ -34,8 +35,8 @@
 
   function register(code, name, messages, options) {
     const map = new Map(Object.entries(messages || {}));
-    // Ergänzungen, die vor dem Paket angemeldet wurden, kommen hinzu; Texte des Pakets selbst bleiben unverändert.
-    for (const [k, v] of extras.get(code) || []) if (!map.has(k)) map.set(k, v);
+    // Ergänzungen, die vor dem Paket angemeldet wurden, kommen hinzu und gewinnen gegen die Texte des Pakets (seit v4.0.0).
+    for (const [k, v] of extras.get(code) || []) map.set(k, v);
     const o = options || {};
     packs.set(code, {
       code, name, locale: o.locale || code, messages: map, source: !!o.source,
@@ -45,14 +46,17 @@
   }
 
   /** Ergänzt die Texte einer Sprache um weitere (zum Beispiel einer Ausprägung oder Erweiterung), egal ob das Paket schon
-   *  geladen ist oder erst danach kommt. Texte, die das Paket schon hat, werden nicht ersetzt. */
+   *  geladen ist oder erst danach kommt. Seit v4.0.0 gewinnt die Ergänzung: ein Text, den das Paket schon hat, wird ersetzt
+   *  (bis v3.x blieb der des Pakets). Ein späteres extend() ersetzt ein früheres. Leere Texte ('') und andere Werte als Text
+   *  oder Mehrzahl-Objekt ersetzen nichts. */
   function extend(code, messages) {
     let more = extras.get(code);
     if (!more) extras.set(code, more = new Map());
     const pack = packs.get(code);
     for (const [k, v] of Object.entries(messages || {})) {
+      if (v === '' || v == null || (typeof v !== 'string' && typeof v !== 'object')) continue;
       more.set(k, v);
-      if (pack && !pack.messages.has(k)) pack.messages.set(k, v);
+      if (pack) pack.messages.set(k, v);
     }
   }
 

@@ -7,6 +7,7 @@
   <meta name="description" content="NoNotes – lokale Notizen als Mindmap, gespeichert in einer SQLite-Datei. Läuft ohne Server direkt im Browser.">
   <title>NoNotes</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Ctext x='16' y='22' font-family='system-ui,sans-serif' font-size='18' font-weight='700' fill='white' text-anchor='middle'%3EN%3C/text%3E%3C/svg%3E">
+  <!-- NONOTES-EDITOR-STYLES -->
   <link rel="stylesheet" href="app.css">
 </head>
 <body data-ready="false" class="view-map">
@@ -206,55 +207,7 @@
             <input type="text" id="tagInput" data-write class="tag-input" list="tagSuggestions" placeholder="Tag hinzufügen…" aria-label="Tag hinzufügen" autocomplete="off">
             <datalist id="tagSuggestions"></datalist>
           </div>
-          <div class="editor-tools">
-            <div class="toolbar" id="mdToolbar" role="toolbar" aria-label="Formatierung">
-              <select id="headingSelect" class="tb-select" aria-label="Überschrift" title="Überschrift setzen">
-                <option value="">Überschrift…</option>
-                <option value="1">Überschrift 1</option>
-                <option value="2">Überschrift 2</option>
-                <option value="3">Überschrift 3</option>
-                <option value="4">Überschrift 4</option>
-                <option value="0">Normaler Text</option>
-              </select>
-              <span class="tb-sep" aria-hidden="true"></span>
-              <button type="button" data-cmd="bold" title="Fett (Ctrl+B)" aria-label="Fett"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2h5a3.5 3.5 0 0 1 2.4 6A3.5 3.5 0 0 1 9.5 14H4V2zm2 2v3h3a1.5 1.5 0 0 0 0-3H6zm0 5v3h3.5a1.5 1.5 0 0 0 0-3H6z"/></svg></button>
-              <button type="button" data-cmd="italic" title="Kursiv (Ctrl+I)" aria-label="Kursiv"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2h7v2h-2.5l-2 8H11v2H4v-2h2.5l2-8H6z"/></svg></button>
-              <button type="button" data-cmd="strike" title="Durchgestrichen" aria-label="Durchgestrichen"><span class="tb-glyph tb-strike">S</span></button>
-              <button type="button" data-cmd="code" title="Code" aria-label="Code"><span class="tb-glyph tb-mono">&lt;/&gt;</span></button>
-              <span class="tb-sep" aria-hidden="true"></span>
-              <button type="button" data-cmd="bullet" title="Liste" aria-label="Liste"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3" cy="4" r="1.3"/><rect x="6" y="3.2" width="8" height="1.6"/><circle cx="3" cy="8" r="1.3"/><rect x="6" y="7.2" width="8" height="1.6"/><circle cx="3" cy="12" r="1.3"/><rect x="6" y="11.2" width="8" height="1.6"/></svg></button>
-              <button type="button" data-cmd="ordered" title="Nummerierte Liste" aria-label="Nummerierte Liste"><span class="tb-glyph">1.</span></button>
-              <button type="button" data-cmd="task" title="Aufgabe (Kästchen zum Abhaken)" aria-label="Aufgabe"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4.5 8.2l2.3 2.3 4.7-4.9" fill="none" stroke="currentColor" stroke-width="1.8"/></svg></button>
-              <button type="button" data-cmd="date" title="Termin am Zeilenende: Datum wählen (auch «&gt;» tippen, Strg+Leertaste auf einem Termin ändert ihn)" aria-label="Termin"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M2 6.5h12 M5.2 1.6v2.8 M10.8 1.6v2.8" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="9" y="8.6" width="3" height="3" rx=".6"/></svg></button>
-              <button type="button" data-cmd="quote" title="Zitat" aria-label="Zitat"><span class="tb-glyph tb-quote">“</span></button>
-              <button type="button" data-cmd="codeblock" title="Codeblock" aria-label="Codeblock"><span class="tb-glyph tb-mono">{ }</span></button>
-              <button type="button" data-cmd="hr" title="Trennlinie" aria-label="Trennlinie"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="7.2" width="12" height="1.6"/></svg></button>
-              <button type="button" data-cmd="table" title="Tabelle einfügen: Grösse im Raster wählen (bis 8 × 10)" aria-label="Tabelle einfügen" aria-haspopup="dialog"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M2 6.2h12 M2 9.8h12 M6.2 2.5v11 M10 2.5v11" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
-              <span class="tb-sep" aria-hidden="true"></span>
-              <button type="button" data-cmd="link" title="Link (Ctrl+K)" aria-label="Link"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 9.5a3 3 0 0 0 4.2 0l2-2a3 3 0 0 0-4.2-4.2l-1 1" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9.5 6.5a3 3 0 0 0-4.2 0l-2 2a3 3 0 0 0 4.2 4.2l1-1" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></button>
-              <button type="button" data-cmd="wiki" title="Verweis auf eine Notiz [[Titel]]" aria-label="Verweis auf Notiz"><span class="tb-glyph tb-mono">[[ ]]</span></button>
-              <button type="button" id="attachBtn" title="Bild einfügen (auch per Einfügen aus der Zwischenablage oder Ablegen auf dem Text)" aria-label="Bild einfügen"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="5.5" cy="6.5" r="1.3"/><path d="M3 12l3.5-3.5 2.5 2.5 2-2 3 3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button>
-              <span class="tb-sep" aria-hidden="true"></span>
-              <button type="button" id="questionBtn" data-cmd="question" title="Zeile als Frage markieren, mehrere Zeilen als Block (Ctrl+Shift+F)" aria-label="Frage"><span class="tb-glyph tb-q">?</span></button>
-              <button type="button" id="answerBtn" data-cmd="answer" title="Zeile als Antwort markieren (Ctrl+Shift+A)" aria-label="Antwort"><span class="tb-glyph tb-a">!</span></button>
-              <button type="button" id="decisionBtn" data-cmd="decision" title="Zeile als Entscheid markieren, mehrere Zeilen als Block (Ctrl+Shift+D)" aria-label="Entscheid"><span class="tb-glyph tb-d">?!</span></button>
-            </div>
-            <div class="segmented small" id="modeSwitch" role="tablist" aria-label="Darstellung">
-              <button type="button" role="tab" data-mode="edit" aria-selected="true" title="Bearbeiten (Ctrl+E)">Bearbeiten</button>
-              <button type="button" role="tab" data-mode="split" aria-selected="false" title="Geteilt (Ctrl+E)">Geteilt</button>
-              <button type="button" role="tab" data-mode="preview" aria-selected="false" title="Vorschau (Ctrl+E)">Vorschau</button>
-            </div>
-            <button type="button" id="helpBtn" class="help-btn" title="Hilfe: alles, was der Editor kann (F1)" aria-label="Hilfe">?</button>
-          </div>
-          <div class="attachments" id="attachments" aria-label="Anhänge" hidden></div>
-          <div class="editor-body" id="editorBody">
-            <textarea id="body" class="body" placeholder="Notiz… (Markdown; Zeile mit ? = Frage, ?! = Entscheid, darunter Zeilen mit ! = Antwort; [[Titel]] verweist auf eine Notiz)" aria-label="Inhalt" spellcheck="true"></textarea>
-            <div id="preview" class="preview md" aria-label="Vorschau" tabindex="0"></div>
-            <div id="bodyMirror" class="body body-mirror" aria-hidden="true"></div>
-            <div id="mentionPopup" class="mention-popup" role="listbox" aria-label="Personen" hidden></div>
-            <div id="phHint" class="ph-hint" role="note" aria-live="polite" hidden></div>
-            <div id="wikiPopup" class="mention-popup wiki-popup" hidden><div id="wikiCount" class="wiki-count" aria-live="polite"></div><div id="wikiList" class="wiki-list" role="listbox" aria-label="Notizen"></div></div>
-          </div>
+          <!-- Editor (NoNotesEditor aus dem Paket nonotes-editor): Toolleiste, Darstellung, Bilder, Text, Vorschau; app.js hängt ihn hier an -->
         </div>
       </section>
     </main>
@@ -721,26 +674,17 @@ Firmenname wie im Handelsregister, **ohne** Rechtsform.
   <div id="boot" class="boot">Lade NoNotes…</div>
 
   <input type="file" id="importInput" accept=".sqlite,.sqlite3,.db,application/vnd.sqlite3,application/x-sqlite3" hidden>
-  <input type="file" id="attachInput" accept="image/*" multiple hidden>
   <input type="file" id="templateInput" accept=".md,.markdown,text/markdown" multiple hidden>
 
   <script src="version.js"></script>
   <script src="../core/i18n.js"></script>
+  <!-- NONOTES-EDITOR-SCRIPTS -->
   <!-- LANG-PACKS -->
   <script src="../core/palette.js"></script>
   <script src="../core/plugins.js"></script>
   <script src="../core/history.js"></script>
   <script src="../core/merge.js"></script>
-  <script src="../core/placeholders.js"></script>
-  <script src="../core/dates.js"></script>
-  <script src="../core/questions.js"></script>
-  <script src="../core/mentions.js"></script>
-  <script src="../core/tasks.js"></script>
   <script src="../core/links.js"></script>
-  <script src="../core/embeds.js"></script>
-  <script src="../core/tables.js"></script>
-  <script src="../core/markdown.js"></script>
-  <script src="../core/editing.js"></script>
   <script src="../core/templates.js"></script>
   <script src="../core/routes.js"></script>
   <script src="../core/move.js"></script>
@@ -755,8 +699,6 @@ Firmenname wie im Handelsregister, **ohne** Rechtsform.
   <script src="../core/export.js"></script>
   <script src="../core/ical.js"></script>
   <script src="print.js"></script>
-  <script src="scrollsync.js"></script>
-  <script src="datepicker.js"></script>
   <script src="flags.js"></script>
   <script src="../../plugins/plugins.js"></script>
   <script src="app.js"></script>

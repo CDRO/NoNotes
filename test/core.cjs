@@ -11,6 +11,9 @@ const { spawnSync } = require('node:child_process');
 const { suite } = require('./lib.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
+// Markdown-Engine und Editor liegen seit v4.0.0 im Paket nonotes-editor (devDependency): ED('tasks.js') ist der Pfad relativ zu ROOT
+const { editorFile, editorPackage } = require('../tools/editor-package.cjs');
+const ED = f => path.relative(ROOT, editorFile(f)).split(path.sep).join('/');
 const DIST = path.join(ROOT, 'dist', 'NoNotes');
 const APP_URL = 'file://' + path.join(DIST, 'index.html');
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
@@ -207,7 +210,7 @@ async function runDb(browser, part, step) {
     static now() { return now; }
   };
   const context = vm.createContext(sandbox);
-  for (const f of ['packages/core/i18n.js', 'packages/core/history.js', 'packages/core/dates.js', 'packages/core/questions.js', 'packages/core/tasks.js', 'packages/core/links.js', 'packages/core/backend.js', 'packages/core/merge.js', 'packages/data/db.js']) {
+  for (const f of ['packages/core/i18n.js', ED('labels.js'), 'packages/core/history.js', ED('dates.js'), ED('questions.js'), ED('tasks.js'), 'packages/core/links.js', 'packages/core/backend.js', 'packages/core/merge.js', 'packages/data/db.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
   }
   const SQL = await require(path.join(ROOT, 'vendor', 'sql.js', 'sql-asm.js'))();
@@ -510,8 +513,17 @@ async function runBuild(browser, part, step) {
     assert.ok(fs.existsSync(path.join(out, 'NOTICE')) && fs.existsSync(path.join(out, 'plugins', 'plugins.js')));
     assert.ok(!fs.existsSync(path.join(out, 'docs')) && !fs.existsSync(path.join(out, 'README.md')) && !fs.existsSync(path.join(out, 'vendor')), 'nur, was die Ausprägung einschliesst');
     assert.ok(!fs.existsSync(path.join(out, 'js', 'db.js')) && !fs.existsSync(path.join(out, 'js', 'local-shell.js')), 'nichts von der lokalen Ausprägung');
+    // Paket nonotes-editor (v4.0.0): seine Skripte in der Reihenfolge aus files.cjs vor den Sprachpaketen, sein Stylesheet vor app.css,
+    // seine Lizenz neben den Skripten, keine offenen Platzhalter
+    const pkg = editorPackage();
+    const at = pkg.scripts.map(x => html.indexOf(`<script src="js/${x.name}"></script>`));
+    assert.ok(at.every((i, k) => i > 0 && (!k || at[k - 1] < i)) && at[0] > html.indexOf('js/i18n.js') && at[at.length - 1] < html.indexOf('js/palette.js'), 'Skripte des Editors in Reihenfolge: ' + at);
+    assert.ok(pkg.scripts.every(x => fs.existsSync(path.join(out, 'js', x.name))) && fs.existsSync(path.join(out, 'css', 'editor.css')));
+    assert.ok(html.indexOf('css/editor.css') > 0 && html.indexOf('css/editor.css') < html.indexOf('css/app.css'), 'editor.css vor app.css');
+    assert.match(fs.readFileSync(path.join(out, 'js', 'nonotes-editor-LICENSE.txt'), 'utf8'), /MIT License/);
+    assert.ok(!html.includes('NONOTES-EDITOR'), 'keine offenen Platzhalter des Editors');
     assert.match(fs.readFileSync(path.join(out, 'js', 'version.js'), 'utf8'), /v9\.9\.9/);
-    part('Fremde Ausprägung: Skripte in Reihenfolge, eigener Hilfeabschnitt, nur eingeschlossene Teile, Version gesetzt');
+    part('Fremde Ausprägung: Skripte in Reihenfolge, Editor aus dem Paket, eigener Hilfeabschnitt, nur eingeschlossene Teile, Version gesetzt');
 
     // Verzeichnis der Erweiterungen: alle .js im Zielordner plugins/, auch die der Ausprägung, mit ihren Angaben; die Liste bleibt
     const listJs = fs.readFileSync(path.join(out, 'plugins', 'plugins.js'), 'utf8');
@@ -584,7 +596,7 @@ async function runBuild(browser, part, step) {
    Link statt Bild ohne Einbetten. */
 async function runEmbeds(browser, part, step) {
   globalThis.window = globalThis;
-  for (const f of ['i18n.js', 'embeds.js', 'markdown.js']) require(path.join(__dirname, '..', 'packages', 'core', f));
+  for (const f of ['i18n.js', 'labels.js', 'embeds.js', 'markdown.js']) require(f === 'i18n.js' ? path.join(ROOT, 'packages', 'core', f) : editorFile(f));
   const E = globalThis.NoNotesEmbeds;
   const M = globalThis.NoNotesMarkdown;
 
@@ -685,7 +697,7 @@ async function runAgent(browser, part, step) {
   sandbox.window = sandbox;
   sandbox.Date = class extends RealDate { constructor(...a) { if (a.length === 0) super(now); else super(...a); } static now() { return now; } };
   const context = vm.createContext(sandbox);
-  for (const f of ['packages/core/i18n.js', 'packages/core/history.js', 'packages/core/dates.js', 'packages/core/questions.js', 'packages/core/tasks.js', 'packages/core/links.js', 'packages/core/backend.js', 'packages/core/merge.js', 'packages/data/db.js', 'packages/store-local/backend-local.js', 'packages/agent/catalog.js', 'packages/agent/protocol.js']) {
+  for (const f of ['packages/core/i18n.js', ED('labels.js'), 'packages/core/history.js', ED('dates.js'), ED('questions.js'), ED('tasks.js'), 'packages/core/links.js', 'packages/core/backend.js', 'packages/core/merge.js', 'packages/data/db.js', 'packages/store-local/backend-local.js', 'packages/agent/catalog.js', 'packages/agent/protocol.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
   }
   const SQL = await initSqlJs();
@@ -1219,8 +1231,8 @@ async function runEntries(browser, part, step) {
   sandbox.window = sandbox;
   sandbox.Date = class extends RealDate { constructor(...a) { if (a.length === 0) super(now); else super(...a); } static now() { return now; } };
   const context = vm.createContext(sandbox);
-  for (const f of ['packages/core/i18n.js', 'packages/core/history.js', 'packages/core/dates.js', 'packages/core/questions.js', 'packages/core/tasks.js', 'packages/core/links.js',
-    'packages/core/backend.js', 'packages/core/merge.js', 'packages/core/markdown.js', 'packages/core/editing.js', 'packages/core/export.js', 'packages/data/db.js',
+  for (const f of ['packages/core/i18n.js', ED('labels.js'), 'packages/core/history.js', ED('dates.js'), ED('questions.js'), ED('tasks.js'), 'packages/core/links.js',
+    'packages/core/backend.js', 'packages/core/merge.js', ED('markdown.js'), ED('editing.js'), 'packages/core/export.js', 'packages/data/db.js',
     'packages/store-local/backend-local.js', 'packages/agent/catalog.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
   }
@@ -1554,7 +1566,7 @@ async function runTemplates(browser, part, step) {
   const sandbox = { console };
   sandbox.window = sandbox;
   const context = vm.createContext(sandbox);
-  for (const f of ['packages/core/i18n.js', 'lang/en.js', 'packages/core/history.js', 'packages/core/dates.js', 'packages/core/questions.js', 'packages/core/tasks.js',
+  for (const f of ['packages/core/i18n.js', ED('labels.js'), 'lang/en.js', 'packages/core/history.js', ED('dates.js'), ED('questions.js'), ED('tasks.js'),
     'packages/core/links.js', 'packages/core/backend.js', 'packages/core/merge.js', 'packages/core/templates.js', 'packages/data/db.js',
     'packages/store-local/backend-local.js', 'packages/agent/catalog.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
@@ -1692,7 +1704,7 @@ async function runTemplates(browser, part, step) {
 
 async function runTables(browser, part, step) {
   globalThis.window = globalThis;
-  for (const f of ['i18n.js', 'dates.js', 'questions.js', 'embeds.js', 'tables.js', 'markdown.js']) require(path.join(__dirname, '..', 'packages', 'core', f));
+  for (const f of ['i18n.js', 'labels.js', 'dates.js', 'questions.js', 'embeds.js', 'tables.js', 'markdown.js']) require(f === 'i18n.js' ? path.join(ROOT, 'packages', 'core', f) : editorFile(f));
   const Tb = globalThis.NoNotesTables;
   const M = globalThis.NoNotesMarkdown;
   const sel = r => r.text.slice(r.selStart, r.selEnd);
@@ -1905,7 +1917,7 @@ async function runTables(browser, part, step) {
 
 async function runGridTables(browser, part, step) {
   globalThis.window = globalThis;
-  for (const f of ['i18n.js', 'dates.js', 'questions.js', 'embeds.js', 'tables.js', 'tasks.js', 'markdown.js']) require(path.join(__dirname, '..', 'packages', 'core', f));
+  for (const f of ['i18n.js', 'labels.js', 'dates.js', 'questions.js', 'embeds.js', 'tables.js', 'tasks.js', 'markdown.js']) require(f === 'i18n.js' ? path.join(ROOT, 'packages', 'core', f) : editorFile(f));
   const Tb = globalThis.NoNotesTables;
   const M = globalThis.NoNotesMarkdown;
   const Tk = globalThis.NoNotesTasks;
@@ -2115,8 +2127,8 @@ async function runCellsPeople(browser, part, step) {
   const sandbox = { console };
   sandbox.window = sandbox;
   const context = vm.createContext(sandbox);
-  for (const f of ['packages/core/i18n.js', 'packages/core/history.js', 'packages/core/dates.js', 'packages/core/questions.js', 'packages/core/tables.js',
-    'packages/core/tasks.js', 'packages/core/links.js', 'packages/core/backend.js', 'packages/core/merge.js', 'packages/core/embeds.js', 'packages/core/markdown.js',
+  for (const f of ['packages/core/i18n.js', ED('labels.js'), 'packages/core/history.js', ED('dates.js'), ED('questions.js'), ED('tables.js'),
+    ED('tasks.js'), 'packages/core/links.js', 'packages/core/backend.js', 'packages/core/merge.js', ED('embeds.js'), ED('markdown.js'),
     'packages/core/export.js', 'packages/data/db.js', 'packages/store-local/backend-local.js', 'packages/agent/catalog.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
   }
@@ -2460,7 +2472,7 @@ async function runReleaseNotes(browser, part, step) {
 /* Pfade auf Dateien und Ordner (v2.12.0) als reine Funktionen: Erkennen, Adresse, Schreibweise zum Kopieren, Ordner, Einfügen, Grenzen. */
 async function runPathsCore(browser, part, step) {
   globalThis.window = globalThis;
-  for (const f of ['i18n.js', 'embeds.js', 'markdown.js']) require(path.join(__dirname, '..', 'packages', 'core', f));
+  for (const f of ['i18n.js', 'labels.js', 'embeds.js', 'markdown.js']) require(f === 'i18n.js' ? path.join(ROOT, 'packages', 'core', f) : editorFile(f));
   const M = window.NoNotesMarkdown;
   M.configure({ localFiles: true });
   const P = M.pathInfo;
@@ -2501,9 +2513,10 @@ async function runPathsCore(browser, part, step) {
 async function runPlaceholdersCore(browser, part, step) {
   const sandbox = { console };
   sandbox.window = sandbox;
+  { const RealDate = Date; const now = RealDate.parse('2026-10-20T08:00:00Z'); sandbox.Date = class extends RealDate { constructor(...a) { if (a.length === 0) super(now); else super(...a); } static now() { return now; } }; }
   const context = vm.createContext(sandbox);
-  for (const f of ['packages/core/i18n.js', 'packages/core/placeholders.js', 'packages/core/history.js', 'packages/core/dates.js', 'packages/core/questions.js',
-    'packages/core/tables.js', 'packages/core/tasks.js', 'packages/core/links.js', 'packages/core/embeds.js', 'packages/core/markdown.js', 'packages/core/backend.js',
+  for (const f of ['packages/core/i18n.js', ED('labels.js'), ED('placeholders.js'), 'packages/core/history.js', ED('dates.js'), ED('questions.js'),
+    ED('tables.js'), ED('tasks.js'), 'packages/core/links.js', ED('embeds.js'), ED('markdown.js'), 'packages/core/backend.js',
     'packages/core/merge.js', 'packages/core/templates.js', 'packages/core/zip.js', 'packages/core/export.js', 'packages/data/db.js',
     'packages/store-local/backend-local.js', 'packages/agent/catalog.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
@@ -2613,8 +2626,8 @@ async function runDatesV3(browser, part, step) {
   const sandbox = { console, TextEncoder, crypto: globalThis.crypto };
   sandbox.window = sandbox;
   const context = vm.createContext(sandbox);
-  for (const f of ['packages/core/i18n.js', 'packages/core/placeholders.js', 'packages/core/history.js', 'packages/core/dates.js', 'packages/core/questions.js',
-    'packages/core/tables.js', 'packages/core/tasks.js', 'packages/core/links.js', 'packages/core/embeds.js', 'packages/core/markdown.js', 'packages/core/backend.js',
+  for (const f of ['packages/core/i18n.js', ED('labels.js'), ED('placeholders.js'), 'packages/core/history.js', ED('dates.js'), ED('questions.js'),
+    ED('tables.js'), ED('tasks.js'), 'packages/core/links.js', ED('embeds.js'), ED('markdown.js'), 'packages/core/backend.js',
     'packages/core/merge.js', 'packages/core/templates.js', 'packages/core/ical.js', 'packages/data/db.js', 'packages/store-local/backend-local.js', 'packages/agent/catalog.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
   }
@@ -2820,7 +2833,7 @@ async function runNodeLinks(browser, part, step) {
   const sandbox = { console };
   sandbox.window = sandbox;
   const context = vm.createContext(sandbox);
-  for (const f of ['packages/core/i18n.js', 'packages/core/history.js', 'packages/core/dates.js', 'packages/core/questions.js', 'packages/core/tasks.js',
+  for (const f of ['packages/core/i18n.js', ED('labels.js'), 'packages/core/history.js', ED('dates.js'), ED('questions.js'), ED('tasks.js'),
     'packages/core/links.js', 'packages/core/backend.js', 'packages/core/merge.js', 'packages/core/move.js', 'packages/data/db.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
   }

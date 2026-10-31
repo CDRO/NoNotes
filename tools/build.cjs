@@ -9,6 +9,10 @@
    Die Seite ist eine gemeinsame Vorlage (packages/ui/index.html) mit zwei Platzhaltern für die Ausprägung:
      <!-- EDITION-SCRIPTS -->        die Skripte der Ausprägung (Hülle, Backend ...)
      <!-- EDITION-HELP-STORAGE -->   der Abschnitt «Wo liegen meine Notizen?» der Hilfe
+   und zwei für das Paket nonotes-editor (Markdown-Engine und Editor, devDependency, seit v4.0.0):
+     <!-- NONOTES-EDITOR-SCRIPTS --> seine Skripte in der Reihenfolge aus seiner files.cjs (Texte, Sprachen, Engine, Editor)
+     <!-- NONOTES-EDITOR-STYLES -->  sein Stylesheet (editor.css, vor app.css)
+   Die Dateien des Pakets kommen wie die eigenen flach nach js/ und css/; nichts wird übersetzt oder gebündelt.
    Eine Ausprägung ist ein Ordner mit edition.json:
      { "id": "local",
        "scripts": ["@core/packages/data/db.js", "edition.js"],   @core/ = Wurzel dieses Projekts, sonst relativ zum Ordner
@@ -33,6 +37,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { editorPackage } = require('./editor-package.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const TEMPLATE = path.join(ROOT, 'packages', 'ui', 'index.html');
@@ -162,6 +167,11 @@ function main() {
   });
   slot('EDITION-SCRIPTS', scriptTags.join('\n  ') || '<!-- keine Skripte der Ausprägung -->');
 
+  // Paket nonotes-editor: Skripte und Stylesheet aus seiner Dateiliste (files.cjs), unten wie die eigenen nach js/ und css/ kopiert
+  const editor = editorPackage();
+  slot('NONOTES-EDITOR-SCRIPTS', editor.scripts.map(x => `<script src="${fromTemplate(x.file)}"></script>`).join('\n  '));
+  slot('NONOTES-EDITOR-STYLES', editor.styles.map(x => `<link rel="stylesheet" href="${fromTemplate(x.file)}">`).join('\n  '));
+
   // Hilfeabschnitt «Datenablage»: aus der Ausprägung, sonst ein Hinweis, dass sie keinen mitbringt
   const helpFile = manifest.helpStorage ? path.join(editionDir, manifest.helpStorage) : null;
   if (helpFile && !fs.existsSync(helpFile)) throw new Error(`Hilfeabschnitt fehlt: ${helpFile}`);
@@ -206,6 +216,8 @@ function main() {
   const include = new Set(manifest.include || []);
   if (include.has('README.md')) place(path.join(ROOT, 'README.md'), 'README.md');
   if (include.has('NOTICE') && fs.existsSync(path.join(ROOT, 'NOTICE'))) place(path.join(ROOT, 'NOTICE'), 'NOTICE');
+  // Lizenz des Pakets nonotes-editor (MIT) neben seine Skripte in js/ (geht immer mit, wie die Dateien); NOTICE verweist darauf
+  if (fs.existsSync(path.join(editor.root, 'LICENSE'))) place(path.join(editor.root, 'LICENSE'), 'js/nonotes-editor-LICENSE.txt');
   const docsDir = path.join(ROOT, 'docs'); // die README verweist auf diese Dokumente
   if (include.has('docs') && fs.existsSync(docsDir)) for (const f of fs.readdirSync(docsDir).filter(f => f.endsWith('.md')).sort()) place(path.join(docsDir, f), `docs/${f}`);
   // sql.js: nur Lauf-Dateien und Lizenz, keine Archive
@@ -249,7 +261,7 @@ function main() {
   for (const m of html.matchAll(/(?:src|href)="((?:js|css|lang|vendor|plugins)\/[^"]+)"/g)) {
     if (!fs.existsSync(path.join(out, m[1]))) throw new Error(`Verweis ohne Datei im Ziel: ${m[1]}`);
   }
-  console.log(`Gebaut: ${path.relative(ROOT, out)} (Ausprägung ${manifest.id || args.edition}, Version ${args.version}, ${copied.size} Dateien, ${pluginCount} Erweiterungen im Verzeichnis)`);
+  console.log(`Gebaut: ${path.relative(ROOT, out)} (Ausprägung ${manifest.id || args.edition}, Version ${args.version}, nonotes-editor ${editor.version}, ${copied.size} Dateien, ${pluginCount} Erweiterungen im Verzeichnis)`);
 }
 
 try { main(); } catch (e) { console.error('Build fehlgeschlagen:', e.message); process.exit(1); }

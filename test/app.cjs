@@ -3015,6 +3015,7 @@ async function runPaths(browser, part, step) {
     await page.click('#preview a.md-path >> nth=1', { button: 'right' });
     assert.deepEqual(await page.locator('#contextMenu button').allTextContents(), ['Ordner öffnen', 'Pfad kopieren']);
     const [folder] = await Promise.all([ctx.waitForEvent('page'), page.click('#contextMenu button:has-text("Ordner öffnen")')]);
+    await folder.waitForLoadState();
     assert.equal(folder.url(), `file://${dir}/ablage/`);
     await folder.close();
     await page.click('#preview a.md-path >> nth=0', { button: 'right' });

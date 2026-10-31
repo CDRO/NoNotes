@@ -30,7 +30,16 @@ sind Dateien im Ordner `lang/` und lassen sich mit jedem Release ergänzen. Ausg
   Tastenkürzeln besteht (zum Beispiel `<kbd data-i18n>Entf</kbd>`).
 - Texte in Tabellen und Konstanten werden mit `N_('…')` markiert und später mit `t()` übersetzt.
 - Eine Ausprägung oder Erweiterung ergänzt ein Sprachpaket mit `NoNotesI18n.extend('en', { 'Deutscher Text': 'English text' })`, auch wenn das
-  Paket erst danach geladen wird. Texte, die das Paket schon hat, werden nicht ersetzt.
+  Paket erst danach geladen wird. **Seit v4.0.0 gewinnt die Ergänzung:** einen Text, den das Paket schon hat, ersetzt sie (bis v3.3.0
+  blieb der Text des Pakets und die Ergänzung wurde still übergangen). So kann eine Ausprägung ihre eigenen Wörter durchsetzen, etwa
+  «Eintrag» statt «Notiz». Ein späteres `extend()` ersetzt ein früheres; ein leerer Text (`''`) ersetzt nichts. Mehrzahl wie in den
+  Paketen als `{ one, other }`. Wer sich bisher darauf verlassen hat, dass `extend()` nur fehlende Texte nachträgt, gibt nur diese an.
+  Die mitgelieferten Erweiterungen und die aus CDRO/NoNotes-plugins benutzen `extend()` nicht (sie bringen ihre Texte selbst mit, siehe unten).
+- **Texte des Editors** (Toolleiste, Darstellung, Datumsauswahl, Tabellen, Platzhalter, Bilder …) kommen seit v4.0.0 aus dem Paket
+  NoNotes-editor ([ARCHITECTURE.md](ARCHITECTURE.md)). Sie sind ganz normale Schlüssel der Sprachpakete in `lang/`: `labels.js` des Pakets
+  übersetzt über `NoNotesI18n`, und `tools/i18n.cjs` liest die Quelltexte des Pakets mit (`node_modules/nonotes-editor/src`, ohne
+  `labels.js`), damit `update` und `check` sie kennen. Kennt ein Paket einen Text nicht, nimmt der Editor seinen eigenen Katalog
+  (Englisch), sonst Deutsch.
 - **Erweiterungen** bringen ihre Texte selbst mit: Name, Beschreibung und Hilfe je Sprache in `register({ names, descriptions,
   help })` (Name und Beschreibung je Sprache seit 3.1.1), Beschriftungen nach `ctx.language()`. Gewählt wird die Kennung, sonst
   die Sprache vor dem Bindestrich, sonst Englisch, sonst Deutsch ([PLUGINS.md](PLUGINS.md), Abschnitt «Texte der Erweiterung»).

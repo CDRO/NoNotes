@@ -399,6 +399,14 @@ Die mitgelieferten Erweiterungen sprechen seit 3.1.1 alle Sprachen von NoNotes. 
   (`if (ctx.ui.addSomething) …`).
 - Ein Bruch käme frühestens mit `api: 2` in NoNotes 2.0; die App meldet dann eine ältere Erweiterung
   deutlich, statt sie still falsch zu behandeln.
+- **4.0.0** (ohne Änderung an `api`, alle Erweiterungen laufen weiter): Editor und Markdown-Engine kommen aus dem Paket
+  NoNotes-editor ([ARCHITECTURE.md](ARCHITECTURE.md)). `ctx.editor`, `ctx.ui.addToolbarButton`, `ctx.tables.format`/`update` und
+  `ctx.ui.addTableMenuItem` verhalten sich wie bisher; die Knöpfe stehen weiter in `#mdToolbar` (`button.tb-plugin[data-plugin]`, jetzt
+  in einem `span.nn-plugin-tools` am Ende der Leiste), die Darstellung weiter als Klasse `mode-edit|split|preview` an `#editorPane`
+  (dazu am Editor selbst, `#noteEditor.nn-editor`). Die globalen Namen (`NoNotesMarkdown`, `NoNotesEditing`, `NoNotesTables`,
+  `NoNotesTasks`, `NoNotesQuestions`, `NoNotesDates`, `NoNotesMentions` …) und die Dateien in `js/` heissen wie zuvor. Geändert hat
+  sich `NoNotesI18n.extend()`: die Ergänzung gewinnt jetzt gegen das Sprachpaket ([LANGUAGES.md](LANGUAGES.md)); Erweiterungen
+  brauchen `extend()` nicht, sie bringen ihre Texte selbst mit.
 - Seit 3.1.1 (ohne Änderung an `api`): `names` und `descriptions` in `register()`.
 - Seit 3.1.0 (ohne Änderung an `api`): `ctx.export.addMapStyle` (Farben im Mindmap-Bild).
 - Seit 3.0.0 (ohne Änderung an `api`): `reminders` in `questions:rendered`, `side` in `getTree()`, `setSides` im Backend; Termine im

@@ -99,7 +99,7 @@
     ] },
     // schema_version, index_rules, created_at, map_title, accent, theme, calendar_uid, calendar_sequence, calendar_known
     { name: 'meta', columns: [['key', 'TEXT PRIMARY KEY'], ['value', 'TEXT NOT NULL']] },
-    // Index über die ?-, ?!-, !- und !!-Zeilen, aus dem Text abgeleitet (packages/core/questions.js)
+    // Index über die ?-, ?!-, !- und !!-Zeilen, aus dem Text abgeleitet (questions.js im Paket nonotes-editor)
     { name: 'questions', columns: [
       ['id', 'INTEGER PRIMARY KEY AUTOINCREMENT'],
       ['note_id', 'INTEGER NOT NULL'],
@@ -128,7 +128,7 @@
       ['data', 'BLOB NOT NULL'],
       ['created_at', 'TEXT NOT NULL'],
     ], indexes: ['CREATE INDEX IF NOT EXISTS idx_attachments_note ON attachments (note_id)'] },
-    // Index über die Aufgabenzeilen "- [ ]", aus dem Text abgeleitet (packages/core/tasks.js)
+    // Index über die Aufgabenzeilen "- [ ]", aus dem Text abgeleitet (tasks.js im Paket nonotes-editor)
     { name: 'tasks', columns: [
       ['id', 'INTEGER PRIMARY KEY AUTOINCREMENT'],
       ['note_id', 'INTEGER NOT NULL'],

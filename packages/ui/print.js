@@ -86,7 +86,7 @@
   /** HTML für den Druck von Notizen.
    *  options: { scope: 'current'|'subtree'|'selection'|'all', noteId, ids, withChildren, archived,
    *             includeMap, includeToc, pageBreaks, attachmentUrl, tableFormat, mapSections } (attachmentUrl: id → Promise der
-   *             Anzeige-Adresse; tableFormat: Format der Tabellen aus Erweiterungen, siehe packages/core/markdown.js; mapSections:
+   *             Anzeige-Adresse; tableFormat: Format der Tabellen aus Erweiterungen, siehe markdown.js im Paket nonotes-editor; mapSections:
    *             [{ title, markdown }] der Erweiterungen unter dem Mindmap-Bild, seit 2.11.0; mapStyle: { nodes, defs } Farben im
    *             Mindmap-Bild aus Erweiterungen, seit 3.1.0) */
   async function buildNotesDocument(backend, options) {

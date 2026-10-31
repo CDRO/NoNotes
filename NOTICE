@@ -8,8 +8,14 @@ sql.js 1.14.2 (SQLite 3.49.1), Ordner vendor/sql.js/
   Quelle: https://github.com/sql-js/sql.js
   SQLite selbst ist gemeinfrei: https://sqlite.org/copyright.html
 
+NoNotes-editor 1.0.0 (Markdown-Engine und Editor), Dateien in js/ und css/
+  js/labels.js, js/editor.de.js, js/editor.en.js, js/placeholders.js, js/dates.js, js/questions.js, js/mentions.js, js/tasks.js,
+  js/embeds.js, js/tables.js, js/markdown.js, js/editing.js, js/datepicker.js, js/scrollsync.js, js/editor.js, css/editor.css.
+  Lizenz: MIT, Copyright (c) 2026 CDRO. Der Lizenztext liegt in js/nonotes-editor-LICENSE.txt.
+  Quelle: https://github.com/CDRO/NoNotes-editor (im Repository von NoNotes eine devDependency; der Build kopiert die Dateien)
+
 Nur für die Entwicklung (nicht im ausgelieferten Paket):
 
 Playwright (Apache-2.0) für den Test im Browser, acorn (MIT) für das Sprachwerkzeug.
 
-Wer NoNotes weitergibt, muss diese Datei und vendor/sql.js/LICENSE beilegen.
+Wer NoNotes weitergibt, muss diese Datei, vendor/sql.js/LICENSE und js/nonotes-editor-LICENSE.txt beilegen.

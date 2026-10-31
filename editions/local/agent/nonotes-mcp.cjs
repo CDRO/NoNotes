@@ -14,7 +14,8 @@
             node agent/nonotes-mcp.cjs --help | --version
    Mehrere Dateien (Bereiche der App, ab v2.3.0): jede wird ein «workspace» mit der Kennung aus ihrem Namen (Arbeit.sqlite → arbeit);
    die Werkzeuge nehmen dann den Parameter workspace, list_workspaces nennt die Dateien. Mit einer Datei bleibt alles wie zuvor.
-   Braucht Node 18 oder neuer, sonst nichts: der Kern (js/) und sql.js (vendor/) liegen im selben Ordner wie die App. */
+   Braucht Node 18 oder neuer, sonst nichts: der Kern (js/, darin auch die Engine aus dem Paket nonotes-editor) und sql.js (vendor/)
+   liegen im selben Ordner wie die App. Im Quelltext kommt die Engine aus node_modules/nonotes-editor (npm install). */
 'use strict';
 
 const fs = require('node:fs');
@@ -24,8 +25,8 @@ const crypto = require('node:crypto');
 const readline = require('node:readline');
 
 const HERE = __dirname;
-const CORE_FILES = ['i18n', 'history', 'placeholders', 'dates', 'questions', 'tables', 'tasks', 'links', 'backend', 'merge', 'templates', 'db', 'backend-local', 'catalog', 'protocol'];
-const PACKAGE_OF = { i18n: 'core', history: 'core', placeholders: 'core', dates: 'core', questions: 'core', tables: 'core', tasks: 'core', links: 'core', backend: 'core', merge: 'core', templates: 'core', db: 'data', 'backend-local': 'store-local', catalog: 'agent', protocol: 'agent' };
+const CORE_FILES = ['i18n', 'labels', 'history', 'placeholders', 'dates', 'questions', 'tables', 'tasks', 'links', 'backend', 'merge', 'templates', 'db', 'backend-local', 'catalog', 'protocol'];
+const PACKAGE_OF = { i18n: 'core', labels: 'editor', history: 'core', placeholders: 'editor', dates: 'editor', questions: 'editor', tables: 'editor', tasks: 'editor', links: 'core', backend: 'core', merge: 'core', templates: 'core', db: 'data', 'backend-local': 'store-local', catalog: 'agent', protocol: 'agent' };
 const LOCK_WAIT_MS = 25;
 const LOCK_TIMEOUT_MS = 5000;
 const LOCK_STALE_MS = 30000;
@@ -40,8 +41,14 @@ function layout() {
     try { version = (/NONOTES_VERSION\s*=\s*'([^']*)'/.exec(fs.readFileSync(path.join(dist, 'js', 'version.js'), 'utf8')) || [])[1] || 'dev'; } catch (e) { /* ohne Version */ }
     return { js: name => path.join(dist, 'js', `${name}.js`), sql: path.join(dist, 'vendor', 'sql.js', 'sql-asm.js'), version };
   }
+  // Im Quelltext liegt die Engine (Termine, Fragen, Aufgaben, Tabellen, Platzhalter, Texte) seit v4.0.0 im Paket nonotes-editor
   const root = path.resolve(HERE, '..', '..', '..');
-  return { js: name => path.join(root, 'packages', PACKAGE_OF[name], `${name}.js`), sql: path.join(root, 'vendor', 'sql.js', 'sql-asm.js'), version: 'dev' };
+  let editor = null;
+  const editorFile = name => {
+    if (!editor) editor = require(require.resolve('nonotes-editor/files.cjs', { paths: [root] }));
+    return editor.scripts.find(s => s.name === `${name}.js`).file;
+  };
+  return { js: name => (PACKAGE_OF[name] === 'editor' ? editorFile(name) : path.join(root, 'packages', PACKAGE_OF[name], `${name}.js`)), sql: path.join(root, 'vendor', 'sql.js', 'sql-asm.js'), version: 'dev' };
 }
 
 async function loadCore() {

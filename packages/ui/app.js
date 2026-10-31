@@ -16,7 +16,6 @@
   const Zip = window.NoNotesZip;
   const Exporter = window.NoNotesExport;
   const Printer = window.NoNotesPrint;
-  const E = window.NoNotesEditing;
   const T = window.NoNotesTasks;
   const Dates = window.NoNotesDates;
   const Cal = window.NoNotesCalendar;
@@ -36,7 +35,6 @@
   const ARCHIVE_KEY = 'nonotes.showArchive';
   const LINKS_KEY = 'nonotes.showLinks';     // Querverweise ([[Titel*]]) in der Mindmap zeigen, je Browser
   const PLUGINS_KEY = 'nonotes.plugins';   // eingeschaltete Erweiterungen (Dateien in plugins/), je Browser
-  const PREVIEW_DELAY_MS = 150;
 
   I18n.init();
   I18n.translateDom(document.body);
@@ -88,10 +86,8 @@
     archiveBar: $('#archiveBar'), archiveBarText: $('#archiveBarText'), unarchiveBtn: $('#unarchiveBtn'), archiveBtn: $('#archiveBtn'),
     mapArchiveBtn: $('#mapArchiveBtn'), mapLinksBtn: $('#mapLinksBtn'), multiArchiveBtn: $('#multiArchiveBtn'), printArchive: $('#printArchive'), exportArchive: $('#exportArchive'),
     tagChips: $('#tagChips'), tagInput: $('#tagInput'), tagSuggestions: $('#tagSuggestions'),
-    modeSwitch: $('#modeSwitch'), preview: $('#preview'),
     exportBtn: $('#exportBtn'), exportDialog: $('#exportDialog'), exportForm: $('#exportForm'),
     exportDirBtn: $('#exportDirBtn'), exportZipBtn: $('#exportZipBtn'), exportHint: $('#exportHint'),
-    attachBtn: $('#attachBtn'), attachInput: $('#attachInput'), attachments: $('#attachments'),
     mapPrintBtn: $('#mapPrintBtn'), mapCopyBtn: $('#mapCopyBtn'), qPrintBtn: $('#qPrintBtn'), printBtn: $('#printBtn'), copyLinkBtn: $('#copyLinkBtn'),
     multiBar: $('#multiBar'), multiCount: $('#multiCount'), multiPrintBtn: $('#multiPrintBtn'), multiClearBtn: $('#multiClearBtn'),
     printDialog: $('#printDialog'), printForm: $('#printForm'), printGoBtn: $('#printGoBtn'),
@@ -101,7 +97,6 @@
     printIncludeToc: $('#printIncludeToc'), printPageBreaks: $('#printPageBreaks'),
     qaPrintDialog: $('#qaPrintDialog'), qaPrintForm: $('#qaPrintForm'), qaPrintGoBtn: $('#qaPrintGoBtn'),
     qaScopeFiltered: $('#qaScopeFiltered'), qaLines: $('#qaLines'), qSort: $('#qSort'),
-    mdToolbar: $('#mdToolbar'), headingSelect: $('#headingSelect'), helpBtn: $('#helpBtn'),
     helpDialog: $('#helpDialog'), helpTabs: $('#helpTabs'), helpStorageStatus: $('#helpStorageStatus'),
     storageHelpBtn: $('#storageHelpBtn'), menuHelpBtn: $('#menuHelpBtn'), langMenu: $('#langMenu'), langBtn: $('#langBtn'), langList: $('#langList'), accentSwatches: $('#accentSwatches'),
     themeRow: $('#themeRow'), themeSelect: $('#themeSelect'), pluginMenu: $('#pluginMenu'), pluginsBtn: $('#pluginsBtn'),
@@ -123,11 +118,11 @@
     mapZoomInBtn: $('#mapZoomInBtn'), mapZoomOutBtn: $('#mapZoomOutBtn'),
     mindmap: $('#mindmap'), renameInput: $('#renameInput'), contextMenu: $('#contextMenu'),
     search: $('#search'), newBtn: $('#newBtn'), list: $('#list'), listEmpty: $('#listEmpty'), count: $('#count'),
-    editorEmpty: $('#editorEmpty'), editorPane: $('#editorPane'), backBtn: $('#backBtn'), bodyMirror: $('#bodyMirror'),
+    editorEmpty: $('#editorEmpty'), editorPane: $('#editorPane'), backBtn: $('#backBtn'),
     crumbs: $('#crumbs'), noteMeta: $('#noteMeta'), childBtn: $('#childBtn'), deleteBtn: $('#deleteBtn'),
-    title: $('#title'), body: $('#body'),
-    viewDecisionsBtn: $('#viewDecisionsBtn'), qPersonFilter: $('#qPersonFilter'), qAnsweredBtn: $('#qAnsweredBtn'), decisionBtn: $('#decisionBtn'),
-    mentionPopup: $('#mentionPopup'), phHint: $('#phHint'), phKeep: $('#phKeep'), wikiPopup: $('#wikiPopup'), wikiCount: $('#wikiCount'), wikiList: $('#wikiList'), qaPrintTitle: $('#qaPrintTitle'), qaScopeOpen: $('#qaScopeOpen'), qaScopeAnswered: $('#qaScopeAnswered'),
+    title: $('#title'),
+    viewDecisionsBtn: $('#viewDecisionsBtn'), qPersonFilter: $('#qPersonFilter'), qAnsweredBtn: $('#qAnsweredBtn'),
+    phKeep: $('#phKeep'), qaPrintTitle: $('#qaPrintTitle'), qaScopeOpen: $('#qaScopeOpen'), qaScopeAnswered: $('#qaScopeAnswered'),
     qaScopeAll: $('#qaScopeAll'), qaLinesLabel: $('#qaLinesLabel'),
     mapTemplateBtn: $('#mapTemplateBtn'), newTemplateBtn: $('#newTemplateBtn'), templatesBtn: $('#templatesBtn'),
     childTemplateBtn: $('#childTemplateBtn'), insertTemplateBtn: $('#insertTemplateBtn'), saveTemplateBtn: $('#saveTemplateBtn'),
@@ -173,32 +168,26 @@
     qQuery: '',
     qSearchTimer: null,
     qAnswering: null,     // id der Frage, deren Antwortfeld offen ist
-    loadedEmbeds: new Set(), // Videos, die in dieser Sitzung per Klick geladen wurden (nach dem Neuzeichnen der Vorschau wieder laden)
     qDraft: null,         // Entwurf im offenen Antwortfeld (überlebt ein Neuzeichnen)
     qTag: '',
     qPerson: '',          // Filter «an @kürzel» in Fragen und Entscheiden
-    mention: null,        // offene Vervollständigung @kürzel: { start, items, index }
-    dp: null,             // offene Datumsauswahl (v3.0.0): { start, end, edit }
-    mentionSeq: 0,
-    wiki: null,           // offene Vorschläge für [[Verweise]] (v2.9.0): { start, end, close, query, star, items, index, shown }
-    wikiSeq: 0,
-    wikiData: null,       // Notizen für die Vorschläge, einmal je Öffnen der Liste geladen (Promise)
     pluginProviders: new Map(), // Lieferanten für @kürzel je Erweiterung (zum Abmelden beim Ausschalten)
     pluginContextItems: [],     // Einträge der Erweiterungen im Kontextmenü eines Knotens (seit 2.8.0): { plugin, spec }
     pluginTableItems: [],       // Einträge der Erweiterungen im Kontextmenü einer Tabelle (seit 2.10.0): { entry, spec }
+    toolbarButtons: [],         // Knöpfe der Erweiterungen in der Toolleiste des Editors (ctx.ui.addToolbarButton): { entry, item }
+    editPromise: null,          // Sichern nach der letzten Änderung im Editor (onEdit), für applyEdit
     tableFormatters: [],        // Format der Tabellen aus Erweiterungen (ctx.tables.format, seit 2.10.0): { entry, fn }
     mapSections: [],            // Abschnitte unter der Mindmap in Export und Druck (ctx.export.addMapSection, seit 2.11.0): { entry, fn }
     mapStyles: [],              // Farben im Mindmap-Bild für Export, Druck und Kopie (ctx.export.addMapStyle, seit 3.1.0): { entry, fn }
     contextSub: null,           // offenes Untermenü des Kontextmenüs: { anchor, el }
     contextUse: null,           // Kontextmenü eines Knotens mit Einträgen der Erweiterungen: { multi, applied }
     editorMode: 'edit',   // 'edit' | 'split' | 'preview'
-    previewTimer: null,
     listScope: 'live',    // 'live' | 'trash'
     tagFilter: '',
     mapMatches: [],       // ids der Treffer in der Mindmap (Reihenfolge wie Liste)
     mapMatchIndex: -1,
     mapSearchTimer: null,
-    attachmentUrls: new Map(), // id → Objekt-URL für die Anzeige
+    attachmentUrls: new Map(), // id → Objekt-URL für den Druck (der Editor hat seine eigenen)
     multi: new Set(),          // Mehrfachauswahl (Mindmap und Liste)
     printNoteId: null,         // Notiz, auf die sich der Druckdialog bezieht
     tStatus: 'open',
@@ -208,7 +197,6 @@
     tPerson: '',          // Filter «an @kürzel» in den Aufgaben (seit 2.11.0)
     tSearchTimer: null,
     calHandle: null,          // gemerkte Kalenderdatei (.ics)
-    scrollSync: null,         // synchrones Scrollen in der geteilten Ansicht
     showArchive: false,       // archivierte Notizen in der Mindmap zeigen
     showLinks: true,          // Querverweise als gestrichelte Linien in der Mindmap zeigen
     renderTokens: {},         // je Ansicht der neueste Zeichenauftrag; ältere, spät fertige werden verworfen
@@ -328,6 +316,7 @@
   /** Wird von der Hülle aufgerufen, wenn sie die Datenbank austauscht (Datei öffnen, Import). */
   function onDatabaseReplaced() {
     for (const id of [...state.attachmentUrls.keys()]) forgetAttachmentUrl(id);
+    if (editor) editor.forgetAttachment(); // die Nummern der Bilder gehören zur alten Datenbank
     state.currentId = null;
     state.sync = newSync(null);
     hideBanner();
@@ -385,7 +374,7 @@
     const edition = window.NoNotesEdition;
     if (!edition) throw new Error(t('Es ist keine Ausprägung geladen.'));
     shell = edition.createShell(shellHost());
-    M.configure({ localFiles: localFiles() });
+    createEditor(); // NoNotesEditor (Paket nonotes-editor); stellt auch NoNotesMarkdown auf lokale Pfade ein
     state.pluginFiles = loadPluginChoice();
     await Plugins.loadAll(state.pluginFiles); // feste Liste und die hier eingeschalteten Dateien aus plugins/, bevor etwas gezeichnet wird (Designs)
     try { applyTheme(localStorage.getItem(THEME_KEY) || ''); } catch (e) { /* ohne Zwischenspeicher: Standard */ }
@@ -418,14 +407,11 @@
     shell.bind();
 
     let view = 'map';
-    let mode = 'edit';
     try {
       view = localStorage.getItem(VIEW_KEY) || 'map';
-      mode = localStorage.getItem(MODE_KEY) || 'edit';
       state.showArchive = localStorage.getItem(ARCHIVE_KEY) === '1';
       state.showLinks = localStorage.getItem(LINKS_KEY) !== '0';
     } catch (e) { /* egal */ }
-    await setEditorMode(['edit', 'split', 'preview'].includes(mode) ? mode : 'edit');
 
     el.boot.hidden = true;
     el.app.hidden = false;
@@ -1154,18 +1140,11 @@
     return out;
   }
 
+  /** Knopf in der Toolleiste des Editors: der Editor zeichnet ihn (NoNotesEditor.extend, toolbar in createEditor). */
   function addPluginToolbarButton(entry, item) {
     checkItem(item, 'addToolbarButton');
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'tb-plugin';
-    b.dataset.plugin = entry.id;
-    b.textContent = item.label;
-    b.title = String(item.title || item.label);
-    b.setAttribute('aria-label', String(item.title || item.label));
-    b.disabled = el.body.readOnly;
-    b.addEventListener('click', () => runPlugin(entry, () => item.action(pluginEditorApi())));
-    el.mdToolbar.appendChild(b);
+    state.toolbarButtons.push({ entry, item });
+    editor.refreshExtensions();
   }
 
   /** Eintrag im Kontextmenü eines Knotens der Mindmap (seit 2.8.0). spec: { label, title?, write?, visible?(target),
@@ -1181,7 +1160,7 @@
   }
 
   /** Format für Tabellen (seit 2.10.0): fn(table) liefert { table, header, columns, rows, cells } mit Klassen und erlaubten
-   *  CSS-Angaben (packages/core/markdown.js). Liefert eine Funktion zum Abmelden; beim Ausschalten wird abgemeldet. */
+   *  CSS-Angaben (markdown.js im Paket nonotes-editor). Liefert eine Funktion zum Abmelden; beim Ausschalten wird abgemeldet. */
   function addTableFormatter(entry, fn) {
     if (typeof fn !== 'function') throw new Error(t('tables.format braucht eine Funktion'));
     const item = { entry, fn };
@@ -1263,7 +1242,9 @@
     if (!id) return;
     for (const b of el.pluginMenu.querySelectorAll(`[data-plugin="${id}"]`)) b.remove();
     el.pluginMenu.hidden = !el.pluginMenu.querySelector('button');
-    for (const b of el.mdToolbar.querySelectorAll(`.tb-plugin[data-plugin="${id}"]`)) b.remove();
+    const buttons = state.toolbarButtons.length;
+    state.toolbarButtons = state.toolbarButtons.filter(x => x.entry.id !== id);
+    if (state.toolbarButtons.length !== buttons) editor.refreshExtensions();
     for (const x of el.mapView.querySelectorAll(`.map-plugin-btn[data-plugin="${id}"], .map-overlay[data-plugin="${id}"]`)) x.remove();
     state.mapSections = state.mapSections.filter(x => x.entry.id !== id);
     state.mapStyles = state.mapStyles.filter(x => x.entry.id !== id);
@@ -1790,21 +1771,20 @@
     await renderCrumbs(note);
     if (!isLatest()) return;
     renderNoteQuestions(el.body.value);
-    updateEditorFont();
     const tags = await B.getTags(note.id);
     if (!isLatest()) return;
     renderTags(tags);
     const trashed = !!note.deleted_at;
     const archived = !trashed && !!note.archived_at;
     const locked = trashed || archived || readOnly(); // Papierkorb und Archiv sind schreibgeschützt, ebenso alles im Lesemodus
-    await renderAttachments(note.id, locked);
+    if (editor.isReadOnly() !== locked) editor.setReadOnly(locked); // Toolleiste, Bilder, Kästchen in der Vorschau
+    await editor.renderAttachments();
     if (!isLatest()) return;
     el.trashBar.hidden = !trashed;
     el.archiveBar.hidden = !archived;
     if (archived) el.archiveBarText.textContent = t('Diese Notiz ist archiviert (seit {datum}) und schreibgeschützt.', { datum: fmtDate(note.archived_at) });
     el.editor.classList.toggle('readonly', locked);
     el.title.readOnly = locked;
-    el.body.readOnly = locked;
     el.tagInput.disabled = locked;
     el.deleteBtn.hidden = trashed || readOnly();
     el.historyBtn.hidden = trashed;
@@ -1814,8 +1794,6 @@
     el.nodeLinkBtn.hidden = locked;
     el.detachBtn.hidden = locked || !canDetach();
     renderNodeLink(note, locked);
-    for (const b of el.mdToolbar.querySelectorAll('button')) b.disabled = locked;
-    el.headingSelect.disabled = locked;
     if (state.editorMode !== 'edit') await renderPreview();
   }
 
@@ -1862,10 +1840,8 @@
     await saveTags(currentTags().filter(t => t.toLowerCase() !== name.toLowerCase()));
   }
 
-  // ---------- Anhänge ----------
-
-  const MAX_ATTACHMENT_BYTES = 400 * 1024;
-  const MAX_ATTACHMENT_EDGE = 1600;
+  // ---------- Bilder für den Druck ----------
+  // Im Editor zeigt der Baustein die Bilder selbst (attachments in createEditor); der Druck holt sie hier.
 
   /** Objekt-URL für ein Bild aus der Datenbank, gemerkt, damit sie nicht mehrfach angelegt wird. */
   async function attachmentUrl(id) {
@@ -1877,164 +1853,105 @@
     return url;
   }
 
-  /** Holt vorab die Bilder, auf die ein Text verweist, damit das Rendern danach ohne Warten auskommt. */
-  async function prefetchAttachments(text) {
-    const ids = [...new Set([...String(text || '').matchAll(/\(att:(\d+)\)/g)].map(m => Number(m[1])))];
-    await Promise.all(ids.map(id => attachmentUrl(id)));
-  }
-
   function forgetAttachmentUrl(id) {
     const url = state.attachmentUrls.get(id);
     if (url) { URL.revokeObjectURL(url); state.attachmentUrls.delete(id); }
   }
 
-  async function renderAttachments(noteId, readonly) {
-    const rows = await B.listAttachments(noteId);
-    const urls = await Promise.all(rows.map(a => attachmentUrl(a.id)));
-    el.attachments.hidden = rows.length === 0;
-    el.attachments.replaceChildren(...rows.map((a, i) => {
-      const fig = document.createElement('figure');
-      fig.className = 'attachment';
-      fig.dataset.id = String(a.id);
-      const img = document.createElement('img');
-      img.src = urls[i] || '';
-      img.alt = a.name;
-      img.title = t('In den Text einfügen');
-      img.addEventListener('click', () => insertAttachmentRef(a));
-      const name = document.createElement('div');
-      name.className = 'name';
-      name.textContent = a.name;
-      name.title = `${a.name} · ${Math.round(a.size / 1024)} KB`;
-      const row = document.createElement('div');
-      row.className = 'row';
-      const ins = document.createElement('button');
-      ins.type = 'button';
-      ins.textContent = t('Einfügen');
-      ins.addEventListener('click', () => insertAttachmentRef(a));
-      const del = document.createElement('button');
-      del.type = 'button';
-      del.className = 'danger';
-      del.textContent = t('Löschen');
-      del.addEventListener('click', () => removeAttachment(a));
-      if (readonly) { ins.disabled = true; del.disabled = true; }
-      row.append(ins, del);
-      fig.append(img, name, row);
-      return fig;
-    }));
-  }
+  // ---------- Editor (NoNotesEditor aus dem Paket nonotes-editor, seit v4.0.0) ----------
+  // Toolleiste, Darstellungen, Tasten, Datumsauswahl, Vorschläge für @kürzel und [[Verweise]], Tabellen, Bilder, Platzhalter und die
+  // Vorschau macht der Baustein; die App gibt ihm über Rückrufe, was ihr gehört (Notiz, Speichern mit Zusammenführen, Bilder in der
+  // Datenbank, Verweisziele, Menüs, Statuszeile, Hilfe) und bedient die Schnittstelle der Erweiterungen über NoNotesEditor.extend. Die
+  // Kennungen bleiben wie vor v4.0.0 (#body, #preview, #mdToolbar …), damit CSS, Tests und Erweiterungen dieselben Elemente finden.
 
-  async function insertAtCursor(text) {
-    const ta = el.body;
-    const start = ta.selectionStart || 0;
-    const end = ta.selectionEnd || start;
-    const before = ta.value.slice(0, start);
-    const after = ta.value.slice(end);
-    const needsNl = before.length && !before.endsWith('\n') ? '\n' : '';
-    const insert = needsNl + text + (after.startsWith('\n') || !after.length ? '' : '\n');
-    ta.value = before + insert + after;
-    const pos = before.length + insert.length;
-    ta.focus();
-    ta.setSelectionRange(pos, pos);
-    await onEdit();
-  }
+  const EditorKit = window.NoNotesEditor;
+  let editor = null;
+  const MODES = ['edit', 'split', 'preview'];
+  const OLD_GRID_KEY = 'nonotes.tableGrid'; // bis v3.3.0: «Mit Rahmen» im Raster; jetzt merkt sich das der Baustein
 
-  async function insertAttachmentRef(a) {
-    const alt = a.name.replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[\[\]]/g, '');
-    await insertAtCursor(`![${alt}](att:${a.id})`);
-  }
-
-  async function removeAttachment(a) {
-    if (denyWrite()) return;
-    if (!confirm(t('Bild „{name}“ aus dieser Notiz entfernen? Verweise im Text zeigen danach ins Leere.', { name: a.name }))) return;
-    await B.deleteAttachment(a.id);
-    forgetAttachmentUrl(a.id);
-    await renderAttachments(state.currentId, false);
-    markEdited();
-    if (state.editorMode !== 'edit') await renderPreview();
-  }
-
-  /** Verkleinert grosse Bilder, damit die Datenbank handlich bleibt. */
-  async function prepareImage(file) {
-    const mime = file.type || 'application/octet-stream';
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    if (!mime.startsWith('image/') || mime === 'image/svg+xml' || mime === 'image/gif') return { name: file.name, mime, bytes };
-    if (bytes.length <= MAX_ATTACHMENT_BYTES) {
-      // Nur verkleinern, wenn das Bild auch sehr gross ist.
-      const dims = await imageSize(file).catch(() => null);
-      if (!dims || Math.max(dims.w, dims.h) <= MAX_ATTACHMENT_EDGE) return { name: file.name, mime, bytes };
-    }
+  /** Baut den Editor in #editorPane (unter Titel und Tags) und hängt seine Elemente in el ein. */
+  function createEditor() {
+    let mode = 'edit';
     try {
-      const bitmap = await createImageBitmap(file);
-      const scale = Math.min(1, MAX_ATTACHMENT_EDGE / Math.max(bitmap.width, bitmap.height));
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      bitmap.close && bitmap.close();
-      const keepPng = mime === 'image/png' && bytes.length <= 2 * MAX_ATTACHMENT_BYTES;
-      const outMime = keepPng ? 'image/png' : 'image/jpeg';
-      const blob = await new Promise((res, rej) => canvas.toBlob(b => b ? res(b) : rej(new Error('Bild konnte nicht verkleinert werden.')), outMime, 0.85)); // i18n-ignore
-      const out = new Uint8Array(await blob.arrayBuffer());
-      if (out.length >= bytes.length) return { name: file.name, mime, bytes };
-      const name = outMime === 'image/jpeg' ? file.name.replace(/\.[a-z0-9]{2,5}$/i, '') + '.jpg' : file.name;
-      return { name, mime: outMime, bytes: out };
-    } catch (e) {
-      console.warn('Bild verkleinern', e);
-      return { name: file.name, mime, bytes };
-    }
-  }
-
-  function imageSize(file) {
-    return new Promise((resolve, reject) => {
-      const url = URL.createObjectURL(file);
-      const img = new Image();
-      img.onload = () => { URL.revokeObjectURL(url); resolve({ w: img.naturalWidth, h: img.naturalHeight }); };
-      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('kein Bild')); }; // i18n-ignore
-      img.src = url;
+      const m = localStorage.getItem(MODE_KEY);
+      if (MODES.includes(m)) mode = m;
+      const grid = localStorage.getItem(OLD_GRID_KEY);
+      const gridKey = 'nonotes-editor.tableGrid';
+      if (grid != null && localStorage.getItem(gridKey) == null) localStorage.setItem(gridKey, grid);
+    } catch (e) { /* ohne Speicher: Vorgaben */ }
+    EditorKit.configure({ localFiles: localFiles(), embeds: embedsOn() ? 'ask' : 'off' });
+    editor = EditorKit.create(el.editorPane, {
+      kind: 'note',
+      mode,
+      remember: false, // die App merkt sich die Darstellung selbst (nonotes.editorMode, wie bisher)
+      ids: {
+        root: 'noteEditor', body: 'body', preview: 'preview', toolbar: 'mdToolbar', heading: 'headingSelect', modeSwitch: 'modeSwitch',
+        help: 'helpBtn', attach: 'attachBtn', attachInput: 'attachInput', attachments: 'attachments', mentionPopup: 'mentionPopup',
+        wikiPopup: 'wikiPopup', wikiCount: 'wikiCount', wikiList: 'wikiList', phHint: 'phHint', editorBody: 'editorBody', mirror: 'bodyMirror',
+        tablePicker: 'tablePicker', questionBtn: 'questionBtn', answerBtn: 'answerBtn', decisionBtn: 'decisionBtn',
+      },
+      onMode: m => {
+        state.editorMode = m;
+        // die Klasse auch an #editorPane (CSS der App und von Erweiterungen, etwa «Sprung zu Unternotizen», fragen dort nach)
+        el.editorPane.classList.remove('mode-edit', 'mode-split', 'mode-preview');
+        el.editorPane.classList.add('mode-' + m);
+        try { localStorage.setItem(MODE_KEY, m); } catch (e) { /* egal */ }
+      },
+      onInput: () => { state.editPromise = onEdit(); },
+      attachments: {
+        list: () => (state.currentId != null ? B.listAttachments(state.currentId) : []),
+        get: id => B.getAttachment(id),
+        add: async a => {
+          const id = await B.addAttachment(state.currentId, a);
+          markEdited();
+          return { id, name: a.name };
+        },
+        remove: async id => {
+          await B.deleteAttachment(id);
+          forgetAttachmentUrl(id);
+          markEdited();
+        },
+      },
+      refs: { list: wikiNotes, resolver: () => wikiResolver(), open: openWikiLink, cross: true },
+      render: async text => ({ highlight: state.query.trim() || null, noteLink: await noteLinkResolver([text]) }),
+      onLinkClick: (a, e) => {
+        if (!a.classList.contains('md-note')) return false;
+        e.preventDefault();
+        followNoteLink(a.getAttribute('href'));
+        return true;
+      },
+      people: { keepTyped: true }, // localPeople lässt das Wort am Cursor schon weg
+      placeholders: { field: el.title, keep: () => keepPlaceholders(null), onFill: fillOtherNotes },
+      modernizeDates: true,
+      help: () => openHelp('editor'),
+      showMenu: (items, x, y) => showContextMenu(items, x, y),
+      confirm: text => Promise.resolve(confirm(text)),
+      hint: (text, kind) => { if (!text) return; if (kind) setStatus(text, kind); else hint(text); },
+      onError: e => setStatus(errorText(e), 'error'),
+    });
+    el.body = editor.textarea;
+    el.preview = editor.preview;
+    el.mdToolbar = editor.toolbar;
+    EditorKit.extend({
+      toolbar: () => state.toolbarButtons.map(({ entry, item }) => ({
+        plugin: entry.id, label: item.label, title: String(item.title || item.label),
+        run: () => runPlugin(entry, () => item.action(pluginEditorApi())),
+      })),
+      tableFormat: () => tableFormatFor(state.currentId),
+      tableMenu: tg => pluginContextEntries(Object.freeze({
+        noteId: state.currentId, line: tg.line, row: tg.row, col: tg.col, cols: tg.cols, rows: tg.rows, header: tg.header,
+        headerColumn: tg.headerColumn, meta: Object.freeze(JSON.parse(JSON.stringify(tg.meta))), grid: tg.grid, span: tg.span,
+      }), { multi: false, applied: false }, state.pluginTableItems),
     });
   }
 
-  async function addAttachments(files) {
-    if (denyWrite()) return;
-    if (state.currentId == null) return;
-    const note = await B.getNote(state.currentId);
-    if (!note || note.deleted_at || note.archived_at) return;
-    const images = [...files].filter(f => f && f.type && f.type.startsWith('image/'));
-    if (!images.length) { setStatus(t('Nur Bilder können angehängt werden.'), 'error'); return; }
-    setStatus(tn('Bild wird eingefügt…', '{n} Bilder werden eingefügt…', images.length), 'saving');
-    try {
-      for (const file of images) {
-        const prepared = await prepareImage(file);
-        const id = await B.addAttachment(state.currentId, {
-          name: prepared.name || `bild-${Date.now()}.png`, mime: prepared.mime, bytes: prepared.bytes,
-        });
-        await insertAttachmentRef({ id, name: prepared.name || 'bild' });
-      }
-      await renderAttachments(state.currentId, false);
-      markEdited();
-    } catch (e) {
-      console.error(e);
-      setStatus(t('Bild konnte nicht eingefügt werden: {fehler}', { fehler: errorText(e) }), 'error');
-    }
-  }
-
-  // ---------- Vorschau ----------
-
   async function setEditorMode(mode) {
-    state.editorMode = mode;
-    el.editorPane.classList.remove('mode-edit', 'mode-split', 'mode-preview');
-    el.editorPane.classList.add('mode-' + mode);
-    for (const b of el.modeSwitch.querySelectorAll('button[data-mode]')) {
-      b.setAttribute('aria-selected', String(b.dataset.mode === mode));
-    }
-    try { localStorage.setItem(MODE_KEY, mode); } catch (e) { /* egal */ }
+    editor.mode(mode);
     if (mode !== 'edit' && state.currentId != null) await renderPreview();
   }
 
   async function cycleEditorMode() {
-    const order = ['edit', 'split', 'preview'];
-    await setEditorMode(order[(order.indexOf(state.editorMode) + 1) % order.length]);
+    await setEditorMode(MODES[(MODES.indexOf(state.editorMode) + 1) % MODES.length]);
   }
 
   /** Löst [[Titel]] und [[Titel#42]] auf: Inhalt → { id, label } (NoNotesLinks.lookup); einmal pro Darstellung bauen. */
@@ -2044,121 +1961,73 @@
 
   async function renderPreview() {
     if (state.currentId == null) return;
-    const isLatest = fresh('preview');
-    const text = el.body.value;
-    const resolveRef = await wikiResolver();
-    const noteLink = await noteLinkResolver([text]);
-    await prefetchAttachments(text);
-    if (!isLatest()) return;
-    el.preview.innerHTML = M.render(text, {
-      highlight: state.query.trim() || null,
-      resolveRef,
-      tableFormat: tableFormatFor(state.currentId),
-      noteLink,
-      resolveAttachment: id => state.attachmentUrls.get(id) || null,
-      interactiveTasks: !el.body.readOnly,
-      lineMap: true,
-      embeds: embedsOn(),
-      embedLoad: embedCanLoad,
-    });
-    for (const box of el.preview.querySelectorAll('.md-embed')) if (state.loadedEmbeds.has(box.dataset.embed)) loadEmbed(box, false);
-    if (state.editorMode === 'split' && state.scrollSync) state.scrollSync.afterRender();
+    await editor.renderPreview();
   }
 
-  // ---------- Videos einbetten (YouTube, Vimeo, Dailymotion) ----------
+  /** Zähler, Schrift und Vorschau nach einer Änderung, die nicht über das Tippen kam (Zusammenführen, Vorlage, Erweiterung). */
+  function schedulePreview() {
+    if (editor) editor.refresh();
+  }
+
+  /** Änderung am Text über den Editor (Rückgängig bleibt nicht, wie bisher); wartet, bis gesichert ist. */
+  async function applyEdit(result) {
+    state.editPromise = null;
+    editor.applyEdit(result);
+    await state.editPromise;
+  }
+
+  /** Änderung an einer Tabelle (Erweiterung): gleich neu zeichnen, sonst träfe ein rascher zweiter Rechtsklick die alten Zeilen. */
+  async function applyTableEdit(result) {
+    const saved = applyEdit(result);
+    if (state.editorMode !== 'edit') await renderPreview();
+    await saved;
+  }
+
+  /** Klick auf [[Verweis]] in der Vorschau: die Notiz öffnen; fehlt sie, als Unternotiz anlegen (nach Rückfrage). */
+  async function openWikiLink(ref) {
+    if (ref.id != null) { await openNote(Number(ref.id)); return; }
+    const title = ref.title;
+    if (denyWrite()) return;
+    if (!confirm(t('Es gibt keine Notiz „{titel}“. Jetzt als Unternotiz anlegen?', { titel: title }))) return;
+    const id = await B.createNote(state.currentId);
+    await B.renameNote(id, title);
+    markEdited();
+    await renderAll();
+    await openNote(id);
+  }
+
+  /** Ziele für die Vorschläge bei «[[»: alle Notizen des Bereichs (auch archivierte) ausser der offenen, mit Pfad und ob der Titel
+   *  mehrfach vorkommt (wie bei der Auflösung: ohne Gross-/Kleinschreibung, über alle Notizen); dann mit Nummer ([[Protokoll#42]]). */
+  async function wikiNotes() {
+    if (!window.NoNotesLinks || state.currentId == null) return [];
+    const rows = (await B.getTree({ archive: true })).slice().sort((a, b) => a.id - b.id);
+    const mapTitle = (await B.getMapTitle()) || '';
+    const byId = new Map(rows.map(r => [r.id, r]));
+    const count = new Map();
+    const key = r => window.NoNotesLinks.normalize(r.title);
+    for (const r of rows) if (key(r)) count.set(key(r), (count.get(key(r)) || 0) + 1);
+    const pathOf = r => {
+      const out = [];
+      const seen = new Set();
+      for (let p = byId.get(r.parent_id); p && !seen.has(p.id); p = byId.get(p.parent_id)) { seen.add(p.id); out.unshift(p.title.trim() || t('Ohne Titel')); }
+      return out;
+    };
+    return rows.filter(r => r.id !== state.currentId && r.title.trim() && !/[[\]]/.test(r.title)).map(r => {
+      const path = pathOf(r);
+      const dup = count.get(key(r)) > 1;
+      return { id: r.id, title: r.title.trim(), insert: dup ? `${r.title.trim()}#${r.id}` : r.title.trim(), archived: !!r.archived_at,
+        updated: r.updated_at || '', path, parent: path.length ? path[path.length - 1] : mapTitle, dup };
+    });
+  }
+
+  // ---------- Videos (YouTube, Vimeo, Dailymotion) ----------
 
   /** Die Hülle kann das Einbetten ausschalten (shell.embeds === 'off'), zum Beispiel ein Dienst, dessen Schutzkopf keine Rahmen erlaubt. */
   const embedsOn = () => !(shell && shell.embeds === 'off');
-  /** YouTube lässt das Einbetten in Seiten ohne Herkunft (geöffnete Datei, file://) nicht zu: dort nur der Link zum Anbieter. */
-  const embedCanLoad = provider => !(provider === 'youtube' && window.location.protocol === 'file:');
-
-  /** Baut den Rahmen erst jetzt (nach dem Klick) und ersetzt die Karte. Der Rahmen ist abgeschottet (sandbox), sendet die Herkunft der Seite
-   *  (YouTube verlangt sie), aber keinen Pfad, und darf selbst abspielen, weil die Person eben geklickt hat. */
-  function loadEmbed(box, autoplay) {
-    const url = box.dataset.embed;
-    if (!url || box.querySelector('iframe')) return;
-    const frame = document.createElement('iframe');
-    frame.src = autoplay ? url + (url.includes('?') ? '&' : '?') + 'autoplay=1' : url;
-    frame.title = box.dataset.title || '';
-    frame.loading = 'lazy';
-    frame.referrerPolicy = 'strict-origin-when-cross-origin';
-    frame.allowFullscreen = true;
-    frame.setAttribute('allow', 'autoplay; fullscreen; picture-in-picture; encrypted-media'); // i18n-ignore: Berechtigungen des Rahmens
-    frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox allow-forms');
-    frame.className = 'md-embed-frame';
-    box.replaceChildren(frame);
-    state.loadedEmbeds.add(url);
-  }
 
   /** Hinweis in der Statuszeile, ohne den Speicherstand falsch darzustellen. */
   function hint(text) {
     setStatus(text, saveState());
-  }
-
-  /** Kästchen in der Vorschau angeklickt: Zeile im Text umschalten. Abhaken geht erst, wenn alle
-   *  Unteraufgaben erledigt sind; Öffnen einer Unteraufgabe öffnet erledigte Hauptaufgaben mit. */
-  async function onPreviewChange(e) {
-    const input = e.target.closest('li.task[data-line] input[type="checkbox"], .md-cell-task[data-line] input[type="checkbox"]');
-    if (!input || state.currentId == null || el.body.readOnly) return;
-    const holder = input.closest('[data-line]');
-    const line = Number(holder.dataset.line);
-    const slot = holder.dataset.slot != null ? Number(holder.dataset.slot) : null; // Aufgabe in einem Tabellenfeld (v2.11.0)
-    if (input.checked) {
-      const open = T.openSubtasks(el.body.value, line, slot);
-      if (open > 0) { input.checked = false; hint(T.openMessage(open)); return; }
-      el.body.value = T.setDone(el.body.value, line, true, slot);
-    } else {
-      el.body.value = T.reopen(el.body.value, line, slot);
-    }
-    await onEdit();
-    await renderPreview();
-  }
-
-  /** Doppelklick auf den Text einer Aufgabe in der Vorschau: Aufgabe samt Unteraufgaben abschliessen. */
-  async function onPreviewDblClick(e) {
-    if (state.currentId == null || el.body.readOnly) return;
-    if (e.target.closest('a, input, button')) return;
-    const li = e.target.closest('li');
-    if (!li || !li.classList.contains('task') || li.dataset.line == null) return;
-    const r = T.doubleClick(el.body.value, Number(li.dataset.line));
-    if (!r.action) return;
-    window.getSelection().removeAllRanges();
-    el.body.value = r.body;
-    await onEdit();
-    await renderPreview();
-    hint(r.action === 'completed' ? t('Aufgabe mit allen Unteraufgaben erledigt') : t('Aufgabe wieder geöffnet'));
-  }
-
-  function schedulePreview() {
-    if (state.editorMode === 'edit') return;
-    clearTimeout(state.previewTimer);
-    state.previewTimer = setTimeout(renderPreview, PREVIEW_DELAY_MS);
-  }
-
-  async function onPreviewClick(e) {
-    const badge = e.target.closest('[data-date]');
-    if (badge && !e.target.closest('a')) { await openDateFromBadge(badge); return; }
-    const phSpan = PH && e.target.closest('.md-ph[data-ph]');
-    if (phSpan && !e.target.closest('a')) { await onPreviewPlaceholderClick(phSpan); return; }
-    const load = e.target.closest('.md-embed-load');
-    if (load) { e.preventDefault(); loadEmbed(load.closest('.md-embed'), true); return; }
-    const a = e.target.closest('a');
-    if (!a) return;
-    if (a.classList.contains('md-note')) { e.preventDefault(); await followNoteLink(a.getAttribute('href')); return; }
-    if (a.classList.contains('md-wiki')) {
-      e.preventDefault();
-      if (a.dataset.noteId) { await openNote(Number(a.dataset.noteId)); return; }
-      const title = a.dataset.title;
-      if (denyWrite()) return;
-      if (!confirm(t('Es gibt keine Notiz „{titel}“. Jetzt als Unternotiz anlegen?', { titel: title }))) return;
-      const id = await B.createNote(state.currentId);
-      await B.renameNote(id, title);
-      markEdited();
-      await renderAll();
-      await openNote(id);
-    } else if (a.getAttribute('href') === '#') {
-      e.preventDefault();
-    }
   }
 
   /** Link in der Fragen- oder Aufgabenliste: Verweis öffnet die Notiz, externe Links öffnen sich im neuen Tab. */
@@ -2174,12 +2043,6 @@
     } else if (a.getAttribute('href') === '#') {
       e.preventDefault();
     }
-  }
-
-  /** Tabellen mit Rahmen brauchen gleich breite Zeichen, sonst stehen die Striche schief: solange die Notiz eine enthält,
-      schreibt der Editor in Festbreitenschrift (v3.3.0). */
-  function updateEditorFont() {
-    el.body.parentElement.classList.toggle('grid-font', !!(Tables && Tables.hasGrid && Tables.hasGrid(el.body.value)));
   }
 
   function renderNoteQuestions(body) {
@@ -2310,15 +2173,7 @@
   }
 
   function jumpToLine(lineIndex) {
-    const body = el.body.value;
-    const start = Q.offsetOfLine(body, lineIndex);
-    let end = body.indexOf('\n', start);
-    if (end < 0) end = body.length;
-    el.body.focus();
-    el.body.setSelectionRange(start, end);
-    const lineHeight = parseFloat(getComputedStyle(el.body).lineHeight) || 24;
-    const top = state.scrollSync && state.editorMode !== 'preview' ? state.scrollSync.topOfLine(lineIndex) : lineIndex * lineHeight;
-    el.body.scrollTop = Math.max(0, top - el.body.clientHeight / 3);
+    editor.selectLine(lineIndex);
   }
 
   async function closeEditor() {
@@ -2674,7 +2529,8 @@
   // {{?Name}} wählt die App nach dem Einfügen einer Vorlage aus; Tippen ersetzt ihn, Tab springt zum nächsten, Umschalt+Tab zurück, Esc
   // beendet. Mit «Platzhalter behalten» (Einstellung im Dialog «Vorlagen», je Vorlage im Kopf «placeholders») wird daraus
   // {{?Name: Wert}}; ein Klick hinein wählt den Wert und zeigt die Beschreibung. Gleiche Namen bekommen denselben Wert (Text, Titel und
-  // die Unternotizen der Vorlage). Übersprungene bleiben offen. Reine Textarbeit in packages/core/placeholders.js.
+  // die Unternotizen der Vorlage). Übersprungene bleiben offen. Das Ausfüllen in Titel und Text macht der Editor (Paket nonotes-editor,
+  // placeholders.field = #title), die Textarbeit placeholders.js im Paket; hier bleiben die Einstellung, der Start und die Unternotizen.
 
   const PH = window.NoNotesPlaceholders;
   const KEEP_PLACEHOLDERS = 'templates.keepPlaceholders';
@@ -2682,13 +2538,6 @@
   async function keepPlaceholders(tpl) {
     if (tpl && (tpl.placeholders === 'keep' || tpl.placeholders === 'remove')) return tpl.placeholders === 'keep';
     try { return (await B.getMeta(KEEP_PLACEHOLDERS)) === '1'; } catch (e) { return false; }
-  }
-
-  /** Verschiebt eine Stelle um die Änderungen davor: edits [{ start, end, len }] (len: Länge des neuen Texts). */
-  function shiftPos(pos, edits) {
-    let p = pos;
-    for (const e of edits) if (e.end <= pos) p += e.len - (e.end - e.start);
-    return p;
   }
 
   /** Setzt einen Wert für alle Platzhalter eines Namens: keep → {{?Name: Wert}}, sonst der Wert. Gibt { text, edits } zurück. */
@@ -2703,293 +2552,26 @@
     return { text: out, edits };
   }
 
-  /** Startet das Ausfüllen: in einer neuen oder gerade eingefügten Vorlage. opts: { keep, others (weitere Notizen), start, end }. */
+  /** Startet das Ausfüllen im Editor (Titel zuerst, dann der Text): in einer neuen oder gerade eingefügten Vorlage.
+   *  opts: { keep, others (die Unternotizen der Vorlage), start, end }. */
   async function startPlaceholders(opts) {
-    if (!PH || el.body.readOnly || readOnly()) return false;
-    const toks = PH.scan(el.body.value);
-    const titleTok = PH.scan(el.title.value).find(p => p.value == null);
-    if (!toks.length && !titleTok) return false;
-    if (state.editorMode === 'preview') await setEditorMode('split');
-    // insTail: Länge des Texts nach dem Eingefügten (bleibt beim Tippen im Feld gleich; das Ende des Eingefügten = Länge - insTail)
-    state.ph = { keep: !!opts.keep, others: opts.others || [], insTail: opts.end == null ? null : el.body.value.length - opts.end, field: null };
-    hint(t('Platzhalter ausfüllen: Tab springt zum nächsten, Umschalt+Tab zurück, Esc beendet.'));
-    if (titleTok) { selectTitleField(titleTok); return true; }
-    const from = opts.start || 0;
-    selectField(toks.find(p => p.start >= from) || toks[0], true);
-    return true;
+    if (!PH || readOnly()) return false;
+    return editor.startPlaceholders({ keep: !!opts.keep, start: opts.start, end: opts.end, data: { others: opts.others || [] } });
   }
 
-  /** Wählt einen Platzhalter im Text: offen ganz (Tippen ersetzt ihn), ausgefüllt den Wert (select: false lässt den Cursor, wo er ist). */
-  function selectField(tok, select) {
-    const ph = state.ph;
-    if (!ph || !tok) return;
-    const v = el.body.value;
-    const open = tok.value == null;
-    const a = open ? tok.start : tok.valueStart, b = open ? tok.end : tok.valueEnd;
-    if (document.activeElement !== el.body) el.body.focus();
-    if (select || open) el.body.setSelectionRange(a, b);
-    if (select || open) scrollBodyTo(a); // nach dem Neusetzen des Texts steht der Editor sonst am Ende
-    ph.field = { name: tok.name, start: a, tail: v.length - b, open, token: v.slice(tok.start, tok.end), original: tok.value, title: false };
-    showPhHint(tok.name, a, b);
-  }
-
-  function selectTitleField(tok) {
-    const ph = state.ph;
-    el.title.focus();
-    el.title.setSelectionRange(tok.start, tok.end);
-    ph.field = { name: tok.name, start: tok.start, tail: el.title.value.length - tok.end, open: true, token: el.title.value.slice(tok.start, tok.end), title: true };
-    showPhHint(tok.name, null);
-  }
-
-  /** Beschreibung zu einem Namen: aus den Blöcken am Ende der Notiz. */
-  function phDescription(name) {
-    return PH.describe(PH.descriptions(el.body.value), name);
-  }
-
-  /** Kasten mit der Beschreibung unter der Zeile des Platzhalters (beim Titel unter dem Titelfeld); ohne Beschreibung kein Kasten. */
-  function showPhHint(name, pos, end) {
-    const desc = phDescription(name);
-    if (!desc) { hidePhHint(); return; }
-    const head = document.createElement('div');
-    head.className = 'ph-hint-name';
-    head.textContent = name;
-    const body = document.createElement('div');
-    body.className = 'md';
-    body.innerHTML = M.render(desc, { embeds: false, placeholders: 'plain' });
-    const keys = document.createElement('div');
-    keys.className = 'ph-hint-keys';
-    keys.textContent = t('Tab: nächster Platzhalter · Umschalt+Tab: voriger · Esc: fertig');
-    el.phHint.replaceChildren(head, body, keys);
-    el.phHint.hidden = false;
-    if (pos == null) { // unter das Titelfeld (über Tags und Leiste), damit der Text frei bleibt
-      const box = el.body.parentElement.getBoundingClientRect(), tr = el.title.getBoundingClientRect();
-      el.phHint.style.left = Math.max(0, tr.left - box.left + 8) + 'px';
-      el.phHint.style.top = Math.round(tr.bottom - box.top + 4) + 'px';
-    } else placePopupAt(el.phHint, pos, end);
-  }
-
-  function hidePhHint() {
-    el.phHint.hidden = true;
-    el.phHint.replaceChildren();
-  }
-
-  /** Verlässt den aktuellen Platzhalter: Wert einsetzen (behalten: {{?Name: Wert}}), gleiche Namen überall nachziehen, nicht mehr
-   *  gebrauchte Beschreibungen weg. Gibt { start, end } des Felds danach zurück (im Text), oder null. caret: die Stelle, die gelten soll
-   *  (Standard: der Cursor), wird mit verschoben. */
-  async function leaveField() {
-    const ph = state.ph;
-    const f = ph && ph.field;
-    if (!f) return null;
-    ph.field = null;
-    hidePhHint();
-    if (f.title) return leaveTitleField(f);
-    const v = el.body.value;
-    const end = v.length - f.tail;
-    if (end < f.start) return null; // Text davor gelöscht: nichts mehr zu tun
-    const typed = v.slice(f.start, end);
-    // Schritt 1: das Feld selbst (offen und getippt → Wert oder {{?Name: Wert}}; ausgefüllt und nicht behalten → Wert)
-    let text = v;
-    let cut = null; // { start, end, len } in v
-    if (f.open) {
-      if (typed === f.token) return { start: f.start, end, name: f.name }; // übersprungen: bleibt offen
-      if (ph.keep) cut = { start: f.start, end, len: PH.token(f.name, typed).length, repl: PH.token(f.name, typed) };
-    } else if (!ph.keep) {
-      if (typed === f.original) return { start: f.start, end, name: f.name }; // unverändert: bleibt
-      const tok = PH.at(v, f.start);
-      if (tok) cut = { start: tok.start, end: tok.end, len: typed.length, repl: typed };
+  /** Ein Platzhalter im Titel oder Text ist ausgefüllt: dieselben Namen in den Unternotizen der Vorlage nachziehen (field: der Wert kam
+   *  aus dem Titel). Titel und Text der offenen Notiz füllt der Editor selbst. */
+  async function fillOtherNotes(name, typed, keep, info) {
+    const others = (info && info.data && info.data.others) || [];
+    for (const id of others) {
+      try {
+        const n = await B.getNote(id);
+        if (!n) continue;
+        const nt = PH.flatten(fillName(n.title, name, typed, false).text, { open: x => `{{?${x}}}` });
+        const nb = PH.pruneDescriptions(fillName(n.body, name, typed, keep).text, info.field ? n.title : nt);
+        if (nt !== n.title || nb !== n.body) await B.updateNote(n.id, nt, nb, { author: meName() });
+      } catch (e) { /* eine fehlende Unternotiz hält das Ausfüllen nicht auf */ }
     }
-    if (cut) text = v.slice(0, cut.start) + cut.repl + v.slice(cut.end);
-    const map1 = pos => (cut && pos >= cut.end ? pos + cut.len - (cut.end - cut.start) : pos);
-    let fStart = cut ? cut.start : f.start;
-    let fEnd = cut ? cut.start + cut.len : end;
-    // Schritt 2: gleiche Namen überall nachziehen (einzeilige Werte)
-    let r = { text, edits: [] };
-    if (!/\n/.test(typed)) {
-      r = fillName(text, f.name, typed, ph.keep);
-      const title = PH.flatten(fillName(el.title.value, f.name, typed, false).text, { open: n => `{{?${n}}}` });
-      if (title !== el.title.value) el.title.value = title;
-      for (const id of ph.others) { // die Unternotizen der Vorlage
-        try {
-          const n = await B.getNote(id);
-          if (!n) continue;
-          const nt = PH.flatten(fillName(n.title, f.name, typed, false).text, { open: x => `{{?${x}}}` });
-          const nb = PH.pruneDescriptions(fillName(n.body, f.name, typed, ph.keep).text, nt);
-          if (nt !== n.title || nb !== n.body) await B.updateNote(n.id, nt, nb, { author: meName() });
-        } catch (e) { /* eine fehlende Unternotiz hält das Ausfüllen nicht auf */ }
-      }
-    }
-    const map2 = pos => shiftPos(pos, r.edits);
-    fStart = map2(fStart);
-    fEnd = map2(fEnd);
-    const caret = map2(map1(el.body.selectionStart));
-    // Schritt 3: Beschreibungen ohne Platzhalter weg (sie stehen am Ende)
-    const next = PH.pruneDescriptions(r.text, el.title.value);
-    if (ph.insTail != null) { // was nach dem Eingefügten geändert wurde, ändert die Länge dahinter
-      const insEnd = v.length - ph.insTail;
-      let tail = ph.insTail;
-      if (cut && cut.start >= insEnd) tail += cut.len - (cut.end - cut.start);
-      const insEnd1 = map1(insEnd);
-      for (const e of r.edits) if (e.start >= insEnd1) tail += e.len - (e.end - e.start);
-      ph.insTail = Math.max(0, tail - (r.text.length - next.length));
-    }
-    if (next !== v) {
-      el.body.value = next;
-      const c = Math.min(caret, next.length);
-      el.body.setSelectionRange(c, c);
-      await onEdit();
-    }
-    return { start: Math.min(fStart, el.body.value.length), end: Math.min(fEnd, el.body.value.length), name: f.name };
-  }
-
-  async function leaveTitleField(f) {
-    const ph = state.ph;
-    const v = el.title.value;
-    const end = v.length - f.tail;
-    const typed = end >= f.start ? v.slice(f.start, end) : f.token;
-    if (typed !== f.token && typed.trim()) {
-      const before = el.body.value;
-      const r = fillName(before, f.name, typed, ph.keep);
-      const t2 = PH.flatten(fillName(v, f.name, typed, false).text, { open: n => `{{?${n}}}` });
-      if (t2 !== v) el.title.value = t2;
-      const next = PH.pruneDescriptions(r.text, el.title.value);
-      if (ph.insTail != null) {
-        const insEnd = before.length - ph.insTail;
-        let tail = ph.insTail;
-        for (const e of r.edits) if (e.start >= insEnd) tail += e.len - (e.end - e.start);
-        ph.insTail = Math.max(0, tail - (r.text.length - next.length));
-      }
-      el.body.value = next;
-      for (const id of ph.others) {
-        try {
-          const n = await B.getNote(id);
-          if (!n) continue;
-          const nb = PH.pruneDescriptions(fillName(n.body, f.name, typed, ph.keep).text, n.title);
-          const nt = PH.flatten(fillName(n.title, f.name, typed, false).text, { open: x => `{{?${x}}}` });
-          if (nb !== n.body || nt !== n.title) await B.updateNote(n.id, nt, nb, { author: meName() });
-        } catch (e) { /* weiter */ }
-      }
-      await onEdit();
-    }
-    return { start: -1, end: -1, title: true, name: f.name };
-  }
-
-  /** Tab (dir 1) oder Umschalt+Tab (dir -1): zum nächsten oder vorigen Platzhalter; nach dem letzten ans Ende des Eingefügten. */
-  async function phJump(dir) {
-    const ph = state.ph;
-    if (!ph) return;
-    const left = await leaveField();
-    if (!state.ph) return;
-    // gleiche Namen wie der eben verlassene sind schon ausgefüllt (nachgezogen): überspringen
-    const toks = PH.scan(el.body.value).filter(p => !left || !PH.same(p.name, left.name));
-    const at = left ? left : { start: el.body.selectionStart, end: el.body.selectionEnd };
-    let tok = null;
-    if (at.title) tok = dir > 0 ? toks[0] : null;
-    else if (dir > 0) tok = toks.find(p => p.start >= at.end && (!left || p.start !== left.start));
-    else tok = toks.filter(p => p.end <= at.start).pop() || null;
-    if (!tok && dir < 0) {
-      const titleTok = PH.scan(el.title.value).find(p => p.value == null);
-      if (titleTok) { selectTitleField(titleTok); return; }
-      if (left) { el.body.setSelectionRange(left.start, left.start); }
-      return;
-    }
-    if (!tok) { // fertig: ans Ende des eingefügten Texts
-      const endAt = ph.insTail != null ? Math.max(0, el.body.value.length - ph.insTail) : (left ? left.end : el.body.selectionEnd);
-      endPlaceholders();
-      el.body.focus();
-      el.body.setSelectionRange(endAt, endAt);
-      return;
-    }
-    selectField(tok, true);
-  }
-
-  function endPlaceholders() {
-    state.ph = null;
-    hidePhHint();
-  }
-
-  /** Tasten im Text, solange Platzhalter ausgefüllt werden: Tab, Umschalt+Tab, Esc (und Enter mit «behalten»: der Wert bleibt einzeilig). */
-  function handlePhKey(e) {
-    const ph = state.ph;
-    if (!ph || e.ctrlKey || e.metaKey || e.altKey) return false;
-    if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && ph.keep && ph.field)) {
-      e.preventDefault();
-      e.stopPropagation();
-      phJump(e.key === 'Tab' && e.shiftKey ? -1 : 1);
-      return true;
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      leaveField().then(endPlaceholders);
-      return true;
-    }
-    return false;
-  }
-
-  /** Cursor im Text bewegt (Klick, Pfeiltasten): in einen Platzhalter hinein beginnt das Ausfüllen (mit der Beschreibung), hinaus beendet es. */
-  async function phCaretMoved() {
-    if (!PH || el.body.readOnly || readOnly()) return;
-    const c = el.body.selectionStart;
-    if (c !== el.body.selectionEnd) return;
-    const ph = state.ph;
-    if (ph && ph.field) {
-      const end = el.body.value.length - ph.field.tail;
-      if (!ph.field.title && c >= ph.field.start && c <= end) return; // noch im Feld
-      await leaveField();
-    }
-    const tok = PH.at(el.body.value, el.body.selectionStart);
-    if (!tok) { if (state.ph) endPlaceholders(); return; }
-    if (!state.ph) state.ph = { keep: await keepPlaceholders(null), others: [], insTail: null, field: null };
-    selectField(tok, tok.value == null);
-  }
-
-  /** Platzhalter auflösen: der Name (oder alle) wird zu Text; Beschreibungen ohne Platzhalter fallen weg. */
-  async function resolvePlaceholders(name) {
-    hideContextMenu();
-    if (denyWrite() || state.currentId == null) return;
-    endPlaceholders();
-    const v = el.body.value;
-    const next = PH.pruneDescriptions(PH.resolve(v, name || null), el.title.value);
-    const title = PH.resolve(el.title.value, name || null);
-    if (next === v && title === el.title.value) return;
-    const c = Math.min(el.body.selectionStart, next.length);
-    el.title.value = title;
-    await applyEdit({ text: next, selStart: c, selEnd: c });
-    hint(name ? t('Platzhalter «{name}» aufgelöst.', { name }) : t('Alle Platzhalter dieser Notiz aufgelöst.'));
-  }
-
-  function phMenuItems(name) {
-    return [
-      { write: true, label: t('Platzhalter «{name}» auflösen', { name }), title: t('Der Text bleibt, die Markierung als Platzhalter fällt weg'), action: () => resolvePlaceholders(name) },
-      { write: true, label: t('Alle Platzhalter der Notiz auflösen'), action: () => resolvePlaceholders(null) },
-    ];
-  }
-
-  /** Rechtsklick auf einen Platzhalter in der Vorschau oder im Text: auflösen. */
-  function onPhContextMenu(e) {
-    if (!PH || state.currentId == null || el.body.readOnly || readOnly()) return false;
-    const span = e.target.closest && e.target.closest('.md-ph[data-ph]');
-    let name = span ? span.dataset.ph : null;
-    if (!name && e.target === el.body) {
-      const tok = PH.at(el.body.value, el.body.selectionStart);
-      if (tok && el.body.selectionStart === el.body.selectionEnd) name = tok.name;
-    }
-    if (!name) return false;
-    e.preventDefault();
-    e.stopPropagation();
-    showContextMenu(phMenuItems(name), e.clientX, e.clientY);
-    return true;
-  }
-
-  /** Klick auf einen Platzhalter in der Vorschau: im Text auswählen (die Vorschau allein wird zur geteilten Ansicht). */
-  async function onPreviewPlaceholderClick(span) {
-    if (el.body.readOnly || readOnly()) return;
-    const name = span.dataset.ph;
-    const toks = PH.scan(el.body.value).filter(p => PH.same(p.name, name));
-    if (!toks.length) return;
-    if (state.editorMode === 'preview') await setEditorMode('split');
-    if (!state.ph) state.ph = { keep: await keepPlaceholders(null), others: [], insTail: null, field: null };
-    selectField(toks[0], true);
   }
 
   // ---------- Pfade auf Dateien und Ordner (v2.12.0) ----------
@@ -3034,21 +2616,6 @@
     if (localFiles()) items.push({ label: target.classList.contains('md-path-folder') ? t('Ordner öffnen') : t('Öffnen'), action: () => window.open(href, '_blank', 'noopener') });
     items.push({ label: t('Pfad kopieren'), title: path, action: () => copyPath(path) });
     showContextMenu(items, e.clientX, e.clientY);
-  }
-
-  /** Einfügen in den Text: nur Pfade (etwa «Als Pfad kopieren» im Explorer) → mit Leerzeichen in spitzen Klammern, ohne Anführungszeichen. */
-  function pastePathText(e) {
-    const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
-    const conv = text ? M.pastePaths(text) : null;
-    if (!conv) return false;
-    e.preventDefault();
-    el.body.focus();
-    if (!document.execCommand || !document.execCommand('insertText', false, conv)) { // execCommand behält das Rückgängigmachen
-      const s0 = el.body.selectionStart, e0 = el.body.selectionEnd;
-      el.body.setRangeText(conv, s0, e0, 'end');
-      onEdit();
-    }
-    return true;
   }
 
   /** «Link kopieren»: volle Adresse der Notiz in die Zwischenablage (sonst zum Kopieren angezeigt). */
@@ -3191,7 +2758,6 @@
   async function onEdit() {
     if (state.currentId == null) return;
     renderNoteQuestions(el.body.value);
-    updateEditorFont();
     schedulePreview();
     markEdited();
     await saveNote();
@@ -3264,7 +2830,7 @@
     const sync = state.sync;
     if (sync.id !== note.id) { // eine andere Notiz: Felder setzen, neuen Stand merken
       el.title.value = note.title;
-      el.body.value = note.body;
+      editor.set(note.body);
       state.sync = newSync(note);
       return;
     }
@@ -3276,6 +2842,7 @@
     if (mineTitle === sync.base.title && mineBody === sync.base.body) { // nichts Eigenes im Weg: Neues übernehmen
       setFieldKeepingCaret(el.title, note.title);
       setFieldKeepingCaret(el.body, note.body);
+      editor.refresh();
       sync.base = { title: note.title, body: note.body, updatedAt: note.updated_at };
       return;
     }
@@ -3297,7 +2864,6 @@
     setFieldKeepingCaret(el.body, body);
     sync.base = { title: theirs.title, body: theirs.body, updatedAt: theirs.updated_at };
     renderNoteQuestions(el.body.value);
-    updateEditorFont();
     schedulePreview();
     renderMeta(sync.createdAt, theirs.updated_at, theirs.updated_by);
     if (announce) {
@@ -3422,88 +2988,6 @@
   }
 
   /** Markiert die Zeile(n) unter dem Cursor als Frage ("?") oder Antwort ("!") bzw. hebt es auf. */
-  async function toggleLine(prefix) {
-    await runCommand(prefix === '?' ? 'question' : 'answer');
-  }
-
-  // ---------- Toolleiste ----------
-
-  /** Ersetzt den Text durch next, aber nur den Teil, der sich unterscheidet, und über execCommand: so bleibt Rückgängig erhalten
-   *  (für das Ausrichten beim Tippen in Tabellen mit Rahmen). Danach die Auswahl. */
-  function replaceKeepingUndo(next, selStart, selEnd) {
-    const cur = el.body.value;
-    let p = 0;
-    while (p < cur.length && p < next.length && cur[p] === next[p]) p++;
-    let q = 0;
-    while (q < cur.length - p && q < next.length - p && cur[cur.length - 1 - q] === next[next.length - 1 - q]) q++;
-    const ins = next.slice(p, next.length - q);
-    if (p < cur.length - q || ins) {
-      el.body.setSelectionRange(p, cur.length - q);
-      state.gridApplying = true;
-      let ok = false;
-      try { ok = !!(document.execCommand && document.execCommand(ins ? 'insertText' : 'delete', false, ins)); } catch (e) { ok = false; }
-      finally { state.gridApplying = false; }
-      if (!ok || el.body.value !== next) el.body.value = next;
-    }
-    el.body.setSelectionRange(selStart, selEnd);
-  }
-
-  async function applyEdit(result) {
-    el.body.value = result.text;
-    el.body.focus();
-    el.body.setSelectionRange(result.selStart, result.selEnd);
-    await onEdit();
-  }
-
-  /** Änderung an einer Tabelle aus der Vorschau: gleich neu zeichnen, sonst träfe ein rascher zweiter Rechtsklick die alten Zeilen. */
-  async function applyTableEdit(result) {
-    const saved = applyEdit(result);
-    if (state.editorMode !== 'edit') { clearTimeout(state.previewTimer); await renderPreview(); }
-    await saved;
-  }
-
-  async function runCommand(cmd) {
-    if (state.currentId == null || el.body.readOnly) return;
-    if (cmd === 'table') { openTablePicker(el.mdToolbar.querySelector('[data-cmd="table"]')); return; }
-    if (cmd === 'date') { await insertDateAtLineEnd(); return; }
-    const text = el.body.value;
-    const s = el.body.selectionStart || 0;
-    const e = el.body.selectionEnd || s;
-    // In einem Tabellenfeld (v2.11.0): Aufgabe, Frage, Entscheid und Antwort wirken auf den Teil des Felds, nicht auf die Zeile
-    if (Tables && ['task', 'question', 'decision', 'answer'].includes(cmd) && !text.slice(s, e).includes('\n')) {
-      const cellEdit = Tables.togglePrefix(text, s, cmd);
-      if (cellEdit) { await applyEdit(cellEdit); return; }
-    }
-    let r = null;
-    switch (cmd) {
-      case 'bold': r = E.wrap(text, s, e, '**', '**', 'fett'); break;
-      case 'italic': r = E.wrap(text, s, e, '*', '*', 'kursiv'); break;
-      case 'strike': r = E.wrap(text, s, e, '~~', '~~', 'durchgestrichen'); break;
-      case 'code': r = E.wrap(text, s, e, '`', '`', 'code'); break;
-      case 'bullet': r = E.toggleList(text, s, e, 'bullet'); break;
-      case 'ordered': r = E.toggleList(text, s, e, 'ordered'); break;
-      case 'task': r = E.toggleList(text, s, e, 'task'); break;
-      case 'quote': r = E.togglePrefix(text, s, e, 'quote'); break;
-      case 'question': r = E.togglePrefix(text, s, e, 'question'); break;
-      case 'answer': r = E.togglePrefix(text, s, e, 'answer'); break;
-      case 'decision': r = E.togglePrefix(text, s, e, 'decision'); break;
-      case 'codeblock': r = E.codeBlock(text, s, e); break;
-      case 'hr': r = E.horizontalRule(text, s, e); break;
-      case 'link': r = E.link(text, s, e); break;
-      case 'wiki': r = E.wikiLink(text, s, e); break;
-      default: return;
-    }
-    await applyEdit(r);
-    if (cmd === 'wiki') await updateWikiPopup(); // Vorschläge gleich zeigen (v2.9.0)
-  }
-
-  async function setHeadingFromSelect() {
-    const v = el.headingSelect.value;
-    el.headingSelect.value = '';
-    if (v === '' || state.currentId == null || el.body.readOnly) return;
-    await applyEdit(E.setHeading(el.body.value, el.body.selectionStart || 0, el.body.selectionEnd || 0, Number(v)));
-  }
-
   // ---------- Vorlagen (v2.5.0) ----------
   // Woher Vorlagen kommen, sagt die Hülle (shell.templates: lokal der Ordner templates/ und der Browser, im Dienst der Server);
   // Dateiformat, Platzhalter und das Anlegen der Notizen stehen in packages/core/templates.js.
@@ -4258,198 +3742,7 @@
     }
   }
 
-  // ---------- Datumsauswahl (v3.0.0) ----------
-  // Termine stehen hinter «>» am Zeilenende. «>» nach einem Leerzeichen (nicht am Zeilenanfang, nicht in Code) öffnet die Auswahl
-  // (packages/ui/datepicker.js); Ziffern, «.» und «-» schreiben weiter, und der Kalender folgt, jedes andere Zeichen schliesst sie.
-  // Strg+Leertaste auf einem Termin, ein Klick auf sein Abzeichen in der Vorschau oder der Knopf «Termin» öffnen sie ebenfalls.
-  // state.dp: { start (Stelle des «>»), end (Ende des Termins dahinter), edit (ein bestehender Termin wird geändert) }
-  let datePick = null;
-  function datePicker() {
-    if (!datePick && window.NoNotesDatePicker) {
-      datePick = window.NoNotesDatePicker.create(el.body.parentElement, {
-        onPick: value => { insertPickedDate(value); },
-        onClose: () => { state.dp = null; },
-        refocus: () => el.body.focus(),
-      });
-    }
-    return datePick;
-  }
-
-  function closeDatePicker() {
-    state.dp = null;
-    if (datePick) datePick.close();
-  }
-
-  function placeDatePicker() {
-    if (state.dp && datePick && datePick.isOpen()) placePopupAt(datePick.el, state.dp.start);
-  }
-
-  /** Zeile um die Stelle pos: { start, end, text }. */
-  function lineAround(v, pos) {
-    const start = v.lastIndexOf('\n', pos - 1) + 1;
-    let end = v.indexOf('\n', pos);
-    if (end < 0) end = v.length;
-    return { start, end, text: v.slice(start, end) };
-  }
-
-  /** Alle Termine einer Zeile, auch in Tabellenfeldern: [{ iso, start (das «>»), end }], Stellen in der Zeile. */
-  const DATE_TOKEN_RE = new RegExp(String.raw`(^|[\s|>])([>@])(` + Dates.DATE_SRC.replace(/\((?!\?)/g, '(?:') + String.raw`)(?=\s|$|\||<)`, 'g');
-  function lineDates(line) {
-    const out = [];
-    DATE_TOKEN_RE.lastIndex = 0;
-    for (let m; (m = DATE_TOKEN_RE.exec(line));) {
-      const start = m.index + m[1].length;
-      const iso = Dates.splitDue('x >' + m[3]).due;
-      out.push({ iso, start, end: start + 1 + m[3].length });
-      DATE_TOKEN_RE.lastIndex = start + 1;
-    }
-    return out;
-  }
-
-  /** Öffnet die Auswahl für dp; vorgewählt ist der Termin selbst (beim Ändern), sonst die Frist der Zeile, sonst heute. */
-  function openDatePicker(dp) {
-    const p = datePicker();
-    if (!p || el.body.readOnly) return;
-    closeMentionPopup();
-    state.dp = dp;
-    const l = lineAround(el.body.value, dp.start);
-    const dates = lineDates(l.text);
-    let day = null, time = '';
-    const own = dp.edit ? dates.find(d => l.start + d.start === dp.start) : null;
-    if (own && own.iso) { day = own.iso; time = Dates.timePart(own.iso) || ''; }
-    else { const all = dates.map(d => d.iso).filter(Boolean).sort(); day = all.length ? all[all.length - 1] : null; }
-    p.open(day, time);
-    placeDatePicker();
-  }
-
-  /** Die Termine am Zeilenende nach dem Datum ordnen (der letzte ist die Frist); null, wenn nichts zu tun ist. */
-  function sortLineDates(line) {
-    const tl = Dates.tail(line);
-    if (tl.dates.length < 2) return null;
-    const keyed = tl.dates.map(d => ({ key: d.iso || '9999', text: line.slice(d.start, d.end) }));
-    if (keyed.every((x, i) => !i || keyed[i - 1].key <= x.key)) return null;
-    keyed.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-    return line.slice(0, tl.dates[0].start) + keyed.map(x => x.text).join(' ') + line.slice(tl.dates[tl.dates.length - 1].end);
-  }
-
-  /** Setzt das gewählte Datum ein (immer «TT.MM.JJJJ», mit Uhrzeit «TT.MM.JJJJ HH:MM») und ordnet die Termine der Zeile. */
-  async function insertPickedDate(value) {
-    const dp = state.dp;
-    state.dp = null;
-    if (!dp || state.currentId == null) return;
-    const text = Dates.toText(value);
-    if (!text) return;
-    let v = el.body.value.slice(0, dp.start) + '>' + text + el.body.value.slice(dp.end);
-    let caret = dp.start + 1 + text.length;
-    const l = lineAround(v, dp.start);
-    const sorted = sortLineDates(l.text);
-    if (sorted != null) { // geordnet: der Cursor ans Ende der Termine (Enter danach trennt sie nicht)
-      v = v.slice(0, l.start) + sorted + v.slice(l.end);
-      const dates = Dates.tail(sorted).dates;
-      caret = l.start + (dates.length ? dates[dates.length - 1].end : sorted.length);
-    }
-    await applyEdit({ text: v, selStart: caret, selEnd: caret });
-  }
-
-  /** Nach einer Eingabe im Text: «>» nach einem Leerzeichen öffnet die Auswahl, danach folgt sie dem Getippten. */
-  function onDateInput(e) {
-    if (modernizing || !window.NoNotesDatePicker || el.body.readOnly || state.currentId == null) return;
-    const v = el.body.value;
-    const caret = el.body.selectionStart || 0;
-    if (state.dp) {
-      const typed = v.slice(state.dp.start + 1, caret);
-      if (v[state.dp.start] !== '>' || caret <= state.dp.start || !/^[\d.\-]*$/.test(typed)) { closeDatePicker(); return; }
-      state.dp.end = Math.max(caret, state.dp.start + 1);
-      datePicker().follow(typed);
-      placeDatePicker();
-      return;
-    }
-    if (!e || e.inputType !== 'insertText' || e.data !== '>' || caret !== (el.body.selectionEnd || 0)) return;
-    const at = caret - 1;
-    if (v[at] !== '>') return;
-    const l = lineAround(v, at);
-    const before = v.slice(l.start, at);
-    if (!/\S/.test(before) || !/\s$/.test(before)) return; // nach einem Leerzeichen, nicht am Zeilenanfang
-    if (Tables && Tables.inCode && Tables.inCode(v.split('\n'), v.slice(0, at).split('\n').length - 1)) return;
-    if (/`[^`]*$/.test(before) && (before.match(/`/g) || []).length % 2) return; // in `Code`
-    openDatePicker({ start: at, end: caret });
-  }
-
-  /** Strg+Leertaste: steht der Cursor auf einem Termin, ihn mit der Auswahl ändern. */
-  function openDateAtCaret() {
-    const v = el.body.value;
-    const c = el.body.selectionStart || 0;
-    const l = lineAround(v, c);
-    const tok = lineDates(l.text).find(d => c >= l.start + d.start && c <= l.start + d.end);
-    if (!tok) return false;
-    openDatePicker({ start: l.start + tok.start, end: l.start + tok.end, edit: true });
-    return true;
-  }
-
-  /** Klick auf ein Termin-Abzeichen in der Vorschau: zum Termin im Text und die Auswahl öffnen. */
-  async function openDateFromBadge(badge) {
-    const holder = badge.closest('[data-line]');
-    if (!holder || state.currentId == null || el.body.readOnly || readOnly()) return;
-    const L = Number(holder.dataset.line);
-    const lines = el.body.value.split('\n');
-    if (!Number.isInteger(L) || lines[L] == null) return;
-    const ls = lines.slice(0, L).reduce((n, x) => n + x.length + 1, 0);
-    const tok = lineDates(lines[L]).find(d => d.iso === badge.dataset.date);
-    if (!tok) return;
-    if (state.editorMode === 'preview') await setEditorMode('split');
-    el.body.focus();
-    el.body.setSelectionRange(ls + tok.end, ls + tok.end);
-    scrollBodyTo(ls + tok.start);
-    openDatePicker({ start: ls + tok.start, end: ls + tok.end, edit: true });
-  }
-
-  /** Knopf «Termin»: « >» ans Ende der Zeile (in einer Tabelle ans Ende des Felds) und die Auswahl öffnen. */
-  async function insertDateAtLineEnd() {
-    const v = el.body.value;
-    const s0 = el.body.selectionStart || 0;
-    const l = lineAround(v, s0);
-    let end = l.end;
-    if (/^\s*\|/.test(l.text)) { // in einem Tabellenfeld: bis zum nächsten «|» oder «<br>» nach dem Cursor
-      const rest = l.text.slice(s0 - l.start);
-      const m = /(?:^|[^\\])(?:\||<br\s*\/?>)/i.exec(rest);
-      if (m) end = s0 + m.index + (m[0][0] === '|' || m[0][0] === '<' ? 0 : 1);
-    }
-    const head = v.slice(l.start, end).replace(/\s+$/, '');
-    if (!/\S/.test(head) || /^\s*\|$/.test(head)) {
-      hint(t('Termine stehen am Ende einer Zeile mit Text, etwa einer Aufgabe: «- [ ] Offerte einholen >30.10.2026».'));
-      el.body.focus();
-      return;
-    }
-    const at = l.start + head.length + 1;
-    await applyEdit({ text: v.slice(0, l.start) + head + ' >' + v.slice(end).replace(/^[ \t]+(?=\||<br)/i, ' '), selStart: at + 1, selEnd: at + 1 });
-    openDatePicker({ start: at, end: at + 1 });
-  }
-
-  /** Alte Termine «@Datum» im Editor zu «>Datum», ausser in der Zeile mit dem Cursor (dort erst, wenn er sie verlässt). Die Länge
-   *  bleibt gleich; ersetzt wird Zeichen für Zeichen, damit Rückgängig weiter geht. true, wenn sich etwas geändert hat. */
-  let modernizing = false;
-  function modernizeDates() {
-    const v = el.body.value;
-    if (modernizing || !v.includes('@') || el.body.readOnly || state.currentId == null) return false;
-    const s0 = el.body.selectionStart || 0, e0 = el.body.selectionEnd || 0;
-    const next = Dates.rewriteLegacy(v, v.slice(0, s0).split('\n').length - 1);
-    if (next === v) return false;
-    const focused = document.activeElement === el.body;
-    modernizing = true;
-    try {
-      for (let i = 0; i < v.length; i++) {
-        if (v[i] === next[i]) continue;
-        el.body.setSelectionRange(i, i + 1);
-        if (!(focused && document.execCommand && document.execCommand('insertText', false, next[i]))) { el.body.value = next; break; }
-      }
-      el.body.setSelectionRange(s0, e0);
-    } finally {
-      modernizing = false;
-    }
-    return true;
-  }
-
-  // ---------- Vervollständigung @kürzel im Editor ----------
+  // ---------- Kürzel für die Vervollständigung @kürzel (die Liste zeigt der Editor) ----------
 
   // Ein begonnenes Kürzel direkt vor dem Cursor: "@" am Wortanfang (auch nach "("), dahinter nichts oder ein Buchstabe und mehr.
   const MENTION_PREFIX_RE = /(?:^|[\s(])\(?@(\p{L}[\p{L}\p{N}_.-]*|)$/u;
@@ -4471,53 +3764,6 @@
     return [...seen.values()];
   }
 
-  /** Steht der Cursor hinter einem begonnenen @kürzel, zeigt die Liste die passenden Vorschläge; sonst schliesst sie sich. */
-  async function updateMentionPopup() {
-    if (!Mentions || el.body.readOnly || document.activeElement !== el.body) { closeMentionPopup(); return; }
-    const caret = el.body.selectionStart || 0;
-    if (caret !== (el.body.selectionEnd || 0)) { closeMentionPopup(); return; }
-    const before = el.body.value.slice(Math.max(0, caret - 120), caret);
-    const m = MENTION_PREFIX_RE.exec(before);
-    if (!m) { closeMentionPopup(); return; }
-    const prefix = m[1];
-    const token = ++state.mentionSeq;
-    const items = await Mentions.suggest(prefix, 8);
-    if (token !== state.mentionSeq || document.activeElement !== el.body) return;
-    if (!items.length) { closeMentionPopup(); return; }
-    state.mention = { start: caret - prefix.length, items, index: 0, prefix };
-    renderMentionPopup();
-  }
-
-  function renderMentionPopup() {
-    const m = state.mention;
-    if (!m) return;
-    el.mentionPopup.replaceChildren(...m.items.map((it, i) => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.setAttribute('role', 'option');
-      b.dataset.index = String(i);
-      b.setAttribute('aria-selected', String(i === m.index));
-      const h = document.createElement('span');
-      h.className = 'mention-handle';
-      h.textContent = '@' + it.handle;
-      b.appendChild(h);
-      if (it.name) {
-        const n = document.createElement('span');
-        n.className = 'mention-name';
-        n.textContent = it.name;
-        b.appendChild(n);
-      }
-      return b;
-    }));
-    el.mentionPopup.hidden = false;
-    placeMentionPopup();
-  }
-
-  /** Setzt die Liste unter das begonnene Kürzel: ein unsichtbarer Spiegel des Textfelds misst die Cursorposition. */
-  function placeMentionPopup() {
-    if (state.mention) placePopupAt(el.mentionPopup, state.mention.start);
-  }
-
   /** Die nächste Erinnerung (v3.0.0) als kleines Abzeichen mit Glocke vor der Frist, in den Listen der Aufgaben und Fragen. */
   function appendReminder(head, reminders) {
     const next = Dates.nextReminder(reminders);
@@ -4529,462 +3775,6 @@
     b.title = (reminders.length > 1 ? tn('{n} Erinnerung, die nächste {datum}', '{n} Erinnerungen, die nächste {datum}', reminders.length, { datum: Dates.formatDue(next) })
       : t('Erinnerung {datum}', { datum: Dates.formatDue(next) }));
     head.appendChild(b);
-  }
-
-  /** Lage der Textstelle start im Editor, ohne Scrollen gerechnet: { top, left } der Zeile im Textfeld und die Zeilenhöhe. */
-  function bodyCaretBox(start) {
-    const ta = el.body;
-    const cs = getComputedStyle(ta);
-    const mirror = document.createElement('div');
-    for (const p of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'boxSizing', 'tabSize', 'textIndent']) mirror.style[p] = cs[p];
-    Object.assign(mirror.style, { position: 'absolute', top: '0', left: '0', visibility: 'hidden', whiteSpace: 'pre-wrap', overflowWrap: 'break-word', border: '0', width: ta.clientWidth + 'px' });
-    mirror.textContent = ta.value.slice(0, start);
-    const marker = document.createElement('span');
-    marker.textContent = ta.value.slice(start, start + 1) || '.';
-    mirror.appendChild(marker);
-    ta.parentElement.appendChild(mirror);
-    const box = { top: marker.offsetTop, left: marker.offsetLeft, lineH: parseFloat(cs.lineHeight) || 20 };
-    mirror.remove();
-    return box;
-  }
-
-  /** Scrollt den Editor so, dass die Textstelle pos zu sehen ist (etwa nachdem der Text neu gesetzt wurde). */
-  function scrollBodyTo(pos) {
-    const ta = el.body;
-    const c = bodyCaretBox(pos);
-    if (c.top < ta.scrollTop || c.top + c.lineH > ta.scrollTop + ta.clientHeight) ta.scrollTop = Math.max(0, c.top - Math.round(ta.clientHeight / 3));
-  }
-
-  /** Setzt eine Vorschlagsliste unter die Textstelle start im Editor (mit end: unter die Zeile, in der end steht, etwa das Ende eines
-   *  umgebrochenen Platzhalters). */
-  function placePopupAt(popup, start, end) {
-    const ta = el.body;
-    const c = bodyCaretBox(start);
-    const e = end != null && end > start ? bodyCaretBox(end) : c;
-    const lineH = c.lineH;
-    const lineTop = ta.offsetTop + e.top - ta.scrollTop;
-    const left = ta.offsetLeft + Math.min(c.left, e.left) - ta.scrollLeft;
-    const box = ta.parentElement;
-    const h = popup.offsetHeight;
-    // Unter die Zeile; reicht der Platz nicht, darüber, damit die Liste die Zeile nicht verdeckt
-    let top = lineTop + lineH + 2;
-    if (top + h > box.clientHeight - 4 && lineTop - h - 2 >= 0) top = lineTop - h - 2;
-    popup.style.left = Math.max(0, Math.min(left, box.clientWidth - popup.offsetWidth - 4)) + 'px';
-    popup.style.top = Math.max(0, Math.min(top, box.clientHeight - h - 4)) + 'px';
-  }
-
-  function closeMentionPopup() {
-    state.mention = null;
-    state.mentionSeq++;
-    el.mentionPopup.hidden = true;
-    el.mentionPopup.replaceChildren();
-  }
-
-  /** Tasten bei offener Liste: Pfeile wählen, Enter oder Tab übernehmen, Esc schliesst. Liefert true, wenn die Taste verbraucht ist. */
-  function handleMentionKey(e) {
-    const m = state.mention;
-    if (!m) return false;
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      m.index = (m.index + (e.key === 'ArrowDown' ? 1 : m.items.length - 1)) % m.items.length;
-      for (const b of el.mentionPopup.children) b.setAttribute('aria-selected', String(Number(b.dataset.index) === m.index));
-      e.preventDefault();
-      return true;
-    }
-    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); acceptMention(m.index); return true; }
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMentionPopup(); return true; }
-    return false;
-  }
-
-  /** Übernimmt den gewählten Vorschlag an Stelle des begonnenen Kürzels, mit Leerzeichen dahinter. */
-  async function acceptMention(index) {
-    const m = state.mention;
-    if (!m || !m.items[index]) return;
-    const handle = m.items[index].handle;
-    const text = el.body.value;
-    const caret = el.body.selectionStart || 0;
-    const after = text.slice(caret);
-    const insert = handle + (/^[\s)]/.test(after) ? '' : ' ');
-    closeMentionPopup();
-    await applyEdit({ text: text.slice(0, m.start) + insert + after, selStart: m.start + insert.length, selEnd: m.start + insert.length });
-  }
-
-  // ---------- Vorschläge für Verweise [[…]] (v2.9.0) ----------
-  // «[[» tippen oder der Knopf öffnet eine Liste der Notizen im Bereich; Tippen schränkt sie ein. Die Anzahl steht oben, zehn Einträge
-  // sind sichtbar, Pfeile blättern weiter. Enter oder Tab übernehmen, Umschalt+Enter als Querverweis. Gibt es den Titel mehrfach,
-  // steht der Eltern-Node dabei und der Verweis bekommt die Nummer ([[Protokoll#42]], NoNotesLinks.lookup); Strg zeigt alle Pfade.
-
-  const WIKI_PAGE = 50; // so viele Einträge auf einmal in die Liste, weitere beim Blättern
-  const foldTitle = s => String(s || '').toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
-    .normalize('NFD').replace(/[̀-ͯ]/g, '');
-  const atWordStart = (fold, q) => {
-    for (let i = fold.indexOf(q); i >= 0; i = fold.indexOf(q, i + 1)) if (i === 0 || !/[\p{L}\p{N}]/u.test(fold[i - 1])) return true;
-    return false;
-  };
-
-  /** Steht der Cursor in einem begonnenen Verweis «[[…» (auch zwischen «[[» und «]]»)? { start, end: Inhalt, close: ob «]]» folgt,
-   *  query: Text bis zum Cursor, star: ob der Inhalt auf * endet } oder null. */
-  function wikiContext() {
-    const ta = el.body;
-    const caret = ta.selectionStart || 0;
-    if (caret !== (ta.selectionEnd || 0)) return null;
-    const text = ta.value;
-    const before = /\[\[([^[\]\n]*)$/.exec(text.slice(Math.max(0, caret - 200), caret));
-    if (!before) return null;
-    const after = /^([^[\]\n]*)\]\]/.exec(text.slice(caret, caret + 200));
-    const start = caret - before[1].length;
-    const end = caret + (after ? after[1].length : 0);
-    return { start, end, close: !!after, query: before[1].replace(/\*\s*$/, '').trim(), star: /\*\s*$/.test(text.slice(start, end)) };
-  }
-
-  /** Notizen für die Liste, einmal je Öffnen: alle des Bereichs (auch archivierte) ausser der offenen, mit Pfad und ob der Titel
-   *  mehrfach vorkommt (wie bei der Auflösung: ohne Gross-/Kleinschreibung, über alle Notizen). */
-  function wikiNotes() {
-    if (!state.wikiData) {
-      state.wikiData = (async () => {
-        const rows = await B.getTree({ archive: true });
-        const mapTitle = (await B.getMapTitle()) || '';
-        const byId = new Map(rows.map(r => [r.id, r]));
-        const count = new Map();
-        const key = r => window.NoNotesLinks.normalize(r.title);
-        for (const r of rows) if (key(r)) count.set(key(r), (count.get(key(r)) || 0) + 1);
-        const pathOf = r => {
-          const out = [];
-          const seen = new Set();
-          for (let p = byId.get(r.parent_id); p && !seen.has(p.id); p = byId.get(p.parent_id)) { seen.add(p.id); out.unshift(p.title.trim() || t('Ohne Titel')); }
-          return out;
-        };
-        return rows.filter(r => r.id !== state.currentId && r.title.trim() && !/[[\]]/.test(r.title)).map(r => ({
-          id: r.id, title: r.title.trim(), fold: foldTitle(r.title.trim()), archived: !!r.archived_at, updated: r.updated_at || '',
-          path: pathOf(r), mapTitle, dup: count.get(key(r)) > 1,
-        }));
-      })();
-    }
-    return state.wikiData;
-  }
-
-  /** Passende Notizen: der Text kommt im Titel vor (ohne Gross-/Kleinschreibung, «ue» findet «ü»). Aktive vor archivierten, dann
-   *  Titelanfang, Wortanfang, irgendwo; darin die zuletzt geänderten zuerst. */
-  function wikiMatches(notes, query) {
-    const q = foldTitle(query);
-    const out = [];
-    for (const n of notes) {
-      let rank = 0;
-      if (q) {
-        const at = n.fold.indexOf(q);
-        if (at < 0) continue;
-        rank = at === 0 ? 0 : atWordStart(n.fold, q) ? 1 : 2;
-      }
-      out.push({ n, rank });
-    }
-    out.sort((a, b) => (a.n.archived - b.n.archived) || (a.rank - b.rank)
-      || (a.n.updated < b.n.updated ? 1 : a.n.updated > b.n.updated ? -1 : 0) || (a.n.id - b.n.id));
-    return out.map(x => x.n);
-  }
-
-  /** Öffnet, aktualisiert oder schliesst die Liste je nach Cursorstelle. */
-  async function updateWikiPopup() {
-    if (!window.NoNotesLinks || el.body.readOnly || state.currentId == null || document.activeElement !== el.body) { closeWikiPopup(); return; }
-    const ctx = wikiContext();
-    if (!ctx) { closeWikiPopup(); return; }
-    const token = ++state.wikiSeq;
-    let notes;
-    try { notes = await wikiNotes(); } catch (e) { closeWikiPopup(); return; }
-    if (token !== state.wikiSeq || document.activeElement !== el.body) return;
-    closeMentionPopup();
-    const before = state.wiki;
-    const items = wikiMatches(notes, ctx.query);
-    // Bei gleichem Suchtext bleibt die Wahl (etwa nach einem Klick in den Text), sonst steht der erste Vorschlag oben
-    const index = before && before.query === ctx.query && before.items.length === items.length ? before.index : 0;
-    state.wiki = Object.assign(ctx, { items, index, shown: 0 });
-    renderWikiPopup();
-  }
-
-  function renderWikiPopup() {
-    const w = state.wiki;
-    if (!w) return;
-    el.wikiCount.textContent = w.items.length ? tn('{n} passende Notiz', '{n} passende Notizen', w.items.length) : t('Keine passende Notiz');
-    el.wikiList.replaceChildren();
-    showMoreWiki(Math.max(WIKI_PAGE, w.index + 1));
-    el.wikiPopup.hidden = false;
-    placePopupAt(el.wikiPopup, Math.max(0, w.start - 2));
-    markWikiSelected();
-  }
-
-  /** Hängt Einträge bis upto an (die Liste wächst beim Blättern, damit auch tausend Notizen schnell bleiben). */
-  function showMoreWiki(upto) {
-    const w = state.wiki;
-    const end = Math.min(w.items.length, upto);
-    const span = (cls, text) => { const x = document.createElement('span'); x.className = cls; x.textContent = text; return x; };
-    for (let i = w.shown; i < end; i++) {
-      const n = w.items[i];
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.setAttribute('role', 'option');
-      b.dataset.index = String(i);
-      b.dataset.id = String(n.id);
-      if (n.archived) b.classList.add('archived');
-      b.appendChild(span('wiki-title', n.title));
-      const parent = n.path.length ? n.path[n.path.length - 1] : n.mapTitle;
-      if (n.dup) b.appendChild(span('wiki-parent', parent));
-      let path = n.path.length ? n.path.join(' › ') : n.mapTitle;
-      if (path.length > 48) { // vorne kürzen: der Teil nahe der Notiz unterscheidet
-        const parts = [];
-        for (let k = n.path.length - 1, len = 0; k >= 0 && (len + n.path[k].length < 44 || !parts.length); k--) { parts.unshift(n.path[k]); len += n.path[k].length + 3; }
-        path = '… › ' + parts.join(' › ');
-      }
-      b.appendChild(span('wiki-path', path));
-      if (n.archived) b.appendChild(span('wiki-tag', t('archiviert')));
-      b.title = [...n.path, n.title].join(' › ');
-      el.wikiList.appendChild(b);
-    }
-    w.shown = Math.max(w.shown, end);
-  }
-
-  function markWikiSelected() {
-    const w = state.wiki;
-    if (!w) return;
-    const prev = el.wikiList.querySelector('[aria-selected="true"]');
-    if (prev) prev.setAttribute('aria-selected', 'false');
-    const cur = el.wikiList.children[w.index];
-    if (cur) { cur.setAttribute('aria-selected', 'true'); cur.scrollIntoView({ block: 'nearest' }); }
-  }
-
-  function closeWikiPopup() {
-    state.wiki = null;
-    state.wikiData = null;
-    state.wikiSeq++;
-    el.wikiPopup.hidden = true;
-    el.wikiPopup.classList.remove('with-path');
-    el.wikiList.replaceChildren();
-  }
-
-  /** Tasten bei offener Liste: Pfeile (und Bild auf/ab) wählen, Enter oder Tab übernehmen, Umschalt+Enter als Querverweis, Esc
-   *  schliesst; Strg zeigt die Pfade, solange sie gedrückt ist. Liefert true, wenn die Taste verbraucht ist. */
-  function handleWikiKey(e) {
-    const w = state.wiki;
-    if (!w) return false;
-    if (e.key === 'Control') { el.wikiPopup.classList.add('with-path'); return false; }
-    const n = w.items.length;
-    const step = { ArrowDown: 1, ArrowUp: -1, PageDown: 10, PageUp: -10 }[e.key];
-    if (n && step && !e.altKey && !e.shiftKey) {
-      e.preventDefault();
-      w.index = Math.max(0, Math.min(n - 1, w.index + step));
-      if (w.index >= w.shown) showMoreWiki(w.index + WIKI_PAGE);
-      markWikiSelected();
-      return true;
-    }
-    if (n && (e.key === 'Enter' || e.key === 'Tab') && !e.altKey) {
-      e.preventDefault();
-      acceptWiki(w.index, e.key === 'Enter' && e.shiftKey);
-      return true;
-    }
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeWikiPopup(); return true; }
-    return false;
-  }
-
-  /** Übernimmt den Vorschlag: der Inhalt zwischen «[[» und «]]» wird der Titel, bei mehrfachem Titel mit Nummer; cross (oder ein
-   *  schon getippter Stern) macht einen Querverweis. Der Cursor steht danach hinter «]]». */
-  async function acceptWiki(index, cross) {
-    const w = state.wiki;
-    const n = w && w.items[index];
-    const ctx = wikiContext();
-    if (!n || !ctx) { closeWikiPopup(); return; }
-    const ins = `${n.dup ? `${n.title}#${n.id}` : n.title}${cross || ctx.star ? '*' : ''}]]`;
-    const text = el.body.value;
-    const caret = ctx.start + ins.length;
-    closeWikiPopup();
-    await applyEdit({ text: text.slice(0, ctx.start) + ins + text.slice(ctx.end + (ctx.close ? 2 : 0)), selStart: caret, selEnd: caret });
-  }
-
-  // ---------- Tabellen (v2.10.0): einfügen per Raster, Kontextmenü in der Vorschau ----------
-
-  const PICK_COLS = 8, PICK_ROWS = 10;
-  const tableLabel = n => t('Spalte {n}', { n });
-  let picker = null;
-
-  /** Das Raster zum Einfügen (einmal gebaut): Zeigen oder Ziehen wählt Spalten × Zeilen, Loslassen oder Klick fügt ein; Pfeiltasten
-   *  ändern die Grösse, Enter fügt ein, Esc schliesst. Darunter «Titelzeile» (die erste Zeile ist der Kopf) und «Titelspalte». */
-  function tablePicker() {
-    if (picker) return picker;
-    const box = document.createElement('div');
-    box.className = 'table-picker';
-    box.id = 'tablePicker';
-    box.hidden = true;
-    box.setAttribute('role', 'dialog');
-    box.setAttribute('aria-label', t('Tabelle einfügen'));
-    const grid = document.createElement('div');
-    grid.className = 'tp-grid';
-    grid.tabIndex = 0;
-    grid.setAttribute('role', 'grid');
-    grid.setAttribute('aria-label', t('Grösse der Tabelle: Pfeiltasten, Enter fügt ein'));
-    const cells = [];
-    for (let r = 0; r < PICK_ROWS; r++) {
-      for (let c = 0; c < PICK_COLS; c++) {
-        const d = document.createElement('div');
-        d.className = 'tp-cell';
-        d.dataset.c = String(c + 1);
-        d.dataset.r = String(r + 1);
-        cells.push(d);
-        grid.appendChild(d);
-      }
-    }
-    const size = document.createElement('div');
-    size.className = 'tp-size';
-    const opts = document.createElement('div');
-    opts.className = 'tp-opts';
-    const check = (text, on) => {
-      const l = document.createElement('label');
-      const i = document.createElement('input');
-      i.type = 'checkbox';
-      i.checked = on;
-      l.append(i, text);
-      opts.appendChild(l);
-      return i;
-    };
-    const head = check(t('Titelzeile'), true);
-    const headCol = check(t('Titelspalte'), false);
-    // Tabellen mit Rahmen (v3.3.0): mehrzeilige Felder, vorgegeben; die Wahl merkt sich der Browser
-    let gridOn = true;
-    try { gridOn = localStorage.getItem('nonotes.tableGrid') !== '0'; } catch (e) { /* ohne Speicher gilt die Vorgabe */ }
-    const gridBox = check(t('Mit Rahmen (mehrzeilige Felder)'), gridOn);
-    gridBox.parentElement.title = t('Tabelle mit Rahmen aus «+---+»: Felder dürfen mehrere Zeilen haben und sich über mehrere Spalten ziehen. Ohne: einfache Tabelle wie bei GitHub');
-    head.className = 'tp-head';
-    headCol.className = 'tp-headcol';
-    gridBox.className = 'tp-grid-kind';
-    gridBox.addEventListener('change', () => { try { localStorage.setItem('nonotes.tableGrid', gridBox.checked ? '1' : '0'); } catch (e) { /* egal */ } });
-    box.append(grid, size, opts);
-    document.body.appendChild(box);
-
-    const p = { box, grid, cols: 0, rows: 0, drag: false, sel: null, anchor: null };
-    const paint = () => {
-      for (const d of cells) {
-        const c = Number(d.dataset.c), r = Number(d.dataset.r);
-        const on = c <= p.cols && r <= p.rows;
-        d.classList.toggle('on', on);
-        d.classList.toggle('head', on && r === 1 && head.checked);
-      }
-      size.textContent = p.cols ? t('{spalten} × {zeilen}', { spalten: p.cols, zeilen: p.rows }) : t('Grösse wählen');
-    };
-    p.set = (c, r) => { p.cols = Math.max(1, Math.min(PICK_COLS, c)); p.rows = Math.max(1, Math.min(PICK_ROWS, r)); paint(); };
-    p.paint = paint;
-    const cellAt = (x, y) => { const d = document.elementFromPoint(x, y); return d && d.classList && d.classList.contains('tp-cell') && grid.contains(d) ? d : null; };
-    const insertNow = async () => {
-      if (!p.cols) return;
-      const r = Tables.insert(el.body.value, p.sel.s, p.sel.e, p.cols, p.rows, { header: head.checked, headerColumn: headCol.checked, label: tableLabel, grid: gridBox.checked });
-      closeTablePicker();
-      await applyEdit(r);
-    };
-    grid.addEventListener('pointermove', e => { const d = cellAt(e.clientX, e.clientY); if (d) p.set(Number(d.dataset.c), Number(d.dataset.r)); });
-    grid.addEventListener('pointerdown', e => {
-      const d = cellAt(e.clientX, e.clientY);
-      if (!d) return;
-      e.preventDefault();
-      p.drag = true;
-      p.set(Number(d.dataset.c), Number(d.dataset.r));
-      try { grid.setPointerCapture(e.pointerId); } catch (err) { /* egal */ }
-    });
-    grid.addEventListener('pointerup', async e => {
-      if (!p.drag) return;
-      p.drag = false;
-      const d = cellAt(e.clientX, e.clientY);
-      if (d) p.set(Number(d.dataset.c), Number(d.dataset.r));
-      await insertNow();
-    });
-    grid.addEventListener('keydown', async e => {
-      const step = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] }[e.key];
-      if (step) { e.preventDefault(); p.set((p.cols || 1) + step[0], (p.rows || 1) + step[1]); }
-      else if (e.key === 'Enter') { e.preventDefault(); await insertNow(); }
-    });
-    box.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeTablePicker(true); } });
-    head.addEventListener('change', paint);
-    document.addEventListener('pointerdown', e => {
-      if (!box.hidden && !box.contains(e.target) && !(p.anchor && p.anchor.contains(e.target))) closeTablePicker();
-    }, true);
-    picker = p;
-    return p;
-  }
-
-  /** Öffnet das Raster unter (oder über) anchor; eingefügt wird an der Markierung im Text, wie sie beim Öffnen war. */
-  function openTablePicker(anchor) {
-    if (!Tables || state.currentId == null || el.body.readOnly) return;
-    const p = tablePicker();
-    if (!p.box.hidden) { closeTablePicker(true); return; }
-    p.sel = { s: el.body.selectionStart || 0, e: el.body.selectionEnd || 0 };
-    p.anchor = anchor || null;
-    p.cols = 0;
-    p.rows = 0;
-    p.drag = false;
-    p.paint();
-    p.box.hidden = false;
-    const a = anchor ? anchor.getBoundingClientRect() : el.body.getBoundingClientRect();
-    const w = p.box.offsetWidth, h = p.box.offsetHeight;
-    p.box.style.left = `${Math.max(8, Math.min(a.left, window.innerWidth - w - 8))}px`;
-    p.box.style.top = `${a.bottom + 6 + h <= window.innerHeight - 8 ? a.bottom + 6 : Math.max(8, a.top - h - 6)}px`;
-    if (anchor) anchor.setAttribute('aria-expanded', 'true');
-    p.grid.focus();
-  }
-
-  function closeTablePicker(backToText) {
-    if (!picker || picker.box.hidden) return;
-    picker.box.hidden = true;
-    if (picker.anchor) picker.anchor.setAttribute('aria-expanded', 'false');
-    if (backToText && isEditorOpen()) el.body.focus();
-  }
-
-  /** Was eine Zelle der Vorschau meint: { noteId, line (Kopfzeile im Text), row (-1 Titelzeile), col, cols, rows, header,
-   *  headerColumn, meta } (eingefroren, meta als Kopie), oder null, wenn die Tabelle nicht mehr so im Text steht. */
-  function tableTarget(cellEl) {
-    const table = cellEl.closest('table.md-table[data-src]');
-    if (!table || !Tables) return null;
-    const line = Number(table.dataset.src);
-    const found = Tables.tableAtLine(el.body.value, line);
-    if (!found) return null;
-    const tb = found.t;
-    const tr = cellEl.parentElement;
-    const row = tr.closest('thead') ? -1 : Number(tr.dataset.row);
-    const col = Number(cellEl.dataset.col);
-    const spans = tb.kind === 'grid' ? (row < 0 ? tb.spans.h : tb.spans.rows[row]) : null;
-    return Object.freeze({
-      noteId: state.currentId, line, row, col,
-      cols: tb.cols, rows: tb.rows.length, header: !!tb.header, headerColumn: tb.meta.kopfspalte === true,
-      meta: Object.freeze(JSON.parse(JSON.stringify(tb.meta))),
-      grid: tb.kind === 'grid', span: spans && spans[col] > 0 ? spans[col] : 1,
-    });
-  }
-
-  /** Rechtsklick auf eine Tabelle in der Vorschau: Titelzeile, Titelspalte, Hervorheben; Zeilen und Spalten; Einträge der Erweiterungen. */
-  function onPreviewContextMenu(e) {
-    if (onPhContextMenu(e)) return; // Platzhalter (v2.12.0) vor dem Tabellenmenü
-    const cellEl = e.target.closest('table.md-table[data-src] th, table.md-table[data-src] td');
-    if (!cellEl || state.currentId == null || el.body.readOnly || readOnly()) return;
-    const tg = tableTarget(cellEl);
-    if (!tg) return;
-    e.preventDefault();
-    const caret = () => el.body.selectionStart || 0;
-    const run = fn => async () => { const r = fn(el.body.value); if (r && r.text !== el.body.value) await applyTableEdit(r); };
-    const items = [
-      { write: true, label: t('Titelzeile'), checked: tg.header, title: t('Erste Zeile als Titel, bleibt beim Scrollen oben und steht im Druck auf jeder Seite'), action: run(text => Tables.toggleHeader(text, tg.line, tableLabel, caret())) },
-      { write: true, label: t('Titelspalte'), checked: tg.headerColumn, title: t('Erste Spalte als Titel'), action: run(text => Tables.setMeta(text, tg.line, m => { m.kopfspalte = !tg.headerColumn; }, caret())) },
-      { write: true, label: t('Titel hervorheben'), checked: tg.meta.hervorheben === true, title: t('Titelzeile und Titelspalte im Ton der Hauptfarbe'), action: run(text => Tables.setMeta(text, tg.line, m => { m.hervorheben = tg.meta.hervorheben !== true; }, caret())) },
-      'sep',
-    ];
-    if (tg.row >= 0) items.push({ write: true, label: t('Zeile darüber einfügen'), action: run(text => Tables.insertRow(text, tg.line, tg.row, 'above')) });
-    items.push({ write: true, label: t('Zeile darunter einfügen'), action: run(text => Tables.insertRow(text, tg.line, tg.row, 'below')) });
-    if (tg.row >= 0) items.push({ write: true, label: t('Zeile löschen'), action: run(text => Tables.deleteRow(text, tg.line, tg.row, caret())) });
-    items.push('sep',
-      { write: true, label: t('Spalte links einfügen'), action: run(text => Tables.insertColumn(text, tg.line, tg.col, 'left', tg.header ? tableLabel : null)) },
-      { write: true, label: t('Spalte rechts einfügen'), action: run(text => Tables.insertColumn(text, tg.line, tg.col, 'right', tg.header ? tableLabel : null)) });
-    if (tg.cols > 1) items.push({ write: true, label: t('Spalte löschen'), action: run(text => Tables.deleteColumn(text, tg.line, tg.col, caret())) });
-    // Felder verbinden und teilen, umwandeln (v3.3.0); Verbinden macht aus einer einfachen Tabelle eine mit Rahmen
-    items.push('sep');
-    if (tg.col + tg.span < tg.cols) items.push({ write: true, label: t('Mit dem Feld rechts verbinden'), title: tg.grid ? t('Das Feld zieht sich über beide Spalten, der Text kommt untereinander') : t('Das Feld zieht sich über beide Spalten; die Tabelle bekommt dafür einen Rahmen'), action: run(text => Tables.mergeRight(text, tg.line, tg.row, tg.col)) });
-    if (tg.span > 1) items.push({ write: true, label: t('Feld teilen'), title: t('Der Text bleibt im ersten Feld'), action: run(text => Tables.splitCell(text, tg.line, tg.row, tg.col)) });
-    items.push(tg.grid
-      ? { write: true, label: t('In einfache Tabelle umwandeln'), title: t('Ohne Rahmen, wie bei GitHub: verbundene Felder werden geteilt, Zeilen im Feld mit <br> verbunden'), action: run(text => Tables.convert(text, tg.line, 'pipe', caret())) }
-      : { write: true, label: t('In Tabelle mit Rahmen umwandeln'), title: t('Mit mehrzeiligen Feldern: aus <br> wird eine neue Zeile im Feld'), action: run(text => Tables.convert(text, tg.line, 'grid', caret())) });
-    const fromPlugins = pluginContextEntries(tg, { multi: false, applied: false }, state.pluginTableItems);
-    if (fromPlugins.length) items.push('sep', ...fromPlugins);
-    showContextMenu(items, e.clientX, e.clientY);
   }
 
   // ---------- Aufgaben-Ansicht ----------
@@ -5917,23 +4707,12 @@
     el.tPersonFilter.addEventListener('change', async () => { state.tPerson = el.tPersonFilter.value; await renderTasks(); });
     el.tPrintBtn.addEventListener('click', openTaskPrintDialog);
     el.taskPrintGoBtn.addEventListener('click', runTaskPrint);
-    el.preview.addEventListener('change', onPreviewChange);
     el.qFilter.addEventListener('click', async e => {
       const b = e.target.closest('button[data-status]');
       if (b) await setQuestionFilter(b.dataset.status);
     });
     el.qSearch.addEventListener('input', onQuestionSearchInput);
     el.qSort.addEventListener('change', async () => { state.qSort = el.qSort.value; await renderQuestions(); });
-    el.mdToolbar.addEventListener('click', async e => {
-      const b = e.target.closest('button[data-cmd]');
-      if (b) { e.preventDefault(); await runCommand(b.dataset.cmd); }
-    });
-    el.mdToolbar.addEventListener('mousedown', e => {
-      // Fokus und Markierung im Textfeld behalten
-      if (e.target.closest('button')) e.preventDefault();
-    });
-    el.headingSelect.addEventListener('change', setHeadingFromSelect);
-    el.helpBtn.addEventListener('click', () => openHelp('editor'));
     el.menuHelpBtn.addEventListener('click', () => openHelp('editor'));
     setupLanguage();
     setupAccent();
@@ -5974,132 +4753,6 @@
     el.helpTabs.addEventListener('click', async e => {
       const b = e.target.closest('button[data-tab]');
       if (b) await showHelpTab(b.dataset.tab);
-    });
-    el.body.addEventListener('keydown', async e => {
-      const mod = e.ctrlKey || e.metaKey;
-      if (e.isComposing || el.body.readOnly) return;
-      if (state.dp && datePick && datePick.isOpen() && datePick.key(e)) { e.preventDefault(); e.stopPropagation(); return; } // Datumsauswahl (v3.0.0)
-      if (mod && e.key === ' ' && !e.shiftKey && !e.altKey && openDateAtCaret()) { e.preventDefault(); return; }
-      if (state.wiki && handleWikiKey(e)) return; // offene Vorschläge für [[Verweise]]
-      if (state.ph && state.ph.field && state.mention && e.key === 'Tab' && !mod && !e.altKey) {
-        // Kürzel in einem Platzhalter: Tab übernimmt den Vorschlag (falls einer passt) und springt weiter
-        e.preventDefault();
-        e.stopPropagation();
-        const m = state.mention;
-        if (!e.shiftKey && m.items[m.index]) await acceptMention(m.index); else closeMentionPopup();
-        await phJump(e.shiftKey ? -1 : 1);
-        return;
-      }
-      if (state.mention && handleMentionKey(e)) return; // offene Vorschlagsliste für @kürzel
-      if (state.ph && handlePhKey(e)) return; // ausfüllbare Platzhalter einer Vorlage (v2.12.0)
-      // Tabellen (v2.10.0): Tab und Umschalt+Tab springen von Feld zu Feld, Enter fügt eine Zeile an; die Striche werden ausgerichtet
-      // Umschalt+Enter in einem Feld setzt «<br>» (v2.11.0): eine neue Zeile im Feld statt einer, die die Tabelle beendet
-      // Tabellen mit Rahmen (v3.3.0): Enter beginnt eine neue Zeile im Feld, Strg+Enter eine neue Zeile der Tabelle (in einer leeren
-      // letzten endet sie); Rücktaste und Entf an den Enden einer Zeile im Feld verbinden die Zeilen und lassen den Rahmen heil
-      if (Tables && !e.altKey) {
-        const value = el.body.value;
-        const s = el.body.selectionStart || 0;
-        const end = el.body.selectionEnd || s;
-        let r = null;
-        if (!mod && (e.key === 'Tab' || e.key === 'Enter') && !value.slice(s, end).includes('\n')) {
-          r = e.key === 'Tab' ? Tables.move(value, s, e.shiftKey ? -1 : 1) : e.shiftKey ? Tables.lineBreak(value, s) : Tables.enter(value, s);
-        } else if (mod && !e.shiftKey && e.key === 'Enter' && s === end) {
-          r = Tables.newRow(value, s);
-        } else if (!mod && !e.shiftKey && (e.key === 'Backspace' || e.key === 'Delete') && s === end) {
-          r = Tables.joinLine(value, s, e.key === 'Backspace' ? -1 : 1);
-        }
-        if (r) { e.preventDefault(); if (r.text !== value || r.selStart !== s || r.selEnd !== end) await applyEdit(r); return; }
-      }
-      // Listen, Aufgaben, Zitate und Antworten weiterführen; Shift+Enter bleibt die normale neue Zeile.
-      if (e.key === 'Enter' && !mod && !e.shiftKey && !e.altKey) {
-        const r = E.continueLine(el.body.value, el.body.selectionStart || 0, el.body.selectionEnd || 0);
-        if (r) { e.preventDefault(); await applyEdit(r); }
-        return;
-      }
-      if (e.key === 'Tab' && !mod && !e.altKey) {
-        const r = E.indentLines(el.body.value, el.body.selectionStart || 0, el.body.selectionEnd || 0, e.shiftKey ? -1 : 1);
-        if (r) { e.preventDefault(); await applyEdit(r); }
-        return;
-      }
-      if (!mod) return;
-      const k = e.key.toLowerCase();
-      if (e.shiftKey) {
-        if (k === 'f') { e.preventDefault(); await runCommand('question'); }
-        else if (k === 'a') { e.preventDefault(); await runCommand('answer'); }
-        else if (k === 'd') { e.preventDefault(); await runCommand('decision'); }
-        return;
-      }
-      if (k === 'b') { e.preventDefault(); await runCommand('bold'); }
-      else if (k === 'i') { e.preventDefault(); await runCommand('italic'); }
-      else if (k === 'k') { e.preventDefault(); await runCommand('link'); }
-    });
-
-    // Tabellen mit Rahmen (v3.3.0): beim Tippen bleiben die Striche untereinander (Tables.typed); der Text davor kommt aus beforeinput
-    // Rückgängig und Wiederholen bleiben, wie sie sind (sonst entstünde dabei ein neuer Schritt)
-    el.body.addEventListener('beforeinput', e => {
-      if (state.gridApplying) return;
-      state.gridPrev = e.inputType && e.inputType.startsWith('history') ? null : el.body.value;
-    });
-    el.body.addEventListener('input', () => {
-      const prev = state.gridPrev;
-      state.gridPrev = null;
-      if (!Tables || !Tables.typed || state.gridApplying || prev == null) return;
-      const s = el.body.selectionStart || 0;
-      if (s !== (el.body.selectionEnd || s)) return;
-      const r = Tables.typed(prev, el.body.value, s);
-      if (r) replaceKeepingUndo(r.text, r.selStart, r.selEnd);
-    });
-    el.body.addEventListener('input', e => { updateMentionPopup(); updateWikiPopup(); onDateInput(e); });
-    el.body.addEventListener('click', () => {
-      // Klick in den Zwischenraum eines Felds einer Tabelle mit Rahmen: der Cursor kommt hinter den Text (v3.3.0)
-      if (Tables && Tables.snap && el.body.selectionStart === el.body.selectionEnd) {
-        const p = Tables.snap(el.body.value, el.body.selectionStart || 0);
-        if (p != null) el.body.setSelectionRange(p, p);
-      }
-      if (state.mention) updateMentionPopup();
-      if (state.wiki) updateWikiPopup();
-      if (state.dp) closeDatePicker();
-      phCaretMoved();
-      if (modernizeDates()) onEdit(); // alte «@Datum» in der Zeile, die der Cursor verlassen hat (v3.0.0)
-    });
-    el.body.addEventListener('contextmenu', onPhContextMenu);
-    el.body.addEventListener('keyup', e => {
-      if (/^(ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Home|End|PageUp|PageDown)$/.test(e.key) && !state.mention && !state.wiki && !state.dp) {
-        phCaretMoved();
-        if (/^(ArrowUp|ArrowDown|PageUp|PageDown)$/.test(e.key) && modernizeDates()) onEdit();
-      }
-      if (e.key === 'Enter' && !state.dp && modernizeDates()) onEdit(); // die Zeile davor ist verlassen
-      if (e.key === 'Control') el.wikiPopup.classList.remove('with-path');
-      else if (state.wiki && /^(ArrowLeft|ArrowRight|Home|End)$/.test(e.key)) updateWikiPopup(); // Cursor aus dem Verweis heraus: Liste zu
-    });
-    el.body.addEventListener('scroll', () => {
-      if (state.mention) placeMentionPopup();
-      if (state.wiki) placePopupAt(el.wikiPopup, Math.max(0, state.wiki.start - 2));
-      if (state.dp) placeDatePicker();
-      const f = state.ph && state.ph.field;
-      if (f && !f.title && !el.phHint.hidden) placePopupAt(el.phHint, f.start, el.body.value.length - f.tail);
-    });
-    el.body.addEventListener('blur', () => setTimeout(() => {
-      if (document.activeElement === el.body) return;
-      closeMentionPopup();
-      closeWikiPopup();
-      if (state.dp && !(datePick && datePick.el.contains(document.activeElement))) closeDatePicker();
-    }, 0));
-    el.wikiPopup.addEventListener('mousedown', e => e.preventDefault()); // der Fokus bleibt im Textfeld
-    el.wikiPopup.addEventListener('click', async e => {
-      const b = e.target.closest('button[data-index]');
-      if (b) await acceptWiki(Number(b.dataset.index), e.shiftKey);
-    });
-    el.wikiList.addEventListener('scroll', () => {
-      const w = state.wiki;
-      if (w && w.shown < w.items.length && el.wikiList.scrollTop + el.wikiList.clientHeight > el.wikiList.scrollHeight - 60) showMoreWiki(w.shown + WIKI_PAGE);
-    });
-    window.addEventListener('keyup', e => { if (e.key === 'Control') el.wikiPopup.classList.remove('with-path'); });
-    window.addEventListener('blur', () => el.wikiPopup.classList.remove('with-path'));
-    el.mentionPopup.addEventListener('mousedown', e => e.preventDefault()); // der Fokus bleibt im Textfeld
-    el.mentionPopup.addEventListener('click', async e => {
-      const b = e.target.closest('button[data-index]');
-      if (b) await acceptMention(Number(b.dataset.index));
     });
     el.qPersonFilter.addEventListener('change', async () => { state.qPerson = el.qPersonFilter.value; await renderQuestions(); });
 
@@ -6144,7 +4797,6 @@
     el.backBtn.addEventListener('click', closeEditorStep);
     el.title.addEventListener('input', onEdit);
     el.title.addEventListener('input', scheduleNavTitle);
-    el.body.addEventListener('input', onEdit);
     el.search.addEventListener('input', () => onSearchInput('list'));
     el.search.addEventListener('keydown', e => {
       if (e.key === 'Escape' && el.search.value) { el.search.value = ''; onSearchInput('list'); }
@@ -6170,19 +4822,8 @@
     el.multiArchiveBtn.addEventListener('click', () => archiveNotes([...state.multi]));
     el.printArchive.addEventListener('change', updatePrintLabels);
     el.purgeBtn.addEventListener('click', purgeCurrent);
-    el.modeSwitch.addEventListener('click', async e => {
-      const b = e.target.closest('button[data-mode]');
-      if (b) await setEditorMode(b.dataset.mode);
-    });
-    el.preview.addEventListener('click', onPreviewClick);
-    el.preview.addEventListener('dblclick', onPreviewDblClick);
-    state.scrollSync = window.NoNotesScrollSync.create({
-      textarea: el.body, preview: el.preview, mirror: el.bodyMirror,
-      isActive: () => state.editorMode === 'split' && !el.editorPane.hidden,
-    });
     el.qList.addEventListener('click', onListLinkClick);
     el.tList.addEventListener('click', onListLinkClick);
-    el.attachBtn.addEventListener('click', () => { el.attachInput.value = ''; el.attachInput.click(); });
     el.printBtn.addEventListener('click', () => openPrintDialog({ noteId: state.currentId }));
     el.copyLinkBtn.addEventListener('click', () => copyNoteLink(state.currentId));
     // Link am Knoten und Auslösen in einen neuen Bereich (v3.2.0)
@@ -6196,7 +4837,6 @@
     el.detachBtn.addEventListener('click', () => openDetachDialog(state.currentId));
     el.detachGoBtn.addEventListener('click', detachNode);
     el.detachName.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); detachNode(); } });
-    el.preview.addEventListener('contextmenu', onPreviewContextMenu);
     el.mapPrintBtn.addEventListener('click', () => openPrintDialog({}));
     el.mapCopyBtn.addEventListener('click', () => copyMapImage());
     el.multiPrintBtn.addEventListener('click', () => openPrintDialog({ scope: 'selection' }));
@@ -6204,24 +4844,9 @@
     el.printGoBtn.addEventListener('click', runPrint);
     el.qPrintBtn.addEventListener('click', openQaPrintDialog);
     el.qaPrintGoBtn.addEventListener('click', runQaPrint);
-    el.attachInput.addEventListener('change', async () => { await addAttachments(el.attachInput.files); el.attachInput.value = ''; });
-    el.body.addEventListener('paste', async e => {
-      const items = e.clipboardData && e.clipboardData.items ? [...e.clipboardData.items] : [];
-      const files = items.filter(i => i.kind === 'file' && i.type.startsWith('image/')).map(i => i.getAsFile()).filter(Boolean);
-      if (files.length) { e.preventDefault(); await addAttachments(files); return; }
-      if (!el.body.readOnly) pastePathText(e);
-    });
     // Pfade (v2.12.0) überall, wo Markdown steht (Vorschau, Listen): vor den Klicks der Ansichten
     document.addEventListener('click', onPathClick, true);
     document.addEventListener('contextmenu', onPathContextMenu, true);
-    el.body.addEventListener('dragover', e => {
-      if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); el.body.classList.add('drop-target'); }
-    });
-    el.body.addEventListener('dragleave', () => el.body.classList.remove('drop-target'));
-    el.body.addEventListener('drop', async e => {
-      el.body.classList.remove('drop-target');
-      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) { e.preventDefault(); await addAttachments(e.dataTransfer.files); }
-    });
     el.tagInput.addEventListener('keydown', async e => {
       if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); await addTagFromInput(); }
       else if (e.key === 'Backspace' && !el.tagInput.value) {
@@ -6231,12 +4856,7 @@
     });
     el.tagInput.addEventListener('change', async () => { if (el.tagInput.value.trim()) await addTagFromInput(); });
     el.tagInput.addEventListener('blur', async () => { if (el.tagInput.value.trim()) await addTagFromInput(); });
-    el.title.addEventListener('keydown', e => {
-      const ph = state.ph;
-      if (ph && ph.field && ph.field.title) { // Platzhalter im Titel: Tab und Enter springen in den Text, Esc beendet
-        if (e.key === 'Tab' || e.key === 'Enter') { e.preventDefault(); phJump(e.shiftKey ? -1 : 1); return; }
-        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); leaveField().then(endPlaceholders); return; }
-      }
+    el.title.addEventListener('keydown', e => { // Platzhalter im Titel (Tab, Enter, Esc) behandelt der Editor vorher (placeholders.field)
       if (e.key === 'Enter') { e.preventDefault(); el.body.focus(); }
     });
 
