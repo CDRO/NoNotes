@@ -2,6 +2,13 @@ name: Testen und paketieren
 
 # Läuft nur auf main: bei jedem Push auf main, bei Pull Requests nach main, bei einem Tag v* (Release) und von Hand (Release mit
 # Version). Pushes auf andere Zweige lösen nichts aus; geprüft wird, was nach main geht.
+#
+# Einmal testen (seit 4.1.0, nach dem Vorbild von SteeringBoard): Der Schlüssel ist ein Hash des Inhalts ohne die Doku (docs/ ausser
+# docs/releases/, das test/core.cjs prüft, und README.md). Ein grüner Lauf mit Tests lädt die Marke tested-<Schlüssel> hoch
+# (30 Tage). Findet ein späterer Lauf sie, entfallen Einrichten von Chromium und alle Tests: der Push des Merge-Commits nach dem
+# grünen Pull Request, ein reiner Doku-Commit und der Release-Start auf einem geprüften Stand. Ein Release baut die ZIPs trotzdem
+# (Sekunden): die Versionsnummer steht in der App, und die Doku im ZIP soll die aktuelle sein. Voll läuft immer ein Tag v*; der
+# manuelle Start kann die Tests mit «tests» erzwingen.
 on:
   push:
     branches: [main]
@@ -14,9 +21,15 @@ on:
         description: 'Release-Version, z. B. v0.1.0. Legt Tag und Release auf dem gewählten Stand an. Leer = nur Artefakt bauen.'
         required: false
         default: ''
+      tests:
+        description: 'Tests auch dann laufen lassen, wenn der Stand schon grün geprüft ist'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
+  actions: read   # «Schon geprüft?» sucht die Marke tested-<Schlüssel> unter den Artefakten
 
 jobs:
   build:
@@ -70,16 +83,85 @@ jobs:
             echo "$VERSION ist älter als v2.12.0: Beschreibung aus den Commits (--generate-notes)."
           fi
 
-      - name: Abhängigkeiten installieren (nur für den Test)
+      # Schlüssel = SHA-256 der Liste aller Dateien mit ihren Blob-Hashes (git ls-tree), ohne die Doku. Bei einem Pull Request ist
+      # HEAD der Merge mit main (refs/pull/N/merge); wird er unverändert gemergt, hat der Merge-Commit auf main denselben Inhalt und
+      # damit denselben Schlüssel. Nur Marken aus Läufen dieses Repositorys zählen (nicht aus Forks). Fehlt die Antwort der API,
+      # laufen die Tests.
+      - name: Schon geprüft? (Marke tested-<Schlüssel>)
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.tests }}
+        run: |
+          set -euo pipefail
+          KEY="$(git ls-tree -r HEAD | node -e '
+            const skip = p => p === "README.md" || (p.startsWith("docs/") && !p.startsWith("docs/releases/"));
+            const lines = require("fs").readFileSync(0, "utf8").split("\n").filter(l => l && !skip(l.split("\t")[1]));
+            process.stdout.write(require("crypto").createHash("sha256").update(lines.join("\n")).digest("hex").slice(0, 40));
+          ')"
+          MARKER="$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=tested-${KEY}&per_page=20" \
+            --jq '[.artifacts[] | select(.expired == false and .workflow_run.head_repository_id == .workflow_run.repository_id)]
+                  | sort_by(.created_at) | last // empty | "\(.workflow_run.id) \(.workflow_run.head_sha) \(.created_at)"' \
+            2>/dev/null || true)"
+          TESTED="false"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "Tag: voller Lauf."
+          elif [[ "${FORCE}" == "true" ]]; then
+            echo "Tests erzwungen (manueller Start)."
+          elif [[ -n "${MARKER}" ]]; then
+            TESTED="true"
+            read -r RUN SHA DATE <<< "${MARKER}"
+            URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${RUN}"
+            echo "::notice title=Schon geprüft::Lauf ${RUN} (${URL}), Commit ${SHA:0:12}, Marke vom ${DATE} (tested-${KEY}). Tests übersprungen."
+            {
+              echo "### Schon geprüft – Tests übersprungen"
+              echo ""
+              echo "| Lauf | Commit | Marke vom | Schlüssel |"
+              echo "| --- | --- | --- | --- |"
+              echo "| [${RUN}](${URL}) | \`${SHA:0:12}\` | ${DATE} | \`tested-${KEY}\` |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "key=${KEY}" >> "$GITHUB_OUTPUT"
+          echo "tested=${TESTED}" >> "$GITHUB_OUTPUT"
+          echo "Schlüssel ${KEY}, schon geprüft: ${TESTED}"
+
+      # Abhängigkeiten braucht es für die Tests und für die ZIPs (der Build holt Dateien aus nonotes-editor); ein geprüfter Stand
+      # ohne Release endet hier.
+      - name: Abhängigkeiten installieren
+        if: steps.gate.outputs.tested != 'true' || steps.version.outputs.release == 'true'
         run: npm ci
 
       - name: Chromium für Playwright installieren
+        if: steps.gate.outputs.tested != 'true'
         run: npx playwright install --with-deps chromium
 
       - name: Bauen und Smoke-Test (das Gebaute per file:// in Chromium)
+        if: steps.gate.outputs.tested != 'true'
         run: npm test
 
+      # Alles grün: dieser Stand gilt als geprüft (spätere Läufe finden die Marke)
+      - name: Stand als geprüft markieren
+        if: steps.gate.outputs.tested != 'true'
+        env:
+          KEY: ${{ steps.gate.outputs.key }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/tested"
+          printf 'key=%s\nsha=%s\nevent=%s\nrun=%s\n' "$KEY" "$GITHUB_SHA" "$GITHUB_EVENT_NAME" "$GITHUB_RUN_ID" > "${RUNNER_TEMP}/tested/tested.txt"
+
+      - name: Marke hochladen (tested-<Schlüssel>)
+        if: steps.gate.outputs.tested != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tested-${{ steps.gate.outputs.key }}
+          path: ${{ runner.temp }}/tested/tested.txt
+          retention-days: 30
+          if-no-files-found: error
+
+      # Die ZIPs: nach jedem Lauf mit Tests und für jedes Release. Ein geprüfter Merge-Push baut keine (die ZIPs des Pull Requests
+      # gelten); ein Release auf einem geprüften Stand baut sie neu, weil die Versionsnummer in der App steht.
       - name: ZIP bauen (lokale Ausprägung, mit der Versionsnummer in der App)
+        if: steps.gate.outputs.tested != 'true' || steps.version.outputs.release == 'true'
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -89,6 +171,7 @@ jobs:
           unzip -l "dist/NoNotes-$VERSION.zip"
 
       - name: ZIP als Artefakt bereitstellen
+        if: steps.gate.outputs.tested != 'true' || steps.version.outputs.release == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: NoNotes-${{ steps.version.outputs.version }}
@@ -100,6 +183,7 @@ jobs:
       # dessen Inhalt); ohne Zugriff gibt es eine Warnung und nur das ZIP ohne Erweiterungen.
       - name: Erweiterungen holen (CDRO/NoNotes-plugins)
         id: plugins
+        if: steps.gate.outputs.tested != 'true' || steps.version.outputs.release == 'true'
         uses: actions/checkout@v5
         continue-on-error: true
         with:
@@ -110,7 +194,7 @@ jobs:
           persist-credentials: false
 
       - name: Hinweis, wenn die Erweiterungen fehlen
-        if: steps.plugins.outcome != 'success'
+        if: steps.plugins.outcome == 'failure'
         run: echo "::warning::CDRO/NoNotes-plugins konnte nicht geholt werden (privat? dann Secret PLUGINS_TOKEN mit Leserecht anlegen). Es gibt nur das ZIP ohne Erweiterungen."
 
       - name: ZIP mit Erweiterungen bauen (NoNotes-with-Plugins)

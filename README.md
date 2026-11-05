@@ -913,6 +913,14 @@ auf dessen Inhalt); ohne Zugriff gibt es eine Warnung und nur das erste ZIP. Ein
   Commit an, baut die ZIPs und veröffentlicht das Release (existiert es schon, werden die ZIPs ersetzt).
 - **Per Tag**: `git tag v0.1.0 && git push origin v0.1.0` löst denselben Ablauf aus.
 
+**Einmal testen (seit 4.1.0).** Ein Stand wird nur einmal getestet. Der Workflow bildet einen Schlüssel aus dem Inhalt des
+Repositorys ohne die Doku (`docs/` ausser `docs/releases/`, das die Tests prüfen, und `README.md`). Nach einem grünen Lauf lädt er
+die Marke `tested-<Schlüssel>` als Artefakt hoch (30 Tage). Findet ein späterer Lauf die Marke, überspringt er Chromium und alle
+Tests: so beim Push des Merge-Commits nach einem grünen Pull Request, bei einem Commit nur an der Doku und beim Release-Start auf
+einem geprüften Stand. Das Release baut die beiden ZIPs trotzdem neu (das dauert Sekunden), weil die Versionsnummer in der App steht
+und die Doku im ZIP die aktuelle sein soll. Ein Tag `v*` läuft immer voll; beim manuellen Start erzwingt das Kästchen *tests*
+die Tests. Die Zusammenfassung des Laufs nennt den Lauf, aus dem die Marke stammt.
+
 **Release-Notizen (ab v2.12.0).** Jedes Release bekommt auf GitHub eine ausführliche Beschreibung mit Screenshots: was neu ist, wie
 man es benutzt, und den Update-Pfad von der vorigen Version. Sie liegt im Repository unter `docs/releases/<Version>/RELEASE.md`
 (Vorlage `docs/releases/VORLAGE.md`), die Screenshots daneben, gemacht mit `node tools/release-shots.cjs <Version>` aus einem
