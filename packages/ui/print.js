@@ -83,6 +83,35 @@
     return `<p class="print-meta">${parts.join(' · ')}</p>`;
   }
 
+  /** Inhalt einer Notiz als HTML wie im Druck (auch für den PDF-Export). opts: { resolveRef, urls (Map Bild → Adresse), tableFormat,
+   *  refHref(id) → Ziel eines [[Verweises]] auf die Notiz id oder null (dann ist er nur Text) } */
+  function noteBodyHtml(n, note, opts) {
+    const body = M().render(note.body, {
+      placeholders: 'plain', // ausfüllbare Platzhalter: nur die Werte
+      resolveRef: opts.resolveRef,
+      resolveAttachment: id => (opts.urls && opts.urls.get(id)) || null,
+      tableFormat: opts.tableFormat ? info => opts.tableFormat(Object.assign({ noteId: n.id }, info)) : undefined,
+      tableSrc: false,
+    });
+    return body.replace(/href="#" class="md-wiki" data-title="([^"]*)" data-note-id="(\d+)"/g, (m, wikiTitle, id) => {
+      const href = opts.refHref ? opts.refHref(Number(id)) : null;
+      return href ? `href="${esc(href)}" class="md-wiki" data-title="${wikiTitle}" data-note-id="${id}"` : `class="md-wiki plain" data-title="${wikiTitle}" data-note-id="${id}"`;
+    });
+  }
+
+  /** Adressen der Bilder in den Notizen vorab holen (attachmentUrl: id → Promise der Adresse), damit das Rendern ohne Warten auskommt. */
+  async function attachmentUrls(notes, attachmentUrl) {
+    const urls = new Map();
+    if (!attachmentUrl) return urls;
+    for (const note of notes) {
+      for (const m of String(note.body || '').matchAll(/\(att:(\d+)\)/g)) {
+        const id = Number(m[1]);
+        if (!urls.has(id)) urls.set(id, await attachmentUrl(id));
+      }
+    }
+    return urls;
+  }
+
   /** HTML für den Druck von Notizen.
    *  options: { scope: 'current'|'subtree'|'selection'|'all', noteId, ids, withChildren, archived,
    *             includeMap, includeToc, pageBreaks, attachmentUrl, tableFormat, mapSections } (attachmentUrl: id → Promise der
@@ -111,32 +140,15 @@
       parts.push('<nav class="print-toc"><h2>' + esc(t('Inhalt')) + '</h2><ul>' + list.map(n =>
         `<li style="margin-left:${(n.printLevel - 1) * 14}px"><a href="#print-note-${n.id}">${esc(n.title.trim() || t('Ohne Titel'))}</a></li>`).join('') + '</ul></nav>');
     }
-    // Bilder vorab auflösen, damit das Rendern danach ohne Warten auskommt.
-    const urls = new Map();
     const notes = new Map();
-    for (const n of list) {
-      const note = await backend.getNote(n.id);
-      notes.set(n.id, note);
-      if (!options.attachmentUrl) continue;
-      for (const m of String(note.body || '').matchAll(/\(att:(\d+)\)/g)) {
-        const id = Number(m[1]);
-        if (!urls.has(id)) urls.set(id, await options.attachmentUrl(id));
-      }
-    }
+    for (const n of list) notes.set(n.id, await backend.getNote(n.id));
+    const urls = await attachmentUrls(notes.values(), options.attachmentUrl);
     const metas = new Map();
     for (const n of list) metas.set(n.id, await metaHtml(backend, n, notes.get(n.id)));
     list.forEach((n, i) => {
       const note = notes.get(n.id);
       const level = Math.min(6, n.printLevel + 1);
-      let body = M().render(note.body, {
-        placeholders: 'plain', // ausfüllbare Platzhalter: nur die Werte
-        resolveRef,
-        resolveAttachment: id => urls.get(id) || null,
-        tableFormat: options.tableFormat ? info => options.tableFormat(Object.assign({ noteId: n.id }, info)) : undefined,
-        tableSrc: false,
-      });
-      body = body.replace(/href="#" class="md-wiki" data-title="([^"]*)" data-note-id="(\d+)"/g, (m, wikiTitle, id) =>
-        included.has(Number(id)) ? `href="#print-note-${id}" class="md-wiki" data-title="${wikiTitle}" data-note-id="${id}"` : `class="md-wiki plain" data-title="${wikiTitle}" data-note-id="${id}"`);
+      const body = noteBodyHtml(n, note, { resolveRef, urls, tableFormat: options.tableFormat, refHref: id => (included.has(id) ? `#print-note-${id}` : null) });
       parts.push(`<section class="print-note${options.pageBreaks && i > 0 ? ' page-break' : ''}" id="print-note-${n.id}">` +
         `<h${level}>${esc(note.title.trim() || t('Ohne Titel'))}</h${level}>` + metas.get(n.id) +
         `<div class="md">${body}</div></section>`);
@@ -313,5 +325,5 @@
     }
   }
 
-  global.NoNotesPrint = { buildNotesDocument, buildQuestionsDocument, buildTasksDocument, print, resolveNotes };
+  global.NoNotesPrint = { buildNotesDocument, buildQuestionsDocument, buildTasksDocument, print, resolveNotes, noteBodyHtml, attachmentUrls, metaHtml, titleResolver };
 })(window);

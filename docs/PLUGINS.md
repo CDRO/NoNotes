@@ -110,11 +110,11 @@ gilt für eine Erweiterung, deren `activate` oder deren Ereignisrückruf einen F
 | `ctx.ui.addToolbarButton({ label, title?, action })` | Knopf in der Toolleiste des Editors; `action(editor)` bekommt die Editor-Schnittstelle |
 | `ctx.ui.addMapButton({ label, title?, action })` | Seit 2.11.0. Knopf in der Leiste der Mindmap (vor dem Suchfeld); `action(button)`. Liefert den Knopf, etwa für `aria-pressed` |
 | `ctx.ui.addMapOverlay(element)` | Seit 2.11.0. Ein eigenes Element über der Mindmap (etwa eine Legende); Lage und Aussehen setzt die Erweiterung (`position: absolute` im Bereich der Mindmap; die CSS-Variable `--map-bar-bottom` nennt die Unterkante der Leiste, also `top: calc(var(--map-bar-bottom) + 8px)`). Liefert eine Funktion zum Entfernen |
-| `ctx.export.addMapStyle(fn)` | Seit 3.1.0. Farben im Mindmap-Bild für Markdown-Export, Druck und *Als Bild kopieren*: `fn({ target: 'export' \| 'print' \| 'copy', ids })` liefert (auch als Promise) `{ nodes: { [id]: { fill, stroke, text } }, defs }` oder nichts. `ids` sind die Notizen, die im Bild vorkommen können; `fill`, `stroke` (Rand) und `text` (Titel) sind Farben (`#rgb`, `rgb()`, `hsl()`, Namen) oder `url(#…)` auf ein Muster aus `defs` (SVG, etwa `<pattern>`, Kennungen mit eigenem Vorsatz). Was keine Farbe ist, und `defs`, die kein gültiges SVG sind, fallen weg; mehrere Erweiterungen: die spätere gewinnt je Knoten. Ein Fehler lässt nur diese Erweiterung weg. Liefert eine Funktion zum Abmelden |
-| `ctx.export.addMapSection(fn)` | Seit 2.11.0. Abschnitt direkt unter dem Mindmap-Bild im Markdown-Export (`index.md` bzw. die eine Datei) und im Druck mit Mindmap-Bild: `fn({ target: 'export' \| 'print' })` liefert (auch als Promise) `{ title, markdown }` oder nichts. Ein Fehler lässt nur diesen Abschnitt weg. Liefert eine Funktion zum Abmelden |
+| `ctx.export.addMapStyle(fn)` | Seit 3.1.0. Farben im Mindmap-Bild für Markdown- und PDF-Export (beide `target: 'export'`), Druck und *Als Bild kopieren*: `fn({ target: 'export' \| 'print' \| 'copy', ids })` liefert (auch als Promise) `{ nodes: { [id]: { fill, stroke, text } }, defs }` oder nichts. `ids` sind die Notizen, die im Bild vorkommen können; `fill`, `stroke` (Rand) und `text` (Titel) sind Farben (`#rgb`, `rgb()`, `hsl()`, Namen) oder `url(#…)` auf ein Muster aus `defs` (SVG, etwa `<pattern>`, Kennungen mit eigenem Vorsatz). Was keine Farbe ist, und `defs`, die kein gültiges SVG sind, fallen weg; mehrere Erweiterungen: die spätere gewinnt je Knoten. Ein Fehler lässt nur diese Erweiterung weg. Liefert eine Funktion zum Abmelden |
+| `ctx.export.addMapSection(fn)` | Seit 2.11.0. Abschnitt direkt unter dem Mindmap-Bild im Markdown-Export (`index.md` bzw. die eine Datei), im PDF-Export (seit 4.1.0, `index.pdf` bzw. die eine Datei, unter dem Titel; auch `target: 'export'`) und im Druck mit Mindmap-Bild: `fn({ target: 'export' \| 'print' })` liefert (auch als Promise) `{ title, markdown }` oder nichts. Ein Fehler lässt nur diesen Abschnitt weg. Liefert eine Funktion zum Abmelden |
 | `ctx.ui.addContextMenuItem({ label, title?, write?, visible?, action? \| panel? })` | Seit 2.8.0. Eintrag im Kontextmenü eines Knotens der Mindmap (Rechtsklick), mit `action(target)` oder einem Untermenü `panel(target, { close })`; siehe unten |
 | `ctx.ui.addTableMenuItem({ label, title?, write?, visible?, action? \| panel? })` | Seit 2.10.0. Eintrag im Menü, das ein Rechtsklick auf eine Tabelle in der Vorschau öffnet; Felder wie oben, `target` beschreibt die Tabelle; siehe [Tabellen](#tabellen-seit-2100) |
-| `ctx.tables.format(fn)` | Seit 2.10.0. `fn(info)` liefert Klassen und Werte für Tabelle, Titelzeile, Spalten, Zeilen und Felder beim Zeichnen (Vorschau und Druck); liefert eine Funktion zum Abmelden |
+| `ctx.tables.format(fn)` | Seit 2.10.0. `fn(info)` liefert Klassen und Werte für Tabelle, Titelzeile, Spalten, Zeilen und Felder beim Zeichnen (Vorschau, Druck und seit 4.1.0 PDF-Export); liefert eine Funktion zum Abmelden |
 | `ctx.tables.update(target, fn)` | Seit 2.10.0. Ändert das Format einer Tabelle in der offenen Notiz: `fn(meta)` ändert das Objekt; Promise mit `true`, wenn sich etwas geändert hat |
 | `ctx.editor.noteId()` | Kennung der offenen Notiz oder `null` |
 | `ctx.editor.isWritable()` | `true`, wenn eine Notiz offen und nicht schreibgeschützt ist |
@@ -190,7 +190,7 @@ Zeilen oder Spalten eingefügt oder gelöscht werden (Rechtsklick, `Enter` im Te
 angeschaltet wird; gelöschte fallen weg. Was die Werte bedeuten, bestimmt die Erweiterung. Angaben an anderer Stelle bleiben
 unverändert, auch wenn sich die Tabelle ändert.
 
-**Zeichnen.** `ctx.tables.format(fn)` meldet eine Funktion an, die für jede Tabelle in Vorschau und Druck aufgerufen wird.
+**Zeichnen.** `ctx.tables.format(fn)` meldet eine Funktion an, die für jede Tabelle in Vorschau, Druck und PDF-Export aufgerufen wird.
 `fn(info)` bekommt:
 
 | Feld | Bedeutung |
@@ -201,6 +201,11 @@ unverändert, auch wenn sich die Tabelle ändert.
 | `cells` | `{ header: […] \| null, rows: [[…], …] }`, der Text der Felder |
 | `line` | Erste Zeile der Tabelle im Text der offenen Notiz (die Format-Zeile, ohne sie die Titelzeile); `null` in Zitaten, Blöcken und im Druck |
 | `noteId` | Nur im Druck: die Notiz, zu der die Tabelle gehört (die Vorschau zeigt immer die offene) |
+
+**Im PDF-Export** (seit 4.1.0) setzt der Browser das Dokument wie den Druck in einem unsichtbaren Bereich `#pdfArea` und zeichnet
+ab, was dort steht. Regeln einer Erweiterung für den Druck (`@media print { #printArea .meine-klasse { … } }`) gelten dort auch,
+wenn ihr Stylesheet als `<style>` in der Seite steht (so wie bei «Tabellen formatieren»): sie werden auf `#pdfArea` umgeschrieben.
+Flächen, Rahmen, Schriftfarbe, fett und kursiv kommen in die PDF; Schatten, Verläufe und Hintergrundbilder nicht.
 | `grid`, `spans` | Nur bei Tabellen mit Rahmen (seit 3.3.0): `grid: true` und `spans: { header, rows }`, je Spalte die Zahl der Spalten des Felds, das dort beginnt (`0`: von einem Feld links überdeckt, dort steht in `cells` ein leerer Text) |
 
 `fn` liefert `null`, ein Objekt oder eine Liste von Objekten der Form

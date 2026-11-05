@@ -16,6 +16,7 @@
   const Zip = window.NoNotesZip;
   const Exporter = window.NoNotesExport;
   const Printer = window.NoNotesPrint;
+  const PdfExport = window.NoNotesPdfExport;
   const T = window.NoNotesTasks;
   const Dates = window.NoNotesDates;
   const Cal = window.NoNotesCalendar;
@@ -88,6 +89,8 @@
     tagChips: $('#tagChips'), tagInput: $('#tagInput'), tagSuggestions: $('#tagSuggestions'),
     exportBtn: $('#exportBtn'), exportDialog: $('#exportDialog'), exportForm: $('#exportForm'),
     exportDirBtn: $('#exportDirBtn'), exportZipBtn: $('#exportZipBtn'), exportHint: $('#exportHint'),
+    pdfExportBtn: $('#pdfExportBtn'), pdfDialog: $('#pdfDialog'), pdfForm: $('#pdfForm'), pdfPageBreaks: $('#pdfPageBreaks'), pdfPageBreaksRow: $('#pdfPageBreaksRow'),
+    pdfArchive: $('#pdfArchive'), pdfDownloadBtn: $('#pdfDownloadBtn'), pdfDirBtn: $('#pdfDirBtn'), pdfZipBtn: $('#pdfZipBtn'), pdfHint: $('#pdfHint'),
     mapPrintBtn: $('#mapPrintBtn'), mapCopyBtn: $('#mapCopyBtn'), qPrintBtn: $('#qPrintBtn'), printBtn: $('#printBtn'), copyLinkBtn: $('#copyLinkBtn'),
     multiBar: $('#multiBar'), multiCount: $('#multiCount'), multiPrintBtn: $('#multiPrintBtn'), multiClearBtn: $('#multiClearBtn'),
     printDialog: $('#printDialog'), printForm: $('#printForm'), printGoBtn: $('#printGoBtn'),
@@ -661,6 +664,78 @@
     } finally {
       el.exportDirBtn.disabled = false;
       el.exportZipBtn.disabled = false;
+    }
+  }
+
+  // ---------- Export als PDF (seit 4.1.0) ----------
+
+  const pdfMode = () => (el.pdfForm.querySelector('input[name="pdfMode"]:checked') || {}).value || 'single';
+
+  /** Knöpfe je Form: eine Datei wird heruntergeladen, eine Datei pro Notiz kommt in einen Ordner oder ein ZIP. */
+  function updatePdfDialog() {
+    const folder = pdfMode() === 'folder';
+    const canDir = typeof window.showDirectoryPicker === 'function';
+    el.pdfDownloadBtn.hidden = folder;
+    el.pdfDirBtn.hidden = !folder || !canDir;
+    el.pdfZipBtn.hidden = !folder;
+    el.pdfZipBtn.classList.toggle('primary', folder && !canDir);
+    el.pdfPageBreaks.disabled = folder;
+    el.pdfPageBreaksRow.classList.toggle('disabled', folder);
+    el.pdfHint.textContent = folder && !canDir ? t('Dieser Browser kann nicht direkt in Ordner schreiben; das ZIP enthält dieselben Dateien.') : '';
+  }
+
+  function openPdfDialog() {
+    closeMenu();
+    updatePdfDialog();
+    if (typeof el.pdfDialog.showModal === 'function') el.pdfDialog.showModal();
+    else el.pdfDialog.setAttribute('open', '');
+  }
+
+  function closePdfDialog() {
+    if (el.pdfDialog.open) el.pdfDialog.close();
+  }
+
+  async function runPdfExport(target) {
+    const folder = pdfMode() === 'folder';
+    const buttons = [el.pdfDownloadBtn, el.pdfDirBtn, el.pdfZipBtn];
+    buttons.forEach(b => { b.disabled = true; });
+    el.pdfHint.textContent = t('PDF wird erstellt…');
+    try {
+      // Den Ordner zuerst wählen lassen: der Browser erlaubt das nur direkt nach dem Klick
+      const dir = target === 'dir' ? await window.showDirectoryPicker({ mode: 'readwrite' }) : null;
+      const archived = el.pdfArchive.checked;
+      const style = await mapStyleFor('export', (await B.getTree({ archive: archived })).map(r => r.id));
+      let svg = null;
+      try { svg = await Exporter.renderSvg(B, { archived, sides: state.map.sides(), style }); }
+      catch (e) { console.warn('PDF: Mindmap', e); } // i18n-ignore: Protokoll
+      const options = {
+        archived, svg, version: window.NONOTES_VERSION || 'dev', pageBreaks: el.pdfPageBreaks.checked,
+        attachmentUrl: id => attachmentUrl(id), tableFormat: tableFormatFor(null), mapSections: await mapSectionsFor('export'),
+        onProgress: (n, total) => { if (folder && total > 1) el.pdfHint.textContent = t('PDF wird erstellt: {n} von {gesamt} Dateien…', { n, gesamt: total }); },
+      };
+      if (!folder) {
+        const r = await PdfExport.buildSingle(B, options);
+        Store.download(r.data, r.name, 'application/pdf');
+        closePdfDialog();
+        setStatus(tn('PDF heruntergeladen: {name} ({n} Seite)', 'PDF heruntergeladen: {name} ({n} Seiten)', r.pages, { name: r.name }), saveState());
+        return;
+      }
+      const files = await PdfExport.buildFolder(B, options);
+      if (dir) {
+        await Exporter.writeToDirectory(dir, files);
+        closePdfDialog();
+        setStatus(t('PDF-Export gespeichert: {n} Dateien in „{name}“', { n: files.length, name: dir.name }), saveState());
+      } else {
+        Store.download(Zip.create(files), (await Exporter.suggestedZipName(B)).replace(/\.zip$/, '-pdf.zip'));
+        closePdfDialog();
+        setStatus(t('PDF-Export als ZIP heruntergeladen ({n} Dateien)', { n: files.length }), saveState());
+      }
+    } catch (e) {
+      if (isAbort(e)) { el.pdfHint.textContent = ''; return; }
+      console.error(e);
+      el.pdfHint.textContent = t('PDF-Export fehlgeschlagen: {fehler}', { fehler: errorText(e) });
+    } finally {
+      buttons.forEach(b => { b.disabled = false; });
     }
   }
 
@@ -4040,7 +4115,7 @@
   }
 
   function anyDialogOpen() {
-    return [el.exportDialog, el.printDialog, el.qaPrintDialog, el.taskPrintDialog, el.helpDialog, el.calDialog, el.pluginsDialog, el.historyDialog, el.conflictDialog,
+    return [el.exportDialog, el.pdfDialog, el.printDialog, el.qaPrintDialog, el.taskPrintDialog, el.helpDialog, el.calDialog, el.pluginsDialog, el.historyDialog, el.conflictDialog,
       el.templateSaveDialog, el.templatePickDialog, el.templatesDialog, el.nodeLinkDialog, el.detachDialog].some(d => d.open);
   }
 
@@ -4898,6 +4973,11 @@
     el.calDownloadBtn.addEventListener('click', () => runCalendarExport('download'));
     el.exportDirBtn.addEventListener('click', () => runExport('dir'));
     el.exportZipBtn.addEventListener('click', () => runExport('zip'));
+    el.pdfExportBtn.addEventListener('click', openPdfDialog);
+    el.pdfForm.addEventListener('change', updatePdfDialog);
+    el.pdfDownloadBtn.addEventListener('click', () => runPdfExport('download'));
+    el.pdfDirBtn.addEventListener('click', () => runPdfExport('dir'));
+    el.pdfZipBtn.addEventListener('click', () => runPdfExport('zip'));
 
     document.addEventListener('keydown', async e => {
       const mod = e.ctrlKey || e.metaKey;

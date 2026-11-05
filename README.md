@@ -135,6 +135,27 @@ Fragen und Antworten werden zu Zitatblöcken (`> **Offene Frage:** …`, `> **An
 `[[Titel]]` zu normalen Markdown-Links. Ziel ist wahlweise ein Ordner deiner Wahl (Edge und
 andere Chromium-Browser) oder ein ZIP zum Herunterladen.
 
+### Export als PDF (seit 4.1.0)
+
+`Datenbank → Als PDF exportieren…` macht dasselbe für alle, die kein Markdown-Programm haben. Gesetzt wird wie im Druck
+(Tabellen, Kästchen, Fragen und Antworten, Personen, Termine, Farben aus Erweiterungen), in Helvetica, auf A4; die Mindmap
+steht quer auf der ersten Seite, Bilder stecken in den Dateien (ein JPEG unverändert).
+
+- **Alles in einer Datei** (vorgegeben): eine PDF-Datei mit Mindmap, Titel, Inhaltsverzeichnis mit Seitenzahlen, offenen
+  Fragen, Entscheiden und Aufgaben, dann allen Notizen in Baumreihenfolge (Tiefe = Überschriftenebene). Die erste Notiz
+  beginnt auf einer neuen Seite, mit **Jede Notiz auf einer neuen Seite** auch jede weitere. Lesezeichen in der Seitenleiste
+  des PDF-Programms für jede Notiz; Inhaltsverzeichnis, offene Punkte und `[[Verweise]]` springen innerhalb der Datei.
+- **Eine Datei pro Notiz**: `index.pdf` mit Mindmap, Inhaltsverzeichnis und offenen Punkten, dazu eine PDF-Datei pro Notiz
+  in Ordnern wie im Baum (`notes/planung.pdf`, `notes/planung/budget.pdf`, wie beim Markdown-Export). Verweise und die Liste
+  der Unternotizen führen von Datei zu Datei (Acrobat und die meisten PDF-Programme folgen solchen Links; manche PDF-Ansichten
+  im Browser nicht). Ziel ist ein Ordner oder ein ZIP.
+
+Seiten brechen nie mitten durch eine Zeile, ein Bild, eine Tabellenzeile oder eine Frage; eine Überschrift bleibt bei ihrem
+Text, und die Titelzeile einer langen Tabelle steht auf jeder Seite. Unten auf jeder Seite stehen Titel und Seitenzahl.
+Zeichen ausserhalb der westeuropäischen Schrift (→, ✓, Emojis, andere Schriften) kommen als kleine Bilder in die Datei:
+sie sind zu sehen, aber nicht durchsuchbar. Der Export läuft ganz im Browser, auch bei dunkler Einstellung entsteht ein
+helles Dokument.
+
 ### Termine in den Kalender (.ics)
 
 `Datenbank → Termine in Kalender exportieren (.ics)…` schreibt alle Aufgaben und Fragen mit
@@ -734,6 +755,7 @@ dieselben wie bis v3.3.0. In der Tabelle steht bei diesen Teilen «Paket», geme
 | Tabellen | Paket `tables.js`: Markdown-Tabellen lesen (seit 2.11.0 auch Teile eines Felds, `cellParts`, `lineBreak`, `togglePrefix`; Aufgaben, Fragen und Entscheide in Feldern liest `tasks.js` bzw. `questions.js`) (`parseAt`, Format-Zeile `<!-- tabelle: … -->`) und schreiben (`format` richtet aus), Schritte des Editors (`move`, `enter`, `insert`) und des Rechtsklicks (`setMeta`, `toggleHeader`, Zeilen und Spalten) als reine Textfunktionen; `markdown.js` zeichnet sie (`thead` bleibt oben, `th scope="row"` für die Titelspalte, Angaben von Erweiterungen über `tableFormat`); Raster, Tasten und Rechtsklick im Editor des Pakets; Schnittstelle `ctx.tables` und `ctx.ui.addTableMenuItem` ([docs/PLUGINS.md](docs/PLUGINS.md)) |
 | Export | `packages/core/export.js` baut die Dateien, `zip.js` ist ein kleiner ZIP-Writer; das Bild liefert `NoNotesMindmap.toSvgString`, PNG über ein Canvas |
 | Druck | `packages/ui/print.js` baut das Druckdokument in `#printArea`; `@media print` blendet den Rest der App aus |
+| PDF-Export | `packages/core/pdf.js`: eigener PDF-Schreiber (Standardschriften, Formen, Bilder, Links, Lesezeichen, Deflate), läuft auch in Node; `packages/ui/pdf-layout.js`: setzt HTML mit den Regeln des Drucks im unsichtbaren `#pdfArea`, liest Wörter, Flächen, Rahmen, Bilder und Links ab, bricht die Seiten um; `packages/ui/pdf-export.js`: eine Datei oder eine pro Notiz. Tests `test/core.cjs` und `test/app.cjs` |
 | Scroll-Sync | Paket `scrollsync.js`: Spiegel des Textes misst Zeilenhöhen, Vorschau-Blöcke tragen `data-line`, lineare Interpolation dazwischen |
 | Erweiterungen | `packages/core/plugins.js` (Verzeichnis, Lader, Schalter, Ereignisse) und die Anbindung in `packages/ui/app.js`; Ordner `plugins/` mit Liste, Anleitung und Beispielen; das Verzeichnis des Ordners erzeugt `tools/build.cjs` (siehe [docs/PLUGINS.md](docs/PLUGINS.md)) |
 | KI-Agenten | `packages/agent/`: `catalog.js` beschreibt die Werkzeuge (englische Namen, Eingabeschemata) und führt sie über das Backend aus, `webmcp.js` meldet sie beim Agenten des Browsers an (`document.modelContext`, sobald ein Browser sie anbietet), `protocol.js` spricht MCP ohne Transport; `editions/local/agent/nonotes-mcp.cjs` ist das Programm für Agenten auf dem eigenen Rechner (MCP über die Standardeingabe, dieselbe Datei wie die App, atomar schreiben unter einer Sperre); `local-shell.js` führt Änderungen von aussen Notiz für Notiz zusammen; Tests `test/core.cjs` (Katalog, Protokoll, Programm), `test/collab.cjs` (Zusammenführen), `test/extend.cjs` (WebMCP gegen einen Nachbau); siehe [docs/AGENTS.md](docs/AGENTS.md) |

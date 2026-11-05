@@ -8,7 +8,7 @@ const os = require('node:os');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
-const { suite } = require('./lib.cjs');
+const { suite, readPdf, readZip } = require('./lib.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist', 'NoNotes');
@@ -3183,11 +3183,181 @@ async function runNodeLinkUi(browser, part, step) {
   }
 }
 
+/* Export als PDF (seit 4.1.0): Dialog, eine Datei (Mindmap quer, Inhalt mit Seitenzahlen, offene Punkte, Lesezeichen, Verweise in
+   der Datei, Titelzeile langer Tabellen auf jeder Seite, Bilder, Zeichen ausserhalb von WinAnsi als Bild, hell auch bei dunkler
+   Einstellung, Fusszeile), jede Notiz auf neuer Seite, eine Datei pro Notiz (ZIP und Ordner, Verweise von Datei zu Datei). */
+async function runPdfExport(browser, part, step) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'de-CH', colorScheme: 'dark', acceptDownloads: true });
+  await ctx.addInitScript(() => {
+    window.__exported = {};
+    const concat = chunks => { const n = chunks.reduce((s, c) => s + c.length, 0); const out = new Uint8Array(n); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; } return out; };
+    const makeDir = prefix => ({ kind: 'directory', name: 'Export', getDirectoryHandle: async n => makeDir(prefix + n + '/'), getFileHandle: async n => ({ kind: 'file', name: n, createWritable: async () => { const chunks = []; return { write: async d => { chunks.push(new Uint8Array(d)); }, close: async () => { window.__exported[prefix + n] = chunks.reduce((a, c) => a + c.length, 0) && Array.from(concat(chunks).subarray(0, 8)); }, abort: async () => {} }; } }) });
+    window.showDirectoryPicker = async () => makeDir('');
+  });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nonotes-pdf-'));
+  try {
+    await page.goto(APP_URL);
+    await page.waitForSelector(READY, { timeout: 30000 });
+    const node = title => page.locator(`g.mm-node:has(> text:text-is("${title}"))`);
+    const add = async (title, parent) => {
+      if (parent) await node(parent).click(); else await page.click('#mindmap', { position: { x: 30, y: 700 } });
+      await page.keyboard.press('Tab');
+      await page.waitForSelector('#renameInput:not([hidden])');
+      await page.keyboard.type(title);
+      await page.keyboard.press('Enter');
+      await node(title).waitFor();
+    };
+    const open = async title => {
+      await node(title).dblclick();
+      await page.waitForFunction(t => document.body.classList.contains('editor-open') && document.querySelector('#title').value === t, title);
+      await page.click('[data-mode="edit"]');
+    };
+    const close = async () => { await page.waitForFunction(SAVED, null, { timeout: 15000 }); await page.click('#backBtn'); await page.waitForSelector('body:not(.editor-open)'); };
+    await add('Umbau');
+    for (const t of ['Heizung', 'Fenster', 'Liste']) await add(t, 'Umbau');
+    await open('Umbau');
+    await page.fill('#body', 'Plan für den **Umbau**: [[Heizung]] und [[Fenster]], siehe https://example.org/umbau → fertig ✓');
+    await close();
+    await open('Heizung');
+    await page.fill('#body', [
+      '+---------+----------------------------+-------+', '| Bereich | Aufgaben                   | Stand |', '+=========+============================+=======+',
+      '| Heizung | [ ] Offerte einholen @anna | offen |', '|         | [x] Termin                 |       |', '+---------+----------------------------+-------+',
+      '', '- [ ] Förderung prüfen >13.11.2026', '', '? Wärmepumpe oder Pellets?', '! Wärmepumpe', '', 'Foto:', '', ''].join('\n'));
+    const png = path.join(tmp, 'skizze.png');
+    fs.writeFileSync(png, await page.screenshot({ clip: { x: 0, y: 0, width: 300, height: 200 } }));
+    await page.setInputFiles('#attachInput', png);
+    await page.waitForFunction(() => /!\[skizze\]\(att:\d+\)/.test(document.querySelector('#body').value));
+    const jpg = path.join(tmp, 'foto.jpg');
+    fs.writeFileSync(jpg, await page.screenshot({ type: 'jpeg', quality: 80, clip: { x: 0, y: 0, width: 320, height: 240 } }));
+    await page.setInputFiles('#attachInput', jpg);
+    await page.waitForFunction(() => /!\[foto\]\(att:\d+\)/.test(document.querySelector('#body').value));
+    await close();
+    await open('Fenster');
+    await page.fill('#body', '?! Holz oder Kunststoff? @ben\n\nUnser Haus 🏠\n\n' + Array.from({ length: 45 }, (_, i) => `Absatz ${i + 1}: Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore.`).join('\n\n'));
+    await close();
+    await open('Liste');
+    await page.fill('#body', '| Nr | Posten | Betrag |\n|---:|---|---:|\n' + Array.from({ length: 70 }, (_, i) => `| ${i + 1} | Posten ${i + 1} | ${(i * 37) % 500} CHF |`).join('\n'));
+    await close();
+    part('Inhalt: Baum mit Tabelle mit Rahmen, Aufgaben, Frage, Bild, Entscheid, Emoji, langem Text und langer Tabelle');
+
+    // ---------- Dialog ----------
+    await page.click('#menuBtn');
+    await page.click('#pdfExportBtn');
+    await page.waitForSelector('#pdfDialog[open]');
+    const shown = () => page.evaluate(() => ['#pdfDownloadBtn', '#pdfDirBtn', '#pdfZipBtn'].filter(s => !document.querySelector(s).hidden));
+    assert.equal(await page.isChecked('input[name="pdfMode"][value="single"]'), true, 'vorgegeben: alles in einer Datei');
+    assert.deepEqual(await shown(), ['#pdfDownloadBtn']);
+    assert.equal(await page.isEnabled('#pdfPageBreaks'), true);
+    await page.check('input[name="pdfMode"][value="folder"]');
+    assert.deepEqual(await shown(), ['#pdfDirBtn', '#pdfZipBtn'], 'eine Datei pro Notiz: Ordner oder ZIP');
+    assert.equal(await page.isEnabled('#pdfPageBreaks'), false, 'neue Seite je Notiz nur für eine Datei');
+    await page.check('input[name="pdfMode"][value="single"]');
+    part('Dialog: eine Datei vorgegeben (Herunterladen), eine Datei pro Notiz (Ordner, ZIP), Seitenumbruch nur für eine Datei');
+
+    // ---------- Eine Datei ----------
+    const download = async btn => {
+      const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 60000 }), page.click(btn)]);
+      const file = path.join(tmp, dl.suggestedFilename());
+      await dl.saveAs(file);
+      return { name: dl.suggestedFilename(), bytes: fs.readFileSync(file) };
+    };
+    const single = await download('#pdfDownloadBtn');
+    assert.match(single.name, /^NoNotes-meine-notizen-\d{4}-\d{2}-\d{2}\.pdf$/);
+    await page.waitForFunction(() => !document.querySelector('#pdfDialog').open);
+    const pdf = readPdf(single.bytes);
+    assert.match(await page.textContent('#status'), new RegExp(`PDF heruntergeladen: ${single.name.replace(/\./g, '\\.')} \\(${pdf.pages.length} Seiten\\)`));
+    assert.equal(pdf.info.title, 'Meine Notizen');
+    assert.deepEqual([pdf.pages[0].width, pdf.pages[0].height], [841.89, 595.28], 'Seite 1: A4 quer');
+    assert.ok(pdf.pages[0].images >= 1, 'mit dem Bild der Mindmap');
+    assert.ok(pdf.pages.slice(1).every(p => p.width === 595.28 && p.height === 841.89), 'danach A4 hoch');
+    assert.deepEqual(pdf.outline.map(o => [o.title, o.depth]), [['Mindmap', 0], ['Inhalt', 0], ['Umbau', 0], ['Heizung', 1], ['Fenster', 1], ['Liste', 1]], 'Lesezeichen');
+    const at = title => pdf.outline.find(o => o.title === title).page;
+    assert.equal(at('Inhalt'), 1);
+    assert.ok(at('Umbau') >= 2, 'die Notizen beginnen auf einer neuen Seite');
+    const front = pdf.pages[1].words;
+    for (const w of ['Inhalt', 'Offene', 'Aufgaben', 'Entscheide', 'Förderung', 'Holz']) assert.ok(front.some(x => x.includes(w)), 'Vorderseite: ' + w);
+    for (const t of ['Umbau', 'Heizung', 'Fenster', 'Liste']) {
+      const i = front.indexOf(t);
+      assert.ok(i >= 0 && front.slice(i).includes(String(at(t) + 1)), `Inhalt: «${t}» mit Seitenzahl ${at(t) + 1}`);
+    }
+    assert.ok(pdf.pages[1].annots.filter(a => /\/Dest \[/.test(a)).length >= 4, 'Inhalt und offene Punkte springen in der Datei');
+    const umbau = pdf.pages[at('Umbau')];
+    assert.ok(umbau.annots.some(a => /\/URI \(https:\/\/example\.org\/umbau\)/.test(a)), 'Adresse als Link');
+    assert.ok(umbau.annots.some(a => new RegExp(`/Dest \\[${pdf.pages[at('Heizung')].id} 0 R`).test(a)), 'Verweis [[Heizung]] springt zur Notiz');
+    assert.ok(umbau.images >= 2, 'Zeichen ausserhalb der Standardschriften (→ ✓) als Bild');
+    const heizung = pdf.pages[at('Heizung')];
+    assert.ok(heizung.words.includes('Offerte') && heizung.words.includes('Wärmepumpe'), 'Tabelle mit Rahmen und Frage');
+    assert.ok(pdf.pages.slice(at('Heizung')).some(p => p.images >= 1), 'die Bilder stecken in der Datei');
+    assert.ok([...pdf.objects.values()].some(o => /\/DCTDecode/.test(o.dict) && /\/Width 320 \/Height 240/.test(o.dict)), 'das JPEG unverändert aus dem Backend');
+    const color = /([\d.]+) ([\d.]+) ([\d.]+) rg [\d.]+ Tz 1 0 0 1 [\d.]+ [\d.]+ Tm \(F\\366rderung\) Tj/.exec(heizung.content);
+    assert.ok(color && Number(color[1]) + Number(color[2]) + Number(color[3]) < 1, 'dunkle Einstellung: Text trotzdem dunkel auf Weiss');
+    const listPages = pdf.pages.slice(at('Liste')).filter(p => p.words.includes('Betrag'));
+    assert.ok(listPages.length >= 2, 'die Titelzeile der langen Tabelle steht auf jeder ihrer Seiten');
+    assert.ok(listPages[1].words.indexOf('Betrag') < listPages[1].words.indexOf('Posten', listPages[1].words.indexOf('Betrag')), 'oben auf der Folgeseite');
+    const last = pdf.pages[pdf.pages.length - 1];
+    assert.ok(last.words.includes(`${pdf.pages.length} / ${pdf.pages.length}`) && last.words.includes('Meine Notizen'), 'Fusszeile: Titel und Seite');
+    part('Eine Datei: Mindmap quer, Lesezeichen, Inhalt mit Seitenzahlen, offene Punkte, Links in der Datei und nach aussen, Zeichen als Bild, Bild, hell, Titelzeile auf jeder Seite, Fusszeile');
+
+    await page.click('#menuBtn');
+    await page.click('#pdfExportBtn');
+    await page.waitForSelector('#pdfDialog[open]');
+    await page.check('#pdfPageBreaks');
+    const broken = readPdf((await download('#pdfDownloadBtn')).bytes);
+    const at2 = title => broken.outline.find(o => o.title === title).page;
+    assert.ok(at2('Heizung') > at2('Umbau') && at2('Fenster') > at2('Heizung'), 'jede Notiz auf einer neuen Seite');
+    part('Jede Notiz auf einer neuen Seite');
+
+    // ---------- Eine Datei pro Notiz ----------
+    await page.click('#menuBtn');
+    await page.click('#pdfExportBtn');
+    await page.waitForSelector('#pdfDialog[open]');
+    await page.check('input[name="pdfMode"][value="folder"]');
+    const zip = await download('#pdfZipBtn');
+    assert.match(zip.name, /^NoNotes-meine-notizen-\d{4}-\d{2}-\d{2}-pdf\.zip$/);
+    const files = readZip(zip.bytes);
+    assert.deepEqual(Object.keys(files).sort(), ['index.pdf', 'notes/umbau.pdf', 'notes/umbau/fenster.pdf', 'notes/umbau/heizung.pdf', 'notes/umbau/liste.pdf']);
+    assert.match(await page.textContent('#status'), /PDF-Export als ZIP heruntergeladen \(5 Dateien\)/);
+    const index = readPdf(files['index.pdf']);
+    assert.equal(index.pages[0].width, 841.89, 'index.pdf: Mindmap quer vorne');
+    assert.ok(index.pages[1].annots.some(a => /\/S \/GoToR \/F \(notes\/umbau\/heizung\.pdf\)/.test(a)), 'index.pdf: Inhalt führt in die Dateien');
+    const umbauFile = readPdf(files['notes/umbau.pdf']);
+    assert.ok(umbauFile.pages[0].words.includes('Unternotizen'), 'Liste der Unternotizen');
+    assert.ok(umbauFile.pages[0].annots.some(a => /\/S \/GoToR \/F \(umbau\/heizung\.pdf\)/.test(a)), 'Verweis und Unternotiz: relativ zur Datei');
+    const heizungFile = readPdf(files['notes/umbau/heizung.pdf']);
+    assert.equal(heizungFile.info.title, 'Heizung');
+    assert.ok(heizungFile.pages.some(p => p.images >= 1), 'Bild in der Datei der Notiz');
+    assert.ok(heizungFile.pages[0].words.includes('Meine Notizen · Heizung') || heizungFile.pages[0].text.includes('Meine Notizen · Heizung'), 'Fusszeile mit Bereich und Notiz');
+    assert.equal(readPdf(files['notes/umbau/liste.pdf']).pages.length >= 2, true);
+    part('Eine Datei pro Notiz als ZIP: index.pdf, Ordner wie im Baum, Verweise von Datei zu Datei, Bilder');
+
+    await page.click('#menuBtn');
+    await page.click('#pdfExportBtn');
+    await page.waitForSelector('#pdfDialog[open]');
+    await page.check('input[name="pdfMode"][value="folder"]');
+    await page.click('#pdfDirBtn');
+    await page.waitForFunction(() => !document.querySelector('#pdfDialog').open, null, { timeout: 60000 });
+    const written = await page.evaluate(() => window.__exported);
+    assert.deepEqual(Object.keys(written).sort(), Object.keys(files).sort(), 'In Ordner speichern: dieselben Dateien');
+    assert.deepEqual(written['index.pdf'].slice(0, 5), [37, 80, 68, 70, 45], '%PDF-');
+    assert.match(await page.textContent('#status'), /PDF-Export gespeichert: 5 Dateien in „Export“/);
+    assert.deepEqual(errors, []);
+    part('Eine Datei pro Notiz in einen Ordner');
+  } finally {
+    await ctx.close();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 suite('App-Test', [
   { name: null, run: runSmoke }, // druckt seine Gruppen selbst
   { name: 'Bereiche: anlegen, wechseln (Statusleiste, Menü, Alt+1 … 9), Adresse #w=… und ?w=…, Weiterleitung eines Webservers, Datei und Hauptfarbe je Bereich, umbenennen, entfernen, Datei als Bereich, zwei Tabs', run: runAreas },
   { name: 'Navigation: Zurück und Vor, Adresse mit Notiz, Neuladen, Pfeil im Editor, Ansichten, Link kopieren, eingefügte Links, Umbenennen, direkter Einstieg, fehlende Notiz, anderer Bereich', run: runNavigation },
   { name: 'Pfade auf Dateien und Ordner: Netz, Laufwerk, file://, Leerzeichen, Bilder, neuer Tab, Pfad kopieren, Einfügen aus dem Explorer, über eine Webseite', run: runPaths },
   { name: 'Link am Knoten und Auslösen in einen neuen Bereich (v3.2.0): Dialog, Symbol, Editor, Papierkorb, Wechsel und Zurück', run: runNodeLinkUi },
+  { name: 'Export als PDF (v4.1.0): Dialog, eine Datei mit Mindmap, Inhalt, Lesezeichen, Links, Bildern und Titelzeilen auf jeder Seite, hell bei dunkler Einstellung, eine Datei pro Notiz als ZIP und in einen Ordner', run: runPdfExport },
   { name: 'Backend-Vertrag: Methodenliste, JSON-sichere Rückgaben, Änderungsmeldung, Fehlerkennungen', run: runBackend },
 ], { browser: true });

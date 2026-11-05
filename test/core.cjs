@@ -8,7 +8,7 @@ const os = require('node:os');
 const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
-const { suite } = require('./lib.cjs');
+const { suite, readPdf } = require('./lib.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 // Markdown-Engine und Editor liegen seit v4.0.0 im Paket nonotes-editor (devDependency): ED('tasks.js') ist der Pfad relativ zu ROOT
@@ -2953,6 +2953,97 @@ async function runNodeLinks(browser, part, step) {
   part('Auslösen: Unterbaum samt Tags, Bildern, Archiv, Fragen, Aufgaben, Verlauf und Link in eine andere Datenbank; hier Papierkorb mit Platz im Baum, Link am Knoten, Verweise umgeschrieben');
 }
 
+// ============================================================
+/* PDF-Schreiber (packages/core/pdf.js, seit 4.1.0) ohne Browser: Aufbau der Datei (Verzeichnis der Byte-Stellen, Streams), Text in
+   WinAnsi mit Breite, Formen, Bilder mit und ohne Maske, JPEG unverändert, Links (Adresse, Seite, andere Datei), Lesezeichen, Angaben,
+   ohne Kompression. */
+async function runPdf(browser, part, step) {
+  globalThis.window = globalThis;
+  require(path.join(ROOT, 'packages', 'core', 'pdf.js'));
+  const P = globalThis.NoNotesPdf;
+
+  assert.equal(P.encodable('Grüezi «Welt» – 5 € · Ça va? Ñandú'), true, 'westeuropäische Zeichen und WinAnsi-Sonderzeichen');
+  assert.equal(P.encodable('→'), false);
+  assert.equal(P.encodable('✓'), false);
+  assert.equal(P.encodable('🏠'), false);
+  assert.equal(P.encodable('Ж'), false);
+  assert.equal(Math.round(P.measure('Hello', 'Helvetica', 10) * 100) / 100, 22.78, 'Breite aus den AFM-Werten von Helvetica');
+  assert.ok(P.measure('Hello', 'Helvetica-Bold', 10) > P.measure('Hello', 'Helvetica', 10), 'fett ist breiter');
+  assert.equal(P.measure('abc', 'Courier', 10), 18, 'Courier: 600 je Zeichen');
+  assert.equal(P.measure('Ä', 'Helvetica', 10), P.measure('A', 'Helvetica', 10), 'Umlaut wie sein Grundbuchstabe');
+  assert.deepEqual(P.jpegInfo(new Uint8Array([1, 2, 3])), null);
+  part('Zeichen und Breiten: WinAnsi, Helvetica fett und normal, Courier, Umlaute');
+
+  const doc = P.create({ title: 'Prüfung – Umbau ✓', lang: 'de-CH', producer: 'NoNotes test', date: new Date('2026-11-05T08:00:00Z') });
+  const p1 = doc.addPage(P.A4.width, P.A4.height);
+  p1.rect(40, 40, 200, 60, { fill: '#fdf3c4', stroke: '#999999', lineWidth: 1, radius: 8 });
+  p1.text('Grüezi (Welt) \\ € «gut»', 50, 70, { font: 'Helvetica-Bold', size: 14, color: '#1c1e22' });
+  p1.text('Auf 50 pt', 50, 90, { size: 10, width: 50 });
+  p1.text('x → y', 50, 110, { font: 'Courier', size: 10 });
+  p1.line(40, 130, 300, 130, { stroke: '#b00', lineWidth: 0.5, dash: [2, 2] });
+  p1.circle(320, 70, 10, { fill: [0, 0.5, 0] });
+  p1.path([['M', 315, 70], ['L', 319, 74], ['L', 326, 65]], { stroke: '#fff', lineWidth: 1.5 });
+  const w = 4, h = 3, rgb = new Uint8Array(w * h * 3).fill(200), alpha = new Uint8Array(w * h).fill(255);
+  alpha[0] = 0;
+  const masked = doc.addImage({ width: w, height: h, rgb, alpha });
+  const opaque = doc.addImage({ width: w, height: h, rgb, alpha: new Uint8Array(w * h).fill(255) });
+  // ein winziges, gültiges JPEG (1×1 Pixel, Graustufen)
+  const jpeg = Buffer.from('/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=', 'base64');
+  assert.deepEqual(P.jpegInfo(jpeg), { width: 1, height: 1, components: 1 });
+  const photo = doc.addJpeg(jpeg);
+  assert.ok(photo, 'JPEG angenommen');
+  p1.image(masked, 50, 150, 40, 30);
+  p1.image(opaque, 100, 150, 40, 30);
+  p1.image(photo, 150, 150, 30, 30);
+  p1.clip(0, 200, 100, 50, () => p1.rect(0, 0, 500, 500, { fill: '#eee' }));
+  const p2 = doc.addPage(P.A4.height, P.A4.width);
+  p2.text('Quer', 50, 50, { size: 12 });
+  p1.link(50, 60, 100, 14, { uri: 'https://example.org/a?b=(c)' });
+  p1.link(50, 100, 100, 14, { page: 1, y: 40 });
+  p2.link(50, 40, 100, 12, { file: 'notes/planung/budget.pdf' });
+  p2.link(50, 60, 100, 12, { page: 99 }); // gibt es nicht: fällt weg
+  doc.setOutline([{ title: 'Erste Seite – Übersicht', page: 0, y: 0, children: [{ title: 'Kind ✓', page: p1, y: 150 }] }, { title: 'Zweite', page: p2, y: 0 }, { title: 'weg', page: 7 }]);
+  const pdf = readPdf(await doc.toBytes());
+  assert.equal(pdf.pages.length, 2);
+  assert.deepEqual([pdf.pages[0].width, pdf.pages[0].height, pdf.pages[1].width, pdf.pages[1].height], [595.28, 841.89, 841.89, 595.28], 'A4 hoch und quer');
+  assert.deepEqual(pdf.pages[0].words, ['Grüezi (Welt) \\ € «gut»', 'Auf 50 pt', 'x ? y'], 'WinAnsi, Klammern und Backslash maskiert, nicht darstellbar wird «?»');
+  assert.match(pdf.pages[0].content, /\/F2 14 Tf/, 'Helvetica-Bold');
+  assert.match(pdf.pages[0].content, /\(Auf 50 pt\) Tj/);
+  const tz = /([\d.]+) Tz 1 0 0 1 50 751\.89 Tm \(Auf 50 pt\)/.exec(pdf.pages[0].content);
+  assert.ok(tz && Math.abs(Number(tz[1]) / 100 * P.measure('Auf 50 pt', 'Helvetica', 10) - 50) < 0.05, 'width: auf 50 pt gedehnt');
+  assert.match(pdf.pages[0].content, /\[2 2\] 0 d/, 'gestrichelt');
+  assert.match(pdf.pages[0].content, / re W n/, 'Ausschnitt');
+  assert.equal(pdf.pages[0].images, 3);
+  const dicts = [...pdf.objects.values()].map(o => o.dict);
+  assert.equal(dicts.filter(d => /\/Subtype \/Image/.test(d) && /\/SMask/.test(d)).length, 1, 'Maske nur, wo nicht alles deckend ist');
+  assert.equal(dicts.filter(d => /\/DCTDecode/.test(d) && /\/DeviceGray/.test(d)).length, 1, 'JPEG unverändert, Graustufen');
+  assert.equal(dicts.filter(d => /\/Predictor 15/.test(d)).length, 3, 'Bilder mit PNG-Vorhersage (zwei Bilder, eine Maske)');
+  assert.deepEqual(dicts.filter(d => /\/Type \/Font/.test(d)).map(d => /\/BaseFont \/(\S+)/.exec(d)[1]).sort(), ['Courier', 'Helvetica', 'Helvetica-Bold'], 'nur benutzte Standardschriften');
+  part('Seiten, Text in WinAnsi mit Breite, Formen, Ausschnitt, Bilder mit und ohne Maske, JPEG unverändert, nur benutzte Schriften');
+
+  assert.equal(pdf.pages[0].annots.length, 2);
+  assert.match(pdf.pages[0].annots[0], /\/URI \(https:\/\/example\.org\/a\?b=\\\(c\\\)\)/, 'Adresse, Klammern maskiert');
+  assert.match(pdf.pages[0].annots[1], new RegExp(`/Dest \\[${pdf.pages[1].id} 0 R /XYZ 0 555\\.28 null\\]`), 'Sprung auf Seite 2, 40 pt unter dem oberen Rand');
+  assert.deepEqual(pdf.pages[1].annots.length, 1, 'Link auf eine Seite, die es nicht gibt, fällt weg');
+  assert.match(pdf.pages[1].annots[0], /\/S \/GoToR \/F \(notes\/planung\/budget\.pdf\) \/D \[0 \/Fit\]/, 'andere PDF-Datei');
+  assert.deepEqual(pdf.outline, [{ title: 'Erste Seite – Übersicht', depth: 0, page: 0 }, { title: 'Kind ✓', depth: 1, page: 0 }, { title: 'Zweite', depth: 0, page: 1 }], 'Lesezeichen in UTF-16, verschachtelt; ohne Ziel fällt eines weg');
+  assert.match(pdf.catalog, /\/PageMode \/UseOutlines/);
+  assert.match(pdf.catalog, /\/Lang \(de-CH\)/);
+  assert.equal(pdf.info.title, 'Prüfung – Umbau ✓');
+  assert.match(pdf.info.dict, /\/CreationDate \(D:20261105080000Z\)/);
+  part('Links (Adresse, Seite, andere Datei), Lesezeichen in UTF-16, Sprache, Titel, Datum');
+
+  const plain = P.create({ deflate: null });
+  plain.addPage(200, 100).text('ohne Kompression', 10, 50);
+  const raw = Buffer.from(await plain.toBytes());
+  assert.ok(raw.toString('latin1').includes('(ohne Kompression) Tj'), 'deflate: null schreibt die Inhalte lesbar');
+  assert.ok(!raw.toString('latin1').includes('/FlateDecode'));
+  assert.equal(readPdf(raw).pages[0].text, 'ohne Kompression');
+  const empty = readPdf(await P.create().toBytes());
+  assert.equal(empty.pages.length, 1, 'ohne Seiten: eine leere A4-Seite');
+  part('Ohne Kompression, leeres Dokument');
+}
+
 suite('Kern-Test', [
   { name: 'Zusammenführen: Myers-Vergleich, Dreiwege-Zusammenführung mit Zufallsdaten, Konflikte, Cursor', run: runMerge },
   { name: 'Datenbank: Standardschema, Angleichen alter Dateien (Schema 1, 11, 12, 13), Konflikterkennung, Autor im Verlauf, Querverweise, Entscheide und Personen', run: runDb },
@@ -2969,5 +3060,6 @@ suite('Kern-Test', [
   { name: 'Programm für den eigenen Rechner: Einträge für Claude Code und andere, Datei, MCP über die Standardeingabe, Änderungen von aussen, zwei Prozesse mit Sperre, Lesemodus', run: runAgentProgram },
   { name: 'Termine mit «>» (v3.0.0): Schreibweise, Frist und Erinnerungen, Umstellung alter Dateien, Speichern, Index, Vorschau, Kalender, Agenten, Programm mit Sicherung, Seiten der Mindmap', run: runDatesV3 },
   { name: 'Link am Knoten und Auslösen in einen neuen Bereich (v3.2.0): Schema 18, Prüfung der Links, Umschreiben, Umzug zwischen zwei Datenbanken', run: runNodeLinks },
+  { name: 'PDF-Schreiber (v4.1.0): Aufbau, Text in WinAnsi mit Breite, Formen, Bilder mit Maske und JPEG, Links, Lesezeichen, ohne Kompression', run: runPdf },
   { name: 'Release-Notizen: Pflicht ab v2.12.0, Prüfung, Beschreibung für GitHub, Screenshots aus einem Drehbuch, alle Ordner im Repository', run: runReleaseNotes },
 ]);

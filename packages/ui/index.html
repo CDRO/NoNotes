@@ -46,6 +46,7 @@
           <button type="button" id="importBtn" data-write role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 10V2 M5 5l3-3 3 3 M2.5 12.5v1h11v-1"/></svg>Aus Datei importieren…</button>
           <div class="sep" role="separator"></div>
           <button type="button" id="exportBtn" role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5l3 3v10H4z M9 1.5v3h3 M6 8h4 M6 10.5h4"/></svg>Als Markdown exportieren…</button>
+          <button type="button" id="pdfExportBtn" role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5l3 3v10H4z M9 1.5v3h3 M5.8 12V8.5h1.4a1 1 0 0 1 0 2H5.8 M9.2 12V8.5h.8a1.6 1.6 0 0 1 0 3.5z"/></svg>Als PDF exportieren…</button>
           <button type="button" id="templatesBtn" role="menuitem" hidden><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 1.5h6l3 3v10h-9z M9.5 1.5v3h3 M5.5 7.5h5 M5.5 10h5 M5.5 12.5h3"/></svg>Vorlagen…</button>
           <button type="button" id="calendarBtn" data-write role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v10h-11z M2.5 6.5h11 M5 1.5v3 M11 1.5v3"/></svg>Termine in Kalender exportieren (.ics)…</button>
           <div class="sep" role="separator"></div>
@@ -671,6 +672,30 @@ Firmenname wie im Handelsregister, **ohne** Rechtsform.
     </form>
   </dialog>
 
+  <dialog id="pdfDialog" class="dialog" aria-labelledby="pdfTitle">
+    <form method="dialog" id="pdfForm">
+      <h2 id="pdfTitle">Als PDF exportieren</h2>
+      <p class="dialog-lead">Gesetzt wie im Druck und lesbar ohne Markdown-Programm: die Mindmap quer auf der ersten Seite, die Bilder in den Dateien.</p>
+      <label class="option">
+        <input type="radio" name="pdfMode" value="single" checked>
+        <span><strong>Alles in einer Datei</strong><br><small>Eine PDF-Datei mit Mindmap, Inhaltsverzeichnis mit Seitenzahlen, offenen Fragen und Aufgaben und allen Notizen; Lesezeichen für jede Notiz</small></span>
+      </label>
+      <label class="suboption" id="pdfPageBreaksRow"><input type="checkbox" id="pdfPageBreaks"> Jede Notiz auf einer neuen Seite</label>
+      <label class="option">
+        <input type="radio" name="pdfMode" value="folder">
+        <span><strong>Eine Datei pro Notiz</strong><br><small><code>index.pdf</code> mit Mindmap und Inhaltsverzeichnis, dazu <code>notes/…</code> mit Ordnern wie im Baum; Verweise führen von Datei zu Datei</small></span>
+      </label>
+      <label class="suboption"><input type="checkbox" id="pdfArchive"> Archivierte Notizen mit einbeziehen</label>
+      <div class="row">
+        <button type="button" id="pdfDownloadBtn" class="primary">PDF herunterladen</button>
+        <button type="button" id="pdfDirBtn" class="primary" hidden>In Ordner speichern…</button>
+        <button type="button" id="pdfZipBtn" hidden>Als ZIP herunterladen</button>
+        <button type="submit" value="cancel" class="ghost">Abbrechen</button>
+      </div>
+      <p class="hint" id="pdfHint" aria-live="polite"></p>
+    </form>
+  </dialog>
+
   <div id="boot" class="boot">Lade NoNotes…</div>
 
   <input type="file" id="importInput" accept=".sqlite,.sqlite3,.db,application/vnd.sqlite3,application/x-sqlite3" hidden>
@@ -699,6 +724,9 @@ Firmenname wie im Handelsregister, **ohne** Rechtsform.
   <script src="../core/export.js"></script>
   <script src="../core/ical.js"></script>
   <script src="print.js"></script>
+  <script src="../core/pdf.js"></script>
+  <script src="pdf-layout.js"></script>
+  <script src="pdf-export.js"></script>
   <script src="flags.js"></script>
   <script src="../../plugins/plugins.js"></script>
   <script src="app.js"></script>

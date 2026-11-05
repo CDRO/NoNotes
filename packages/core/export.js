@@ -38,13 +38,14 @@
   }
 
   /** Datei jeder Notiz im Ordner-Export: Notizen an der Wurzel in notes/, Unternotizen im Ordner ihrer Elternnotiz
-   *  (notes/planung.md und notes/planung/budget.md). Setzt n.slug (eindeutig unter Geschwistern) und n.file. */
-  function placeFiles(nodes) {
+   *  (notes/planung.md und notes/planung/budget.md). Setzt n.slug (eindeutig unter Geschwistern) und n.file; ext: Endung der
+   *  Dateien (Vorgabe .md, beim PDF-Export .pdf). */
+  function placeFiles(nodes, ext) {
     const roots = nodes.filter(n => !n.parentNode);
     const place = (siblings, dir) => {
       uniqueSlugs(siblings);
       for (const n of siblings) {
-        n.file = `${dir}/${n.slug}.md`;
+        n.file = `${dir}/${n.slug}${ext || '.md'}`;
         place(n.children, `${dir}/${n.slug}`);
       }
     };
@@ -214,6 +215,15 @@
     });
   }
 
+  /** Die Abschnitte «Offene Fragen», «Offene Entscheide» (nur wenn es Entscheide gibt) und «Offene Aufgaben» als Markdown-Zeilen,
+   *  mit Links über hrefOf(node) auf die Notizen (Markdown- und PDF-Export). */
+  async function openLines(backend, nodes, hrefOf, archived) {
+    const out = ['## ' + t('Offene Fragen'), '', ...await openQuestionLines(backend, nodes, hrefOf, archived), ''];
+    if (await hasDecisions(backend, archived)) out.push('## ' + t('Offene Entscheide'), '', ...await openQuestionLines(backend, nodes, hrefOf, archived, 'decision'), '');
+    out.push('## ' + t('Offene Aufgaben'), '', ...await openTaskLines(backend, nodes, hrefOf, archived), '');
+    return out;
+  }
+
   /** Kopf der Übersicht: Titel, Datum, Mindmap-Bild und darunter die Abschnitte der Erweiterungen (sections: [{ title, markdown }],
    *  etwa eine Legende, seit 2.11.0). */
   async function header(backend, version, sections) {
@@ -264,9 +274,7 @@
       const index = await header(backend, options.version, options.sections);
       index.push('## Inhalt', '');
       index.push(...(nodes.length ? tocLines(nodes, hrefFromIndex) : [t('Noch keine Notizen.')]));
-      index.push('', '## ' + t('Offene Fragen'), '', ...await openQuestionLines(backend, nodes, hrefFromIndex, archived), '');
-      if (await hasDecisions(backend, archived)) index.push('## ' + t('Offene Entscheide'), '', ...await openQuestionLines(backend, nodes, hrefFromIndex, archived, 'decision'), '');
-      index.push('## ' + t('Offene Aufgaben'), '', ...await openTaskLines(backend, nodes, hrefFromIndex, archived), '');
+      index.push('', ...await openLines(backend, nodes, hrefFromIndex, archived));
       files.push({ path: 'index.md', data: index.join('\n') });
       for (const n of nodes) {
         const note = await backend.getNote(n.id);
@@ -288,9 +296,7 @@
       const doc = await header(backend, options.version, options.sections);
       doc.push('## Inhalt', '');
       doc.push(...(nodes.length ? tocLines(nodes, anchorOf) : [t('Noch keine Notizen.')]));
-      doc.push('', '## ' + t('Offene Fragen'), '', ...await openQuestionLines(backend, nodes, anchorOf, archived), '');
-      if (await hasDecisions(backend, archived)) doc.push('## ' + t('Offene Entscheide'), '', ...await openQuestionLines(backend, nodes, anchorOf, archived, 'decision'), '');
-      doc.push('## ' + t('Offene Aufgaben'), '', ...await openTaskLines(backend, nodes, anchorOf, archived), '');
+      doc.push('', ...await openLines(backend, nodes, anchorOf, archived));
       for (const n of nodes) {
         const note = await backend.getNote(n.id);
         const level = Math.min(6, n.depth + 1);
@@ -381,5 +387,6 @@
     return `NoNotes-${slugify(await backend.getMapTitle())}-${stamp()}.zip`;
   }
 
-  global.NoNotesExport = { buildFiles, renderSvg, accentOf, svgToPng, writeToDirectory, suggestedZipName, slugify, bodyToMarkdown, treeOrder, relPath };
+  global.NoNotesExport = { buildFiles, renderSvg, accentOf, svgToPng, writeToDirectory, suggestedZipName, slugify, bodyToMarkdown, treeOrder, relPath,
+    placeFiles, openLines, stamp };
 })(window);

@@ -591,7 +591,7 @@ body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-
 .q-item a.md-note::before, .t-item a.md-note::before { content: "↗ "; opacity: .7; }
 .q-item a.md-note.missing, .t-item a.md-note.missing { color: var(--muted); border-bottom-color: var(--muted); text-decoration: line-through; }
 .q-item a.md-wiki.missing::after { content: " ?"; opacity: .7; }
-#printArea .md-ph { border: 0; }
+:is(#printArea, #pdfArea) .md-ph { border: 0; }
 .ph-keep { display: flex; gap: 8px; align-items: center; margin: 8px 0 4px; }
 .ph-help { margin-top: 6px; font-size: 13px; }
 .ph-help summary { cursor: pointer; color: var(--accent-ink); }
@@ -645,6 +645,7 @@ body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-
 .dialog .option.compact input { margin-top: 0; }
 .dialog .option input:disabled + span { color: var(--muted); }
 .dialog .suboption { display: flex; align-items: center; gap: 8px; font-size: 14px; padding: 2px 4px 2px 12px; }
+.dialog .suboption.disabled { color: var(--muted); }
 
 /* Druckbereich: am Bildschirm unsichtbar */
 .print-area { display: none; }
@@ -658,68 +659,81 @@ body.readonly-mode [data-write], body.readonly-mode .menu-accent, body.readonly-
     font: 11pt/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     color: #000;
   }
-  #printArea a { color: #000; text-decoration: none; }
-  #printArea .print-head { border-bottom: 1px solid #999; padding-bottom: 6pt; margin-bottom: 12pt; }
-  #printArea .print-head h1 { margin: 0 0 4pt; font-size: 20pt; }
-  #printArea .print-meta { color: #555; font-size: 9pt; margin: 2pt 0 8pt; }
-  #printArea .print-map { margin: 0 0 14pt; break-inside: avoid; }
-  #printArea .print-map svg { max-width: 100%; height: auto; }
-  #printArea .print-toc { margin-bottom: 14pt; }
-  #printArea .print-toc h2 { font-size: 13pt; margin: 0 0 4pt; }
-  #printArea .print-toc ul { list-style: none; margin: 0; padding: 0; }
-  #printArea .print-toc li { padding: 1pt 0; }
-  #printArea .print-note { margin-bottom: 16pt; break-inside: auto; }
-  #printArea .print-note > h1, #printArea .print-note > h2, #printArea .print-note > h3,
-  #printArea .print-note > h4, #printArea .print-note > h5, #printArea .print-note > h6 { break-after: avoid; margin: 10pt 0 2pt; }
-  #printArea .print-note > h2 { font-size: 16pt; }
-  #printArea .print-note > h3 { font-size: 14pt; }
-  #printArea .print-note > h4 { font-size: 12.5pt; }
-  #printArea .page-break { break-before: page; }
-  #printArea .md { font-size: 11pt; }
-  #printArea .md img { max-width: 100%; max-height: 160mm; break-inside: avoid; }
-  #printArea .md pre, #printArea .md code { background: #f3f3f3; border-color: #ccc; color: #000; }
-  #printArea .md blockquote { border-left-color: #999; color: #333; }
-  #printArea .md-q { border: 1px solid #bbb; background: #fafafa; break-inside: avoid; }
-  #printArea .md-q > .md-mark { background: #b45309; color: #fff; }
-  #printArea .md-q.answered > .md-mark { background: #15803d; }
-  #printArea .md-q.md-decision:not(.answered) > .md-mark { background: #1d4ed8; }
-  #printArea .md-person { border: 1px solid #999; background: #f3f3f3; color: inherit; }
-  #printArea .md-a { background: #fff; border-left-color: #15803d; }
-  #printArea a.md-wiki { border-bottom: 1px dashed #666; }
-  /* Tabellen: die Titelzeile steht auf jeder Seite oben, Zeilen werden nicht geteilt, Farben werden mitgedruckt */
-  #printArea .md-table { border-color: #999; font-size: 10pt; }
-  #printArea .md-table th, #printArea .md-table td { border-color: #999; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  #printArea .md-table th { background: #eee; }
-  #printArea .md-table.md-table-mark th { background: color-mix(in srgb, var(--accent) 18%, #fff); }
-  #printArea .md-table thead { display: table-header-group; }
-  #printArea .md-table thead th { position: static; }
-  #printArea .md-table tr { break-inside: avoid; }
-  #printArea a.md-wiki.plain { border: 0; }
-  #printArea mark { background: none; font-weight: 600; }
-  /* Fragen und Antworten */
-  #printArea .print-qgroup { margin-bottom: 14pt; }
-  #printArea .print-qgroup h2 { font-size: 14pt; margin: 8pt 0 2pt; break-after: avoid; }
-  #printArea .print-q { display: flex; gap: 8pt; align-items: flex-start; padding: 6pt 0; border-top: 1px solid #ddd; break-inside: avoid; }
-  #printArea .print-mark { flex: none; width: 16pt; height: 16pt; border-radius: 50%; background: #b45309; color: #fff; font-weight: 700; font-size: 10pt; display: flex; align-items: center; justify-content: center; }
-  #printArea .print-q.answered .print-mark { background: #15803d; }
-  #printArea .print-q.decision:not(.answered) .print-mark { background: #1d4ed8; font-size: 8pt; letter-spacing: -.5pt; }
-  #printArea .print-q-body { flex: 1; }
-  #printArea .print-q-text { font-weight: 600; }
-  #printArea .print-a { margin-top: 3pt; padding: 3pt 8pt; border-left: 2pt solid #15803d; }
-  #printArea .print-a p { margin: 0; }
-  #printArea .print-a ul, #printArea .print-a ol { margin: 2pt 0; padding-left: 14pt; }
-  #printArea .print-q a, #printArea .print-task a { color: inherit; text-decoration: underline; }
-  #printArea .print-q a.md-wiki, #printArea .print-task a.md-wiki { text-decoration: none; }
-  #printArea .print-q-meta { color: #666; font-size: 8.5pt; margin-top: 2pt; }
-  #printArea .print-lines { margin-top: 6pt; }
-  #printArea .print-lines span { display: block; height: 9mm; border-bottom: 1px solid #999; }
-  #printArea .print-q.sub { margin-left: 18pt; }
-  #printArea .print-details { margin-top: 2pt; font-size: 9.5pt; }
-  #printArea .print-details p { margin: 0 0 2pt; }
-  #printArea .print-details ul, #printArea .print-details ol { margin: 2pt 0; padding-left: 14pt; }
-  #printArea .print-within { color: #666; font-size: 8.5pt; }
-  #printArea .md-q-details .md-q { background: #fff; }
 }
+/* Druck und PDF-Export (seit 4.1.0 auch #pdfArea, packages/ui/pdf-layout.js): ausserhalb von @media print, weil der
+   Export im Bildschirm setzt; am Bildschirm ist #printArea unsichtbar (.print-area), #pdfArea liegt ausserhalb des Fensters. */
+:is(#printArea, #pdfArea) a { color: #000; text-decoration: none; }
+:is(#printArea, #pdfArea) .print-head { border-bottom: 1px solid #999; padding-bottom: 6pt; margin-bottom: 12pt; }
+:is(#printArea, #pdfArea) .print-head h1 { margin: 0 0 4pt; font-size: 20pt; }
+:is(#printArea, #pdfArea) .print-meta { color: #555; font-size: 9pt; margin: 2pt 0 8pt; }
+:is(#printArea, #pdfArea) .print-map { margin: 0 0 14pt; break-inside: avoid; }
+:is(#printArea, #pdfArea) .print-map svg { max-width: 100%; height: auto; }
+:is(#printArea, #pdfArea) .print-toc { margin-bottom: 14pt; }
+:is(#printArea, #pdfArea) .print-toc h2 { font-size: 13pt; margin: 0 0 4pt; }
+:is(#printArea, #pdfArea) .print-toc ul { list-style: none; margin: 0; padding: 0; }
+:is(#printArea, #pdfArea) .print-toc li { padding: 1pt 0; }
+:is(#printArea, #pdfArea) .print-note { margin-bottom: 16pt; break-inside: auto; }
+:is(#printArea, #pdfArea) .print-note > h1, :is(#printArea, #pdfArea) .print-note > h2, :is(#printArea, #pdfArea) .print-note > h3,
+:is(#printArea, #pdfArea) .print-note > h4, :is(#printArea, #pdfArea) .print-note > h5, :is(#printArea, #pdfArea) .print-note > h6 { break-after: avoid; margin: 10pt 0 2pt; }
+:is(#printArea, #pdfArea) .print-note > h2 { font-size: 16pt; }
+:is(#printArea, #pdfArea) .print-note > h3 { font-size: 14pt; }
+:is(#printArea, #pdfArea) .print-note > h4 { font-size: 12.5pt; }
+:is(#printArea, #pdfArea) .page-break { break-before: page; }
+:is(#printArea, #pdfArea) .md { font-size: 11pt; }
+:is(#printArea, #pdfArea) .md img { max-width: 100%; max-height: 160mm; break-inside: avoid; }
+:is(#printArea, #pdfArea) .md pre, :is(#printArea, #pdfArea) .md code { background: #f3f3f3; border-color: #ccc; color: #000; }
+:is(#printArea, #pdfArea) .md blockquote { border-left-color: #999; color: #333; }
+:is(#printArea, #pdfArea) .md-q { border: 1px solid #bbb; background: #fafafa; break-inside: avoid; }
+:is(#printArea, #pdfArea) .md-q > .md-mark { background: #b45309; color: #fff; }
+:is(#printArea, #pdfArea) .md-q.answered > .md-mark { background: #15803d; }
+:is(#printArea, #pdfArea) .md-q.md-decision:not(.answered) > .md-mark { background: #1d4ed8; }
+:is(#printArea, #pdfArea) .md-person { border: 1px solid #999; background: #f3f3f3; color: inherit; }
+:is(#printArea, #pdfArea) .md-a { background: #fff; border-left-color: #15803d; }
+:is(#printArea, #pdfArea) a.md-wiki { border-bottom: 1px dashed #666; }
+/* Tabellen: die Titelzeile steht auf jeder Seite oben, Zeilen werden nicht geteilt, Farben werden mitgedruckt */
+:is(#printArea, #pdfArea) .md-table { border-color: #999; font-size: 10pt; }
+:is(#printArea, #pdfArea) .md-table th, :is(#printArea, #pdfArea) .md-table td { border-color: #999; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+:is(#printArea, #pdfArea) .md-table th { background: #eee; }
+:is(#printArea, #pdfArea) .md-table.md-table-mark th { background: color-mix(in srgb, var(--accent) 18%, #fff); }
+:is(#printArea, #pdfArea) .md-table thead { display: table-header-group; }
+:is(#printArea, #pdfArea) .md-table thead th { position: static; }
+:is(#printArea, #pdfArea) .md-table tr { break-inside: avoid; }
+:is(#printArea, #pdfArea) a.md-wiki.plain { border: 0; }
+:is(#printArea, #pdfArea) mark { background: none; font-weight: 600; }
+/* Fragen und Antworten */
+:is(#printArea, #pdfArea) .print-qgroup { margin-bottom: 14pt; }
+:is(#printArea, #pdfArea) .print-qgroup h2 { font-size: 14pt; margin: 8pt 0 2pt; break-after: avoid; }
+:is(#printArea, #pdfArea) .print-q { display: flex; gap: 8pt; align-items: flex-start; padding: 6pt 0; border-top: 1px solid #ddd; break-inside: avoid; }
+:is(#printArea, #pdfArea) .print-mark { flex: none; width: 16pt; height: 16pt; border-radius: 50%; background: #b45309; color: #fff; font-weight: 700; font-size: 10pt; display: flex; align-items: center; justify-content: center; }
+:is(#printArea, #pdfArea) .print-q.answered .print-mark { background: #15803d; }
+:is(#printArea, #pdfArea) .print-q.decision:not(.answered) .print-mark { background: #1d4ed8; font-size: 8pt; letter-spacing: -.5pt; }
+:is(#printArea, #pdfArea) .print-q-body { flex: 1; }
+:is(#printArea, #pdfArea) .print-q-text { font-weight: 600; }
+:is(#printArea, #pdfArea) .print-a { margin-top: 3pt; padding: 3pt 8pt; border-left: 2pt solid #15803d; }
+:is(#printArea, #pdfArea) .print-a p { margin: 0; }
+:is(#printArea, #pdfArea) .print-a ul, :is(#printArea, #pdfArea) .print-a ol { margin: 2pt 0; padding-left: 14pt; }
+:is(#printArea, #pdfArea) .print-q a, :is(#printArea, #pdfArea) .print-task a { color: inherit; text-decoration: underline; }
+:is(#printArea, #pdfArea) .print-q a.md-wiki, :is(#printArea, #pdfArea) .print-task a.md-wiki { text-decoration: none; }
+:is(#printArea, #pdfArea) .print-q-meta { color: #666; font-size: 8.5pt; margin-top: 2pt; }
+:is(#printArea, #pdfArea) .print-lines { margin-top: 6pt; }
+:is(#printArea, #pdfArea) .print-lines span { display: block; height: 9mm; border-bottom: 1px solid #999; }
+:is(#printArea, #pdfArea) .print-q.sub { margin-left: 18pt; }
+:is(#printArea, #pdfArea) .print-details { margin-top: 2pt; font-size: 9.5pt; }
+:is(#printArea, #pdfArea) .print-details p { margin: 0 0 2pt; }
+:is(#printArea, #pdfArea) .print-details ul, :is(#printArea, #pdfArea) .print-details ol { margin: 2pt 0; padding-left: 14pt; }
+:is(#printArea, #pdfArea) .print-within { color: #666; font-size: 8.5pt; }
+:is(#printArea, #pdfArea) .md-q-details .md-q { background: #fff; }
+/* PDF-Export (seit 4.1.0): der unsichtbare Bereich, in dem der Browser das Dokument setzt. Immer hell und in Helvetica wie die Schrift
+   im PDF (Arial und Liberation Sans haben dieselben Masse); die Hauptfarbe und Regeln von Erweiterungen ergänzt pdf-layout.js. */
+#pdfArea {
+  display: block; background: #fff; color: #000; color-scheme: light;
+  font: 11pt/1.5 Helvetica, Arial, "Liberation Sans", "Nimbus Sans", sans-serif;
+  --bg: #f4f5f7; --panel: #ffffff; --text: #1c1e22; --muted: #6b7280; --border: #e2e5ea; --accent: #2563eb; --accent-contrast: #ffffff;
+  --accent-ink: #2563eb; --danger: #b4350f; --ok: #15803d; --warn: #b45309; --hover: #eef1f5; --active: #e3ecfd; --shadow: none;
+}
+#pdfArea code, #pdfArea pre, #pdfArea kbd, #pdfArea samp { font-family: "Courier New", Courier, "Liberation Mono", "Nimbus Mono PS", monospace; }
+#pdfArea .md-embed { display: none; }
+#pdfArea [data-pdf-before]::before, #pdfArea [data-pdf-after]::after { content: none !important; }
 
 /* ---------- v0.7: Toolleiste und Hilfe ---------- */
 
@@ -783,16 +797,15 @@ body:not(.view-tasks) .tasks-view { display: none; }
 
 /* Klickbare Kästchen in der Vorschau */
 
-@media print {
-  #printArea .print-task { display: flex; gap: 8pt; align-items: flex-start; padding: 4pt 0; border-top: 1px solid #ddd; break-inside: avoid; }
-  #printArea .print-box { flex: none; width: 11pt; height: 11pt; border: 1.2pt solid #333; border-radius: 2pt; margin-top: 2pt; display: flex; align-items: center; justify-content: center; font-size: 9pt; line-height: 1; }
-  #printArea .print-task.done .print-box::after { content: "✓"; }
-  #printArea .print-task.done .print-task-text { text-decoration: line-through; color: #555; }
-  #printArea .print-task-text { flex: 1; }
-  #printArea .print-task-meta { color: #666; font-size: 8.5pt; white-space: nowrap; }
-  #printArea .md-progress { font-size: 8.5pt; border: 1px solid #999; border-radius: 999px; padding: 1pt 5pt; margin-left: 6pt; color: #333; background: none; }
-  #printArea .print-task-meta.overdue { color: #b00; font-weight: 600; }
-}
+/* Druck und PDF-Export (siehe oben) */
+:is(#printArea, #pdfArea) .print-task { display: flex; gap: 8pt; align-items: flex-start; padding: 4pt 0; border-top: 1px solid #ddd; break-inside: avoid; }
+:is(#printArea, #pdfArea) .print-box { flex: none; width: 11pt; height: 11pt; border: 1.2pt solid #333; border-radius: 2pt; margin-top: 2pt; display: flex; align-items: center; justify-content: center; font-size: 9pt; line-height: 1; }
+:is(#printArea, #pdfArea) .print-task.done .print-box::after { content: "✓"; }
+:is(#printArea, #pdfArea) .print-task.done .print-task-text { text-decoration: line-through; color: #555; }
+:is(#printArea, #pdfArea) .print-task-text { flex: 1; }
+:is(#printArea, #pdfArea) .print-task-meta { color: #666; font-size: 8.5pt; white-space: nowrap; }
+:is(#printArea, #pdfArea) .md-progress { font-size: 8.5pt; border: 1px solid #999; border-radius: 999px; padding: 1pt 5pt; margin-left: 6pt; color: #333; background: none; }
+:is(#printArea, #pdfArea) .print-task-meta.overdue { color: #b00; font-weight: 600; }
 
 /* ---------- v0.9: Fälligkeit bei Fragen ---------- */
 /* Termine (v3.0.0): Erinnerungen (die früheren Termine einer Zeile) klein mit Glocke vor der Frist; vergangene blass */
@@ -802,10 +815,9 @@ body:not(.view-tasks) .tasks-view { display: none; }
 .segmented .count.q-overdue { background: var(--danger); }
 .segmented .count.decisions { background: var(--text); color: var(--panel); }
 .segmented .count.decisions.overdue { background: var(--danger); color: #fff; }
-@media print {
-  #printArea .print-q-text .due, #printArea .md-due { font-size: 8.5pt; border: 1px solid #999; border-radius: 999px; padding: 1pt 5pt; margin-left: 6pt; color: #333; background: none; font-weight: 500; }
-  #printArea .due.overdue { color: #b00; border-color: #b00; font-weight: 600; }
-}
+/* Druck und PDF-Export (siehe oben) */
+:is(#printArea, #pdfArea) .print-q-text .due, :is(#printArea, #pdfArea) .md-due { font-size: 8.5pt; border: 1px solid #999; border-radius: 999px; padding: 1pt 5pt; margin-left: 6pt; color: #333; background: none; font-weight: 500; }
+:is(#printArea, #pdfArea) .due.overdue { color: #b00; border-color: #b00; font-weight: 600; }
 
 /* ---------- Erweiterungen ---------- */
 
