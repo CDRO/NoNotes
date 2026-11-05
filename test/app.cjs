@@ -3448,6 +3448,7 @@ async function runExtractUi(browser, part, step) {
     // Vorschau: ganze Blöcke, Titel aus dem ersten Satz, beim ersten Öffnen markiert, der Verweis folgt dem Umbenennen
     await page.click('[data-mode="preview"]');
     await page.waitForSelector('#preview p');
+    await btnHidden(); // nach Rückgängig war der Text im Textfeld markiert; die Vorschau zeigt keine Auswahl
     await page.evaluate(() => {
       const p = [...document.querySelectorAll('#preview p')].find(x => x.textContent.startsWith('Einleitung'));
       const r = document.createRange();
@@ -3457,6 +3458,7 @@ async function runExtractUi(browser, part, step) {
       s.removeAllRanges();
       s.addRange(r);
     });
+    await page.waitForSelector('#preview .nn-extract-mark');
     await btnShown();
     assert.deepEqual(await page.$$eval('#preview .nn-extract-mark', l => l.map(x => x.tagName + ' ' + x.textContent)), ['P Einleitung zum Projekt. Mehr dazu später.'], 'der ganze Absatz ist markiert');
     await page.click('#extractBtn');
