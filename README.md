@@ -639,6 +639,25 @@ und Erinnerungen (siehe oben). Dasselbe gilt für Fragen und Entscheide.
   - Ein Titel, der selbst auf `#Zahl` endet, geht vor.
   - Gezählt werden die Notizen, die du im Bereich sehen kannst (im Dienst: die des Arbeitsbereichs).
   Adressen ohne `https://` wie `www.beispiel.ch` werden automatisch ergänzt.
+- **In Unterknoten auslagern** (seit 4.2.0): Ist Text ausgewählt (Bearbeiten, Geteilt oder Vorschau), steht am Ende der Auswahl
+  eine runde Schaltfläche mit einer Verzweigung; ein Klick (oder `Strg+Alt+U`) macht aus der Auswahl eine Unternotiz, an ihrer
+  Stelle steht ein Verweis `[[Titel#42]]` darauf (mit Nummer, er trifft auch nach dem Umbenennen).
+  - Beginnt die Auswahl mit einer Überschrift, wird sie der Titel; tiefere Überschriften bleiben unverändert im Text der Unternotiz.
+  - Hat die Auswahl mehrere Überschriften der obersten Ebene in ihr, gibt es je eine Unternotiz; ein Dialog fragt, welche. Ein
+    Abschnitt ohne Haken kommt samt Überschrift in die Unternotiz davor; der erste bleibt ohne Haken in der Notiz. Text vor der
+    ersten Überschrift ist ein eigener Abschnitt. Mehrere Verweise stehen als Liste da.
+  - Ohne Überschrift ist der erste Satz der Titel, höchstens 80 Zeichen (sonst am Wortende gekürzt mit «…»; ohne Markdown,
+    Listenzeichen, Kästchen und Termin). Öffnest du eine solche Unternotiz zum ersten Mal, steht der Fokus im Titel und er ist
+    markiert. Benennst du sie in derselben Sitzung um, folgt der Verweis in der Notiz.
+  - Mitten in einer Zeile wird genau die Auswahl ausgelagert; ab dem Anfang einer Zeile ganze Zeilen. Beginnt sie mit einem
+    Listenpunkt, bleibt dessen Zeichen und Einrückung vor dem Verweis; eine Unterliste rückt in der Unternotiz nach links. In der
+    **Vorschau** zählen ganze Blöcke (Absätze, Listenpunkte, Überschriften, Tabellen, Code, Einträge); sie sind markiert, solange
+    die Schaltfläche steht.
+  - Bilder der Notiz im ausgelagerten Text gehen mit (Kopie an der Unternotiz; braucht die Notiz sie nicht mehr, wird sie dort
+    entfernt). Aufgaben, Fragen und Entscheide stehen danach in der Unternotiz.
+  - Der Editor bleibt auf der Notiz. Oben steht «… Unterknoten angelegt» mit **Rückgängig** (der Text kommt zurück, die neuen
+    Unternotizen gehen in den Papierkorb), bis du die Notiz wechselst. Archivierte Notizen, der Papierkorb und der Lesemodus zeigen
+    keine Schaltfläche. Agenten haben dafür das Werkzeug `extract_to_child` ([docs/AGENTS.md](docs/AGENTS.md)).
 - **Tabellen** (seit 2.10.0) sind Markdown-Tabellen wie bei GitHub: `| Name | Wert |`, darunter
   `|---|---|`, dann je Zeile `| … | … |`. `:---:` zentriert eine Spalte, `---:` richtet sie rechts aus.
   - Einfügen: Der Knopf **Tabelle einfügen** in der Toolleiste öffnet ein Raster mit 8 × 10 Feldern. Die Grösse zeigst du mit der Maus, ziehst sie auf oder
@@ -756,6 +775,7 @@ dieselben wie bis v3.3.0. In der Tabelle steht bei diesen Teilen «Paket», geme
 | Export | `packages/core/export.js` baut die Dateien, `zip.js` ist ein kleiner ZIP-Writer; das Bild liefert `NoNotesMindmap.toSvgString`, PNG über ein Canvas |
 | Druck | `packages/ui/print.js` baut das Druckdokument in `#printArea`; `@media print` blendet den Rest der App aus |
 | PDF-Export | `packages/core/pdf.js`: eigener PDF-Schreiber (Standardschriften, Formen, Bilder, Links, Lesezeichen, Deflate), läuft auch in Node; `packages/ui/pdf-layout.js`: setzt HTML mit den Regeln des Drucks im unsichtbaren `#pdfArea`, liest Wörter, Flächen, Rahmen, Bilder und Links ab, bricht die Seiten um; `packages/ui/pdf-export.js`: eine Datei oder eine pro Notiz. Tests `test/core.cjs` und `test/app.cjs` |
+| Auslagern | `packages/core/extract.js`: Auswahl in Abschnitte zerlegen (Überschriften, erster Satz als Titel, Listen, Code), Ersatz mit `[[Titel#42]]`, Unternotizen anlegen mit ihren Bildern, Rückgängig; läuft auch in Node (Werkzeug `extract_to_child`). `packages/ui/extract-ui.js`: Schaltfläche am Ende der Auswahl (Textfeld über einen Spiegel, Vorschau über `data-line` der Blöcke), Dialog, Banner, Titel markieren, Verweis folgt dem Umbenennen. Tests `test/core.cjs` und `test/app.cjs` |
 | Scroll-Sync | Paket `scrollsync.js`: Spiegel des Textes misst Zeilenhöhen, Vorschau-Blöcke tragen `data-line`, lineare Interpolation dazwischen |
 | Erweiterungen | `packages/core/plugins.js` (Verzeichnis, Lader, Schalter, Ereignisse) und die Anbindung in `packages/ui/app.js`; Ordner `plugins/` mit Liste, Anleitung und Beispielen; das Verzeichnis des Ordners erzeugt `tools/build.cjs` (siehe [docs/PLUGINS.md](docs/PLUGINS.md)) |
 | KI-Agenten | `packages/agent/`: `catalog.js` beschreibt die Werkzeuge (englische Namen, Eingabeschemata) und führt sie über das Backend aus, `webmcp.js` meldet sie beim Agenten des Browsers an (`document.modelContext`, sobald ein Browser sie anbietet), `protocol.js` spricht MCP ohne Transport; `editions/local/agent/nonotes-mcp.cjs` ist das Programm für Agenten auf dem eigenen Rechner (MCP über die Standardeingabe, dieselbe Datei wie die App, atomar schreiben unter einer Sperre); `local-shell.js` führt Änderungen von aussen Notiz für Notiz zusammen; Tests `test/core.cjs` (Katalog, Protokoll, Programm), `test/collab.cjs` (Zusammenführen), `test/extend.cjs` (WebMCP gegen einen Nachbau); siehe [docs/AGENTS.md](docs/AGENTS.md) |

@@ -17,6 +17,7 @@
   const Exporter = window.NoNotesExport;
   const Printer = window.NoNotesPrint;
   const PdfExport = window.NoNotesPdfExport;
+  const ExtractUI = window.NoNotesExtractUI;
   const T = window.NoNotesTasks;
   const Dates = window.NoNotesDates;
   const Cal = window.NoNotesCalendar;
@@ -91,6 +92,7 @@
     exportDirBtn: $('#exportDirBtn'), exportZipBtn: $('#exportZipBtn'), exportHint: $('#exportHint'),
     pdfExportBtn: $('#pdfExportBtn'), pdfDialog: $('#pdfDialog'), pdfForm: $('#pdfForm'), pdfPageBreaks: $('#pdfPageBreaks'), pdfPageBreaksRow: $('#pdfPageBreaksRow'),
     pdfArchive: $('#pdfArchive'), pdfDownloadBtn: $('#pdfDownloadBtn'), pdfDirBtn: $('#pdfDirBtn'), pdfZipBtn: $('#pdfZipBtn'), pdfHint: $('#pdfHint'),
+    extractDialog: $('#extractDialog'), extractList: $('#extractList'), extractOkBtn: $('#extractOkBtn'),
     mapPrintBtn: $('#mapPrintBtn'), mapCopyBtn: $('#mapCopyBtn'), qPrintBtn: $('#qPrintBtn'), printBtn: $('#printBtn'), copyLinkBtn: $('#copyLinkBtn'),
     multiBar: $('#multiBar'), multiCount: $('#multiCount'), multiPrintBtn: $('#multiPrintBtn'), multiClearBtn: $('#multiClearBtn'),
     printDialog: $('#printDialog'), printForm: $('#printForm'), printGoBtn: $('#printGoBtn'),
@@ -250,12 +252,21 @@
   function showToast(text) {
     el.toastText.textContent = text;
     el.toast.hidden = false;
+    syncBars();
     clearTimeout(toastTimer);
     toastTimer = setTimeout(hideToast, TOAST_MS);
   }
   function hideToast() {
     clearTimeout(toastTimer);
     el.toast.hidden = true;
+    syncBars();
+  }
+
+  /** Höhe von Hinweisleiste und Fehler für den Vollbild-Editor, der um sie zusammenrückt (CSS --banner-h, --toast-h; seit 4.2.0). */
+  function syncBars() {
+    const h = node => (node.hidden ? 0 : Math.ceil(node.getBoundingClientRect().height));
+    document.body.style.setProperty('--banner-h', h(el.banner) + 'px');
+    document.body.style.setProperty('--toast-h', h(el.toast) + 'px');
   }
 
   function isAbort(e) { return e && e.name === 'AbortError'; }
@@ -283,11 +294,18 @@
     }
     el.banner.appendChild(box);
     el.banner.hidden = false;
+    syncBars();
   }
 
   function hideBanner() {
     el.banner.hidden = true;
     el.banner.replaceChildren();
+    syncBars();
+  }
+
+  /** Den Banner nur schliessen, wenn er noch diesen Text zeigt (ein anderer kann ihn inzwischen ersetzt haben). */
+  function hideBannerIf(text) {
+    if (!el.banner.hidden && el.banner.firstChild && el.banner.firstChild.textContent === text) hideBanner();
   }
 
   // ---------- Start ----------
@@ -1826,6 +1844,7 @@
   }
 
   async function renderEditor() {
+    if (extract && state.currentId !== extractSeen) { extractSeen = state.currentId; extract.noteChanged(); }
     const isLatest = fresh('editor');
     const note = state.currentId != null ? await B.getNote(state.currentId) : null;
     if (!isLatest()) return;
@@ -1941,6 +1960,8 @@
 
   const EditorKit = window.NoNotesEditor;
   let editor = null;
+  let extract = null;       // «In Unterknoten auslagern» (packages/ui/extract-ui.js, seit 4.2.0)
+  let extractSeen = null;   // die Notiz, für die das letzte Auslagern gilt (Rückgängig bis zum Wechsel)
   const MODES = ['edit', 'split', 'preview'];
   const OLD_GRID_KEY = 'nonotes.tableGrid'; // bis v3.3.0: «Mit Rahmen» im Raster; jetzt merkt sich das der Baustein
 
@@ -1967,6 +1988,7 @@
       },
       onMode: m => {
         state.editorMode = m;
+        if (extract) extract.update();
         // die Klasse auch an #editorPane (CSS der App und von Erweiterungen, etwa «Sprung zu Unternotizen», fragen dort nach)
         el.editorPane.classList.remove('mode-edit', 'mode-split', 'mode-preview');
         el.editorPane.classList.add('mode-' + m);
@@ -2018,6 +2040,30 @@
         headerColumn: tg.headerColumn, meta: Object.freeze(JSON.parse(JSON.stringify(tg.meta))), grid: tg.grid, span: tg.span,
       }), { multi: false, applied: false }, state.pluginTableItems),
     });
+    extract = ExtractUI.create({
+      editor: () => editor, backend: () => B, noteId: () => state.currentId,
+      canWrite: () => !readOnly() && editor.isWritable() && state.currentId != null && (isEditorOpen() || state.view === 'list') && !anyDialogOpen(),
+      denyWrite, author: () => meName(), applyEdit: applyTableEdit, refresh: refreshAfterExtract,
+      dialog: { dialog: el.extractDialog, list: el.extractList, ok: el.extractOkBtn },
+      showBanner, hideBannerIf, status: setStatus, errorText,
+    });
+    extract.attach();
+  }
+
+  /** Nach dem Auslagern (und Rückgängig): Baum, Liste, Mindmap und Zähler neu, der Eltern-Knoten aufgeklappt; der Editor bleibt. */
+  async function refreshAfterExtract(parentId) {
+    const info = state.map && state.map.nodeInfo(parentId);
+    if (info && info.collapsed) await B.setCollapsed(parentId, false);
+    markEdited();
+    await Promise.all([renderList(), renderCount(), renderMap(), renderQuestionCounts(), renderTaskCounts()]);
+    if (inQuestions()) await renderQuestions();
+    if (state.view === 'tasks') await renderTasks();
+  }
+
+  /** Titel markieren statt in den Text springen: ein ausgelagerter Knoten mit dem ersten Satz als Titel, beim ersten Öffnen. */
+  function focusOpenedNote(id, focusEditor) {
+    if (extract && extract.takeTitleFocus(id)) { el.title.focus(); el.title.select(); return; }
+    if (focusEditor) (el.title.value ? el.body : el.title).focus();
   }
 
   async function setEditorMode(mode) {
@@ -2225,7 +2271,7 @@
     setActiveItem(id);
     await renderEditor();
     if (isNarrow()) showEditorView(true);
-    if (focusEditor) (el.title.value ? el.body : el.title).focus();
+    focusOpenedNote(id, focusEditor);
     pushNav();
   }
 
@@ -2238,7 +2284,7 @@
       if (state.view === 'map') state.mapSelection = id;
       document.body.classList.add('editor-open');
       await renderEditor();
-      (el.title.value ? el.body : el.title).focus();
+      focusOpenedNote(id, true);
     } else {
       await selectNote(id, true);
     }
@@ -2257,6 +2303,7 @@
     if (!(await ensureSaved())) return;
     state.sync = newSync(null);
     document.body.classList.remove('editor-open');
+    if (extract) { extract.noteChanged(); extractSeen = null; }
     if (state.currentId != null) emitPlugins('note:close', { id: state.currentId });
     if (state.view === 'map') {
       if (state.currentId != null) state.mapSelection = state.currentId;
@@ -2873,7 +2920,9 @@
       return;
     }
     clearTimeout(sync.retryTimer);
+    const renamed = title !== sync.base.title;
     sync.base = { title, body, updatedAt: ts };
+    if (renamed && extract) extract.renamed(sync.id, title).catch(e => setStatus(errorText(e), 'error'));
     sync.rounds = 0;
     renderMeta(sync.createdAt, ts, meName());
     await updateListItem(sync.id, title, body, ts);
@@ -4116,7 +4165,7 @@
 
   function anyDialogOpen() {
     return [el.exportDialog, el.pdfDialog, el.printDialog, el.qaPrintDialog, el.taskPrintDialog, el.helpDialog, el.calDialog, el.pluginsDialog, el.historyDialog, el.conflictDialog,
-      el.templateSaveDialog, el.templatePickDialog, el.templatesDialog, el.nodeLinkDialog, el.detachDialog].some(d => d.open);
+      el.templateSaveDialog, el.templatePickDialog, el.templatesDialog, el.nodeLinkDialog, el.detachDialog, el.extractDialog].some(d => d.open);
   }
 
   function onQuestionSearchInput() {
@@ -4458,6 +4507,7 @@
     } else {
       await B.renameNote(r.id, value);
       state.mapSelection = r.id;
+      if (extract) await extract.renamed(r.id, value).catch(e => setStatus(errorText(e), 'error'));
     }
     markEdited();
     await renderAll();
@@ -4953,7 +5003,7 @@
     el.noteMenuBtn.addEventListener('click', () => toggleNoteMenu());
     el.toastCloseBtn.addEventListener('click', hideToast);
     el.noteMenu.addEventListener('click', e => { if (e.target.closest('button[role="menuitem"]')) closeNoteMenu(); });
-    window.addEventListener('resize', () => { if (isEditorOpen()) fitCrumbs(); });
+    window.addEventListener('resize', () => { syncBars(); if (isEditorOpen()) fitCrumbs(); });
     document.addEventListener('click', e => {
       if (!el.menu.hidden && !e.target.closest('.menu')) closeMenu();
       if (!el.noteMenu.hidden && !e.target.closest('.note-menu')) closeNoteMenu();

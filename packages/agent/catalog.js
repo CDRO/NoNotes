@@ -30,6 +30,7 @@
     'Grid tables (Pandoc style) are also tables: "+---+---+" borders, "+===+===+" below the header, and rows of "| … |" lines between borders. A cell may span several lines (each line is a part, like "<br>") and several columns (no "|" between them). Keep every "|" and "+" aligned when writing one; the answer to a question in a cell goes on the next line of the same cell.',
     'Paths such as "\\\\server\\share\\file.pdf", "C:\\folder\\" or "file:///…" are links to files and folders ("<…>" around a path with spaces). "{{?Name}}" is a fill-in placeholder from a template that is still open; "{{?Name: value}}" is one that was filled in and kept: its value counts as text (people, dates), keep the braces when you edit around it. A fenced block "```template-description Name" describes a placeholder and is not shown.',
     'Prefer the dedicated tools (answer_question, record_decision, complete_task, append_to_note) over rewriting a whole note; when you must rewrite, pass base_updated_at from get_note so concurrent edits are detected.',
+    'To split a long note, move lines into child notes with extract_to_child: it leaves a link [[Title#id]] in their place, like the app.',
   ].join(' ');
 
   // Englische Meldungen zu den Fehlerkennungen des Backends (die Oberfläche übersetzt ihre eigenen weiter)
@@ -398,6 +399,53 @@
       },
     },
     {
+      name: 'extract_to_child', title: 'Extract lines into child notes', readOnly: false, needs: 'extract',
+      description: 'Move whole lines of a note into new child notes and leave a link [[Title#id]] to each in their place, as the app does with a selection. If the lines start with a Markdown heading, it becomes the title of the child note; several headings of the highest level in the lines make one child note each (deeper headings stay in the text as they are); text without a heading gets its first sentence as title (at most 80 characters). Images of the note that the moved text shows go along. Call with dry_run first to see the sections, then pass sections to choose which become child notes: a section left out goes into the child note before it, or stays in the note if it is the first.',
+      inputSchema: schema({
+        id: ID('Note id.'),
+        from_line: { type: 'integer', minimum: 1, description: 'First line to move (1 = first line of the body, as in get_note).' },
+        to_line: { type: 'integer', minimum: 1, description: 'Last line to move (inclusive).' },
+        sections: { type: 'array', items: { type: 'integer', minimum: 1 }, maxItems: 200, description: 'Numbers of the sections (see dry_run) that become child notes; default: all.' },
+        dry_run: BOOL('Only list the sections with their titles and lines; change nothing.'),
+        base_updated_at: STR('Optional: the updated_at your change is based on.'),
+      }, ['id', 'from_line', 'to_line']),
+      async run(B, input, ctx) {
+        const X = global.NoNotesExtract;
+        const invalid = msg => Object.assign(new Error(msg), { code: 'INVALID_INPUT' });
+        const n = await liveNote(B, input.id, { writable: true });
+        const body = n.body || '';
+        const count = body.split('\n').length;
+        if (input.to_line < input.from_line) throw invalid('to_line must not be before from_line');
+        if (input.from_line > count) throw invalid(`from_line: the body has ${count} lines`);
+        const range = X.rangeOfLines(body, input.from_line - 1, Math.min(input.to_line, count) - 1);
+        const p = X.plan(body, range.start, range.end);
+        if (!p) throw invalid('these lines are empty');
+        const FALLBACK = 'Extracted text';
+        const sections = p.parts.map((s, i) => ({ section: i + 1, title: s.title || FALLBACK, from_heading: !s.auto, from_line: s.from + 1, to_line: s.to + 1 }));
+        if (input.dry_run) {
+          const lines = sections.map(s => `${s.section}. ${quote(s.title)} (${s.from_heading ? 'heading' : 'first sentence'}, lines ${s.from_line}–${s.to_line})`);
+          return result([`Lines ${input.from_line}–${Math.min(input.to_line, count)} of note [${n.id}] would make ${plural(sections.length, 'section', 'sections')}:`, ...lines].join('\n'), { id: n.id, updated_at: n.updated_at, sections });
+        }
+        if (input.base_updated_at && input.base_updated_at !== n.updated_at) throw Object.assign(new Error('changed in the meantime'), { code: 'NOTE_CONFLICT' });
+        if (input.sections && input.sections.some(k => k > sections.length)) throw invalid(`sections: there are ${sections.length} sections (see dry_run)`);
+        const built = X.build(p, input.sections ? p.parts.map((_, i) => input.sections.includes(i + 1)) : null);
+        if (!built) throw invalid('sections: choose at least one section');
+        const made = await X.createNodes(B, n.id, built, { author: ctx.author, fallbackTitle: FALLBACK });
+        const next = X.splice(body, p, X.replacement(p, built, made.ids, made.titles));
+        let updated;
+        try {
+          updated = await B.updateNote(n.id, n.title, next, { author: ctx.author, baseUpdatedAt: n.updated_at });
+        } catch (e) {
+          for (const id of made.ids) { try { await B.deleteNote(id); await B.purgeNote(id); } catch (x) { /* weiter aufräumen */ } }
+          throw e;
+        }
+        await X.dropUnused(B, n.id, next, made.moved);
+        const notes = made.ids.map((id, i) => ({ id, title: made.titles[i] }));
+        return result(`Moved the lines into ${plural(notes.length, 'child note', 'child notes')} of note [${n.id}]: ${notes.map(x => `[${x.id}] ${quote(x.title)}`).join(', ')}. Links to them replace the lines.`,
+          { id: n.id, updated_at: updated, notes });
+      },
+    },
+    {
       name: 'move_note', title: 'Move a note', readOnly: false,
       description: 'Move a note (with its subtree) under another note, or to the root with parent_id null.',
       inputSchema: schema({ id: ID('Note id.'), parent_id: { type: ['integer', 'null'], minimum: 1, description: 'New parent note, or null for the root.' } }, ['id', 'parent_id']),
@@ -642,7 +690,8 @@
     const readOnly = !!o.readOnly;
     const ctx = { author: o.author || null, now: typeof o.now === 'function' ? o.now : () => new Date().toISOString(),
       templates: o.templates || null, templateContext: typeof o.templateContext === 'function' ? o.templateContext : null };
-    const available = TOOLS.filter(t => (!readOnly || t.readOnly) && (t.needs !== 'templates' || (ctx.templates && global.NoNotesTemplates)));
+    const needs = { templates: () => ctx.templates && global.NoNotesTemplates, extract: () => global.NoNotesExtract };
+    const available = TOOLS.filter(t => (!readOnly || t.readOnly) && (!t.needs || needs[t.needs]()));
     const byName = new Map(available.map(t => [t.name, t]));
 
     async function call(name, input) {

@@ -3352,6 +3352,203 @@ async function runPdfExport(browser, part, step) {
   }
 }
 
+// ============================================================
+/* In Unterknoten auslagern (v4.2.0): Schaltfläche am Ende der Auswahl (Schreiben, Vorschau), Dialog bei mehreren Abschnitten, Abbrechen,
+   Rückgängig im Banner (auch über dem Vollbild-Editor), Bilder gehen mit, Titel aus dem ersten Satz markiert beim ersten Öffnen, der
+   Verweis folgt dem Umbenennen, Strg+Alt+U, Liste, kein Knopf im Archiv. */
+async function runExtractUi(browser, part, step) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'de-CH' });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  page.on('dialog', d => d.accept());
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nonotes-extract-'));
+  try {
+    await page.goto(APP_URL);
+    await page.waitForSelector(READY, { timeout: 30000 });
+    const node = title => page.locator(`g.mm-node:has(> text:text-is("${title}"))`);
+    const body = () => page.$eval('#body', e => e.value);
+    const saved = () => page.waitForFunction(SAVED, null, { timeout: 15000 });
+    const select = (from, to) => page.evaluate(([a, b]) => {
+      const ta = document.querySelector('#body');
+      const v = ta.value;
+      ta.focus();
+      ta.setSelectionRange(typeof a === 'string' ? v.indexOf(a) : a, typeof b === 'string' ? v.indexOf(b) : b);
+      ta.dispatchEvent(new Event('select'));
+    }, [from, to]);
+    const btnShown = () => page.waitForSelector('#extractBtn:not([hidden])');
+    const btnHidden = () => page.waitForSelector('#extractBtn', { state: 'hidden' });
+    await page.click('#mindmap', { position: { x: 30, y: 700 } });
+    await page.keyboard.press('Tab');
+    await page.waitForSelector('#renameInput:not([hidden])');
+    await page.keyboard.type('Projekt');
+    await page.keyboard.press('Enter');
+    await node('Projekt').waitFor();
+    await node('Projekt').dblclick();
+    await page.waitForFunction(() => document.body.classList.contains('editor-open'));
+    await page.click('[data-mode="edit"]');
+    const text = 'Einleitung zum Projekt. Mehr dazu später.\n\n## Ziele\nWir wollen sparen.\n### Kosten\n- [ ] Offerte einholen\n\n## Risiken\nZu teuer.\n\nSchluss.';
+    await page.fill('#body', text);
+    await saved();
+    assert.ok(await page.$eval('#extractBtn', e => e.hidden), 'ohne Auswahl keine Schaltfläche');
+    await select('## Ziele', '\n\nSchluss');
+    await btnShown();
+    const pos = await page.evaluate(() => {
+      const b = document.querySelector('#extractBtn').getBoundingClientRect();
+      const ta = document.querySelector('#body').getBoundingClientRect();
+      return { w: b.width, h: b.height, round: getComputedStyle(document.querySelector('#extractBtn')).borderRadius, inside: b.left >= ta.left && b.right <= ta.right && b.top >= ta.top && b.bottom <= ta.bottom, label: document.querySelector('#extractBtn').getAttribute('aria-label'), svg: !!document.querySelector('#extractBtn svg') };
+    });
+    assert.deepEqual([pos.w, pos.h, pos.round, pos.inside, pos.label, pos.svg], [28, 28, '50%', true, 'In Unterknoten auslagern', true], 'rund, mit Verzweigung, im Textfeld');
+    await page.click('#extractBtn');
+    await page.waitForSelector('#extractDialog[open]');
+    assert.deepEqual(await page.$$eval('#extractList .extract-title', l => l.map(x => x.textContent)), ['Ziele', 'Risiken']);
+    await page.click('#extractDialog button[value="cancel"]');
+    await page.waitForFunction(() => !document.querySelector('#extractDialog').open);
+    assert.equal(await body(), text, 'Abbrechen ändert nichts');
+    await select('## Ziele', '\n\nSchluss');
+    await btnShown();
+    await page.click('#extractBtn');
+    await page.waitForSelector('#extractDialog[open]');
+    await page.uncheck('#extractList input[data-part="0"]');
+    await page.uncheck('#extractList input[data-part="1"]');
+    assert.ok(await page.$eval('#extractOkBtn', b => b.disabled), 'ohne Haken nichts auszulagern');
+    await page.check('#extractList input[data-part="0"]');
+    await page.check('#extractList input[data-part="1"]');
+    await page.click('#extractOkBtn');
+    await page.waitForFunction(() => /- \[\[Ziele#\d+\]\]\n- \[\[Risiken#\d+\]\]/.test(document.querySelector('#body').value));
+    await saved();
+    const after = await body();
+    assert.match(after, /^Einleitung zum Projekt\. Mehr dazu später\.\n\n- \[\[Ziele#\d+\]\]\n- \[\[Risiken#\d+\]\]\n\nSchluss\.$/);
+    assert.equal(await page.$eval('#title', e => e.value), 'Projekt', 'der Editor bleibt auf der Eltern-Notiz');
+    assert.ok(await page.$eval('#banner', e => !e.hidden && /2 Unterknoten angelegt/.test(e.textContent)));
+    assert.ok(await page.evaluate(() => { const b = document.querySelector('#banner').getBoundingClientRect(); const hit = document.elementFromPoint(b.left + b.width - 20, b.top + b.height / 2); return !!hit && !!hit.closest('#banner'); }), 'der Banner liegt über dem Vollbild-Editor');
+    await page.click('#banner button:text("Rückgängig")');
+    await page.waitForFunction(t => document.querySelector('#body').value === t, text);
+    await saved();
+    assert.match(await page.textContent('#status'), /rückgängig gemacht/);
+    assert.ok(await page.$eval('#banner', e => e.hidden));
+    part('Schaltfläche am Ende der Auswahl (rund, Verzweigung), Dialog mit Abschnitten, Abbrechen, ohne Haken gesperrt, Verweise als Liste, Banner über dem Editor, Rückgängig');
+
+    // Strg+Alt+U, der erste Abschnitt ohne Haken bleibt
+    await select('## Ziele', '\n\nSchluss');
+    await btnShown();
+    await page.keyboard.press('Control+Alt+KeyU');
+    await page.waitForSelector('#extractDialog[open]');
+    await page.uncheck('#extractList input[data-part="0"]');
+    await page.click('#extractOkBtn');
+    await page.waitForFunction(() => /\n\[\[Risiken#\d+\]\]\n/.test(document.querySelector('#body').value));
+    await saved();
+    assert.match(await body(), /## Ziele\nWir wollen sparen\.\n### Kosten\n- \[ \] Offerte einholen\n\n\[\[Risiken#\d+\]\]\n\nSchluss\.$/);
+    await page.click('#banner button:text("Rückgängig")');
+    await page.waitForFunction(t => document.querySelector('#body').value === t, text);
+    await saved();
+    part('Strg+Alt+U, der erste Abschnitt ohne Haken bleibt in der Notiz');
+
+    // Vorschau: ganze Blöcke, Titel aus dem ersten Satz, beim ersten Öffnen markiert, der Verweis folgt dem Umbenennen
+    await page.click('[data-mode="preview"]');
+    await page.waitForSelector('#preview p');
+    await page.evaluate(() => {
+      const p = [...document.querySelectorAll('#preview p')].find(x => x.textContent.startsWith('Einleitung'));
+      const r = document.createRange();
+      r.setStart(p.firstChild, 3);
+      r.setEnd(p.firstChild, 8);
+      const s = getSelection();
+      s.removeAllRanges();
+      s.addRange(r);
+    });
+    await btnShown();
+    assert.deepEqual(await page.$$eval('#preview .nn-extract-mark', l => l.map(x => x.tagName + ' ' + x.textContent)), ['P Einleitung zum Projekt. Mehr dazu später.'], 'der ganze Absatz ist markiert');
+    await page.click('#extractBtn');
+    await page.waitForFunction(() => /^\[\[Einleitung zum Projekt#\d+\]\]\n\n## Ziele/.test(document.querySelector('#body').value));
+    await saved();
+    assert.equal(await page.$$eval('#preview .nn-extract-mark', l => l.length), 0);
+    await page.click('#preview a:text("Einleitung zum Projekt")');
+    await page.waitForFunction(() => document.querySelector('#title').value === 'Einleitung zum Projekt');
+    await page.waitForFunction(() => document.activeElement && document.activeElement.id === 'title');
+    assert.deepEqual(await page.evaluate(() => [document.activeElement.selectionStart, document.activeElement.selectionEnd]), [0, 22], 'Titel markiert');
+    await page.click('[data-mode="edit"]');
+    assert.equal(await body(), 'Einleitung zum Projekt. Mehr dazu später.');
+    await page.focus('#title');
+    await page.keyboard.press('Control+A');
+    await page.keyboard.type('Einleitung');
+    await saved();
+    await page.waitForTimeout(300);
+    await page.goBack();
+    await page.waitForFunction(() => document.querySelector('#title').value === 'Projekt');
+    await page.waitForFunction(() => /^\[\[Einleitung#\d+\]\]\n/.test(document.querySelector('#body').value), null, { timeout: 10000 });
+    await page.click('#preview a:text("Einleitung")').catch(() => {});
+    await page.click('[data-mode="preview"]');
+    await page.click('#preview a:text("Einleitung")');
+    await page.waitForFunction(() => document.querySelector('#title').value === 'Einleitung');
+    await page.waitForTimeout(200);
+    assert.notEqual(await page.evaluate(() => document.activeElement.id), 'title', 'beim zweiten Öffnen nicht mehr');
+    await page.goBack();
+    await page.waitForFunction(() => document.querySelector('#title').value === 'Projekt');
+    part('Vorschau: ganze Absätze markiert, Titel aus dem ersten Satz beim ersten Öffnen markiert, der Verweis folgt dem Umbenennen');
+
+    // Bilder gehen mit; mitten in der Zeile genau die Auswahl; Mindmap
+    await page.click('[data-mode="edit"]');
+    const png = path.join(tmp, 'skizze.png');
+    fs.writeFileSync(png, await page.screenshot({ clip: { x: 0, y: 0, width: 120, height: 80 } }));
+    await page.evaluate(() => { const ta = document.querySelector('#body'); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); });
+    await page.keyboard.type('\n\nFoto: ');
+    await page.setInputFiles('#attachInput', png);
+    await page.waitForFunction(() => /Foto:\s*!\[skizze\]\(att:\d+\)$/.test(document.querySelector('#body').value));
+    await saved();
+    await page.waitForFunction(() => document.querySelectorAll('#attachments figure.attachment').length === 1);
+    await select('Foto:', (await body()).length);
+    await btnShown();
+    await page.click('#extractBtn');
+    await page.waitForFunction(() => /\n\n\[\[Foto#\d+\]\]$/.test(document.querySelector('#body').value));
+    await saved();
+    await page.waitForFunction(() => document.querySelectorAll('#attachments figure.attachment').length === 0, null, { timeout: 10000 });
+    await select('wollen', ' sparen.');
+    await btnShown();
+    await page.click('#extractBtn');
+    await page.waitForFunction(() => /\nWir \[\[wollen#\d+\]\] sparen\.\n/.test(document.querySelector('#body').value));
+    await saved();
+    await page.click('[data-mode="preview"]');
+    await page.click('#preview a:text("Foto")');
+    await page.waitForFunction(() => document.querySelector('#title').value === 'Foto');
+    await page.click('[data-mode="edit"]');
+    assert.match(await body(), /^Foto:\s*!\[skizze\]\(att:\d+\)$/, 'das Bild mit neuer Nummer');
+    await page.waitForFunction(() => document.querySelectorAll('#attachments figure.attachment').length === 1);
+    await page.goBack();
+    await page.waitForFunction(() => document.querySelector('#title').value === 'Projekt');
+    await page.click('#backBtn');
+    await page.waitForSelector('body:not(.editor-open)');
+    for (const t of ['Einleitung', 'Foto', 'wollen']) await node(t).waitFor();
+    assert.equal(await node('Ziele').count(), 0, 'nach Rückgängig nicht in der Mindmap');
+    part('Bilder gehen mit (neue Nummer, an der Eltern-Notiz entfernt), mitten in der Zeile genau die Auswahl, neue Knoten in der Mindmap');
+
+    // Liste: auch dort; Archiv: keine Schaltfläche
+    await page.click('[data-view="list"]');
+    await page.click('#list li:has-text("Projekt")');
+    await page.waitForFunction(() => document.querySelector('#title').value === 'Projekt');
+    await page.click('[data-mode="edit"]');
+    await select('## Risiken', '\n\nSchluss');
+    await btnShown();
+    await page.click('[data-view="map"]');
+    await btnHidden();
+    await node('Einleitung').click({ button: 'right' });
+    await page.click('#contextMenu button:has-text("Archivieren…")');
+    await node('Einleitung').waitFor({ state: 'detached' });
+    await page.click('#mapArchiveBtn');
+    await node('Einleitung').dblclick();
+    await page.waitForFunction(() => document.body.classList.contains('editor-open') && document.querySelector('#title').value === 'Einleitung');
+    await page.click('[data-mode="edit"]');
+    await select(0, 5);
+    await page.waitForTimeout(300);
+    assert.ok(await page.$eval('#extractBtn', e => e.hidden), 'archiviert: keine Schaltfläche');
+    assert.deepEqual(errors, []);
+    part('In der Liste ebenso, im Archiv keine Schaltfläche');
+  } finally {
+    await ctx.close();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 suite('App-Test', [
   { name: null, run: runSmoke }, // druckt seine Gruppen selbst
   { name: 'Bereiche: anlegen, wechseln (Statusleiste, Menü, Alt+1 … 9), Adresse #w=… und ?w=…, Weiterleitung eines Webservers, Datei und Hauptfarbe je Bereich, umbenennen, entfernen, Datei als Bereich, zwei Tabs', run: runAreas },
@@ -3359,5 +3556,6 @@ suite('App-Test', [
   { name: 'Pfade auf Dateien und Ordner: Netz, Laufwerk, file://, Leerzeichen, Bilder, neuer Tab, Pfad kopieren, Einfügen aus dem Explorer, über eine Webseite', run: runPaths },
   { name: 'Link am Knoten und Auslösen in einen neuen Bereich (v3.2.0): Dialog, Symbol, Editor, Papierkorb, Wechsel und Zurück', run: runNodeLinkUi },
   { name: 'Export als PDF (v4.1.0): Dialog, eine Datei mit Mindmap, Inhalt, Lesezeichen, Links, Bildern und Titelzeilen auf jeder Seite, hell bei dunkler Einstellung, eine Datei pro Notiz als ZIP und in einen Ordner', run: runPdfExport },
+  { name: 'In Unterknoten auslagern (v4.2.0): Schaltfläche an der Auswahl, Dialog, Rückgängig, Vorschau mit ganzen Blöcken, Titel aus dem ersten Satz, Verweis folgt dem Umbenennen, Bilder, Liste, Archiv', run: runExtractUi },
   { name: 'Backend-Vertrag: Methodenliste, JSON-sichere Rückgaben, Änderungsmeldung, Fehlerkennungen', run: runBackend },
 ], { browser: true });

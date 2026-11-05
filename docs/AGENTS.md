@@ -30,6 +30,7 @@ Namen und Beschreibungen sind Englisch, weil Agenten sie lesen. Inhalte bleiben,
 | `update_note` | Titel und/oder Text ersetzen, mit `base_updated_at` gegen gleichzeitige Änderungen |
 | `append_to_note` | Text anhängen (der sicherste Schreibweg) |
 | `move_note`, `delete_note`, `restore_note`, `archive_note`, `unarchive_note`, `set_tags` | Baum, Papierkorb, Archiv, Tags |
+| `extract_to_child` | ganze Zeilen einer Notiz in neue Unternotizen auslagern, an ihrer Stelle Verweise `[[Titel#42]]` (seit v4.2.0, wie die Schaltfläche in der App): Überschriften werden Titel, mehrere der obersten Ebene je eine Unternotiz, sonst der erste Satz; `dry_run` zeigt die Abschnitte, `sections` wählt sie; Bilder gehen mit |
 | `list_questions`, `answer_question` | Fragen (`?`-Zeilen) auflisten, filtern nach Text, Tag, Person, Notiz; Antwort als `!`-Zeilen schreiben |
 | `list_decisions`, `record_decision` | Entscheide (`?!`-Zeilen, auch in Listen und als Block) auflisten, mit Beschreibung (`details`), Block (`parent_id`) und Zählern der Unter-Einträge (`sub_entries`); Entscheid als `!!`-Zeile mit Datum festhalten, auch im Block |
 | `list_tasks`, `complete_task`, `reopen_task` | Aufgaben mit Frist (`due`), Erinnerungen (`reminders`, seit v3.0.0) und Unteraufgaben; abschliessen erst, wenn die Unteraufgaben erledigt sind |

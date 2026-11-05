@@ -1070,6 +1070,7 @@ async function runAgentProgram(browser, part, step) {
   assert.ok(fs.existsSync(file), '--create legt die Datei an');
   resp = await a.request('tools/list');
   assert.ok(resp.result.tools.some(t => t.name === 'create_note'));
+  assert.ok(resp.result.tools.some(t => t.name === 'extract_to_child'), 'das Programm lädt extract.js');
   resp = await a.request('tools/call', { name: 'create_note', arguments: { title: 'Aus Claude', body: '? Offen?' } });
   assert.ok(!resp.error && !resp.result.isError, JSON.stringify(resp));
   assert.deepEqual(titles(), ['Aus Claude'], 'die Datei auf der Platte hat die Notiz');
@@ -3044,6 +3045,182 @@ async function runPdf(browser, part, step) {
   part('Ohne Kompression, leeres Dokument');
 }
 
+// ============================================================
+/* In Unterknoten auslagern (v4.2.0, packages/core/extract.js): Abschnitte nach Überschriften, Wahl im Dialog, erster Satz als Titel,
+   Inline und ganze Zeilen, Listen, Code-Blöcke, Verweise mit Nummer, Bilder mitnehmen und zurückholen, Agenten-Werkzeug. */
+async function runExtract(browser, part, step) {
+  let now = Date.parse('2026-11-05T08:00:00Z');
+  const RealDate = Date;
+  const sandbox = { console };
+  sandbox.window = sandbox;
+  sandbox.Date = class extends RealDate { constructor(...a) { if (a.length === 0) super(now); else super(...a); } static now() { return now; } };
+  const context = vm.createContext(sandbox);
+  for (const f of ['packages/core/i18n.js', ED('labels.js'), ED('placeholders.js'), 'packages/core/history.js', ED('dates.js'), ED('questions.js'), ED('tasks.js'), 'packages/core/links.js', 'packages/core/extract.js', 'packages/core/backend.js', 'packages/core/merge.js', 'packages/data/db.js', 'packages/store-local/backend-local.js', 'packages/agent/catalog.js']) {
+    vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
+  }
+  const X = sandbox.NoNotesExtract;
+  const json = v => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
+  const run = (body, a, b, chosen, ids) => {
+    const p = X.plan(body, typeof a === 'string' ? body.indexOf(a) : a, typeof b === 'string' ? body.indexOf(b) : b);
+    const built = X.build(p, chosen);
+    if (!built) return { p, built: null };
+    const n = built.nodes.length;
+    return { p, built, nodes: json(built.nodes.map(x => [x.title, x.body])), text: X.splice(body, p, X.replacement(p, built, ids || Array.from({ length: n }, (_, i) => 40 + i))) };
+  };
+
+  // ---------- Abschnitte nach Überschriften ----------
+  const doc = 'Intro.\n\n## Ziele\nWir wollen sparen.\n### Kosten\n- [ ] Offerte\n\n## Risiken\nZu teuer.\n\nSchluss.';
+  let r = run(doc, '## Ziele', '\n\nSchluss');
+  assert.equal(r.p.lineMode, true);
+  assert.deepEqual(json(r.p.parts.map(x => [x.title, x.auto, x.heading, x.from, x.to])), [['Ziele', false, 2, 2, 6], ['Risiken', false, 2, 7, 8]]);
+  assert.deepEqual(r.nodes, [['Ziele', 'Wir wollen sparen.\n### Kosten\n- [ ] Offerte'], ['Risiken', 'Zu teuer.']], 'tiefere Überschriften bleiben unverändert im Text');
+  assert.equal(r.text, 'Intro.\n\n- [[Ziele#40]]\n- [[Risiken#41]]\n\nSchluss.', 'mehrere Verweise als Liste');
+  r = run(doc, '## Ziele', '\n\nSchluss', [true, false]);
+  assert.deepEqual(r.nodes, [['Ziele', 'Wir wollen sparen.\n### Kosten\n- [ ] Offerte\n\n## Risiken\nZu teuer.']], 'ohne Haken: in den Knoten davor, samt Überschrift');
+  assert.equal(r.text, 'Intro.\n\n[[Ziele#40]]\n\nSchluss.');
+  r = run(doc, '## Ziele', '\n\nSchluss', [false, true]);
+  assert.equal(r.text, 'Intro.\n\n## Ziele\nWir wollen sparen.\n### Kosten\n- [ ] Offerte\n\n[[Risiken#40]]\n\nSchluss.', 'der erste ohne Haken bleibt');
+  assert.equal(run(doc, '## Ziele', '\n\nSchluss', [false, false]).built, null, 'nichts gewählt');
+  r = run(doc, 0, '\n\nSchluss');
+  assert.deepEqual(json(r.p.parts.map(x => [x.title, x.auto])), [['Intro', true], ['Ziele', false], ['Risiken', false]], 'Text vor der ersten Überschrift ist ein eigener Abschnitt');
+  r = run(doc, '### Kosten', '\n\n## Risiken');
+  assert.deepEqual(r.nodes, [['Kosten', '- [ ] Offerte']], 'auch eine tiefere Überschrift wird Titel');
+  r = run('### Klein\nText\n## Gross\nMehr', 0, 100);
+  assert.deepEqual(json(r.p.parts.map(x => [x.title, x.heading])), [['Klein', 3], ['Gross', 2]], 'die höchste Ebene teilt, davor der Abschnitt mit seiner eigenen Überschrift');
+  r = run('```\n# kein Titel\n```\n## Echt\nText', 0, 100);
+  assert.deepEqual(json(r.p.parts.map(x => [x.title, x.auto])), [['kein Titel', true], ['Echt', false]], 'im Code-Block keine Überschrift');
+  r = run('?!``` Variante\n# Zeile im Eintrag\n```\nDanach', 0, 100);
+  assert.equal(r.p.parts.length, 1, 'mehrzeiliger Entscheid: keine Überschrift');
+  assert.equal(r.p.parts[0].title, 'Variante');
+  part('Abschnitte: höchste Ebene, tiefere bleiben, ohne Haken in den Knoten davor (der erste bleibt), Text davor, Code und Einträge');
+
+  // ---------- Erster Satz ----------
+  const F = X.firstSentence;
+  assert.equal(F('Wir kaufen das Werkzeug. Danach testen wir.'), 'Wir kaufen das Werkzeug');
+  assert.equal(F('Am 6. November, z. B. bzw. ca. um 9 Uhr, treffen wir uns. Dann'), 'Am 6. November, z. B. bzw. ca. um 9 Uhr, treffen wir uns');
+  assert.equal(F('Kaufen wir? Ja.'), 'Kaufen wir?');
+  assert.equal(F('Achtung! Heiss.'), 'Achtung!');
+  assert.equal(F('- [ ] **Offerte** einholen bei [Firma](https://x.ch) @anna >6.11.2026'), 'Offerte einholen bei Firma @anna', 'Markdown, Liste, Kästchen und Termin weg');
+  assert.equal(F('?! Nehmen wir [[Werkzeug#4*]]? @ben'), 'Nehmen wir Werkzeug?');
+  assert.equal(F('\n\n> Zitat mit `Code`.'), 'Zitat mit Code');
+  assert.equal(F('| Name | Wert |\n|---|---|\n| a | b |'), 'Name Wert');
+  assert.equal(F('![Skizze](att:3)'), 'Skizze');
+  assert.equal(F('Folgende Punkte:'), 'Folgende Punkte');
+  assert.equal(F('   \n\n'), '');
+  const long = F('Ein sehr langer erster Satz ohne Punkt, der weit über achtzig Zeichen hinausgeht und darum gekürzt werden muss');
+  assert.ok(long.length <= 80 && long.endsWith('…') && !/\s…$/.test(long), long);
+  assert.equal(long, 'Ein sehr langer erster Satz ohne Punkt, der weit über achtzig Zeichen…');
+  assert.ok(F('x'.repeat(200)).length === 80, 'ohne Leerzeichen hart gekürzt');
+  part('Erster Satz: Abkürzungen und Zahlen, ? und !, ohne Markdown, Liste, Kästchen, Termin, Zitat, Tabelle, Bild, gekürzt auf 80 mit «…»');
+
+  // ---------- Inline, Zeilen, Listen ----------
+  r = run('Hier ist ein Wort mitten drin.', 8, 18);
+  assert.equal(r.p.lineMode, false);
+  assert.equal(r.text, 'Hier ist [[ein Wort#40]] mitten drin.', 'mitten in der Zeile: genau die Auswahl');
+  r = run('Text\n  \n  Absatz eins.\n\n', 4, 100);
+  assert.equal(r.text, 'Text\n  \n[[Absatz eins#40]]\n\n', 'Leerraum am Rand zählt nicht, die Einrückung gehört zur Zeile');
+  assert.equal(X.plan('a\n\n  \n b', 1, 4), null, 'nur Leerraum');
+  const list = 'Liste:\n  - [ ] Offerten einholen. Dann wählen.\n    - [ ] Firma A\n  - weiter';
+  r = run(list, '  - [ ]', '\n  - weiter');
+  assert.deepEqual(r.nodes, [['Offerten einholen', '- [ ] Offerten einholen. Dann wählen.\n  - [ ] Firma A']], 'Unterliste ausgerückt');
+  assert.equal(r.text, 'Liste:\n  - [[Offerten einholen#40]]\n  - weiter', 'Listenpunkt mit Einrückung und Zeichen, ohne Kästchen');
+  r = run('3. ## A\nx\n## B\ny', 0, 100);
+  assert.deepEqual(json(r.p.parts.map(x => [x.title, x.auto])), [['A', true], ['B', false]], 'ein Listenpunkt ist keine Überschrift');
+  r = run('1) Eins\n2) Zwei\n## B\ny', 0, 100);
+  assert.equal(r.text, '1) [[Eins#40]]\n2) [[B#41]]', 'nummerierte Liste zählt weiter');
+  assert.equal(X.link('Plan [neu]\nzwei', 7), '[[Plan (neu) zwei#7]]', 'keine eckigen Klammern im Verweis');
+  assert.deepEqual(json(X.rangeOfLines('a\nbb\nc', 1, 2)), { start: 2, end: 6 });
+  assert.deepEqual(json(X.rangeOfLines('a\nbb\nc', 0, 0)), { start: 0, end: 1 });
+  assert.deepEqual(json(X.attachmentRefs('![a](att:3) ![b](att:4) ![c](att:3) att:9')), [3, 4]);
+  part('Inline genau, Zeilen ganz, Rand ohne Leerraum, Listen mit Zeichen und Nummer, Unterliste ausgerückt, Verweis ohne Klammern');
+
+  // ---------- Über das Backend: Knoten, Bilder, Rückgängig ----------
+  const SQL = await initSqlJs();
+  const db = sandbox.NoNotesDB.open(SQL, null);
+  const B = sandbox.NoNotesBackendLocal.create({ getDb: () => db, onChange: () => {} });
+  const pid = await B.createNote(null);
+  const a1 = await B.addAttachment(pid, { name: 'skizze.png', mime: 'image/png', bytes: new Uint8Array([1, 2, 3]) });
+  const a2 = await B.addAttachment(pid, { name: 'plan.png', mime: 'image/png', bytes: new Uint8Array([4, 5]) });
+  const body = `Kopf ![plan](att:${a2})\n\n## Heizung\nFoto: ![skizze](att:${a1})\n- [ ] Offerte\n\n## Fenster\nPlan: ![plan](att:${a2})\n\nEnde`;
+  await B.updateNote(pid, 'Umbau', body);
+  const p = X.plan(body, body.indexOf('## Heizung'), body.indexOf('\n\nEnde'));
+  const built = X.build(p);
+  const made = await X.createNodes(B, pid, built, { author: 'Test', fallbackTitle: 'Ausgelagert' });
+  assert.equal(made.ids.length, 2);
+  assert.deepEqual(json(made.titles), ['Heizung', 'Fenster']);
+  const tree = json(await B.getTree());
+  assert.deepEqual(tree.filter(n => n.parent_id === pid).map(n => n.title), ['Heizung', 'Fenster'], 'Unterknoten in der Reihenfolge');
+  const heiz = json(await B.getNote(made.ids[0]));
+  const hAtt = json(await B.listAttachments(made.ids[0]));
+  assert.equal(hAtt.length, 1);
+  assert.equal(heiz.body, `Foto: ![skizze](att:${hAtt[0].id})\n- [ ] Offerte`, 'Bild an den neuen Knoten kopiert, Verweis angepasst');
+  assert.deepEqual(Array.from((await B.getAttachment(hAtt[0].id)).data), [1, 2, 3]);
+  assert.equal(heiz.updated_by, 'Test');
+  const tasks = json(await B.listTasks({ status: 'all' }));
+  assert.ok(tasks.some(x => x.note_id === made.ids[0] && x.text === 'Offerte'), 'die Aufgabe steht im neuen Knoten');
+  const rep = X.replacement(p, built, made.ids, made.titles);
+  const next = X.splice(body, p, rep);
+  assert.equal(next, `Kopf ![plan](att:${a2})\n\n- [[Heizung#${made.ids[0]}]]\n- [[Fenster#${made.ids[1]}]]\n\nEnde`);
+  await B.updateNote(pid, 'Umbau', next);
+  const removed = json(await X.dropUnused(B, pid, next, made.moved));
+  assert.deepEqual(removed, [a1], 'nur das Bild, das die Eltern-Notiz nicht mehr braucht');
+  assert.deepEqual(json(await B.listAttachments(pid)).map(x => x.id), [a2]);
+  const links = json(await B.getLinks ? await B.titleIndex() : []);
+  assert.ok(links.length >= 3);
+  const resolve = sandbox.NoNotesLinks.resolver(await B.titleIndex());
+  assert.equal(resolve(`Heizung#${made.ids[0]}`).id, made.ids[0], 'der Verweis trifft');
+  await B.renameNote(made.ids[0], 'Wärme');
+  assert.equal(resolve(`Heizung#${made.ids[0]}`).id, made.ids[0], 'auch nach dem Umbenennen');
+  part('Backend: Unterknoten in der Reihenfolge, Bilder kopiert und an der Eltern-Notiz entfernt, Aufgaben im neuen Knoten, Verweis trifft');
+
+  const rec = { start: p.start, original: body.slice(p.start, p.end), replacement: rep, ids: made.ids, moved: made.moved, removed };
+  const edited = 'Neu oben\n' + next;
+  const back = await X.undo(B, pid, edited, rec);
+  assert.ok(back, 'der Ersatz steht noch einmal im Text, auch verschoben');
+  const restoredAtt = json(await B.listAttachments(pid)).map(x => x.id);
+  assert.equal(restoredAtt.length, 2, 'das entfernte Bild ist wieder da');
+  const again = restoredAtt.find(id => id !== a2);
+  assert.equal(back.body, 'Neu oben\n' + body.replace(`att:${a1}`, `att:${again}`), 'Text zurück, mit dem neuen Bild');
+  assert.deepEqual(Array.from((await B.getAttachment(again)).data), [1, 2, 3]);
+  assert.ok(json(await B.getNote(made.ids[0])).deleted_at && json(await B.getNote(made.ids[1])).deleted_at, 'neue Knoten im Papierkorb');
+  assert.equal(await X.undo(B, pid, 'ganz anderer Text', rec), null, 'ohne den Ersatz: nichts');
+  part('Rückgängig: Text zurück (auch wenn darüber getippt wurde), Bilder wieder an der Eltern-Notiz, neue Knoten im Papierkorb');
+
+  // ---------- Agenten-Werkzeug ----------
+  const cat = sandbox.NoNotesAgent.create(B, { author: 'Agent', now: () => new RealDate(now).toISOString() });
+  const call = async (name, input) => { now += 1000; return cat.call(name, input); };
+  const S = res => json(res.structuredContent);
+  const T = res => res.content[0].text;
+  const ok = res => { assert.ok(!res.isError, T(res)); return res; };
+  const bad = (res, code) => { assert.ok(res.isError, `Fehler ${code} erwartet: ${T(res)}`); assert.equal(S(res).error.code, code, T(res)); return res; };
+  const tool = cat.list().find(x => x.name === 'extract_to_child');
+  assert.ok(tool && tool.annotations.readOnlyHint === false);
+  assert.ok(!sandbox.NoNotesAgent.create(B, { readOnly: true }).list().some(x => x.name === 'extract_to_child'), 'nicht im Lesemodus');
+  const nid = S(ok(await call('create_note', { title: 'Sitzung', body: 'Traktanden\n\n## Budget\n5000\n## Personal\nZwei Stellen\n## Varia\nNichts\n\nEnde' }))).id;
+  let res = ok(await call('extract_to_child', { id: nid, from_line: 3, to_line: 8, dry_run: true }));
+  assert.deepEqual(S(res).sections.map(x => [x.section, x.title, x.from_heading, x.from_line, x.to_line]), [[1, 'Budget', true, 3, 4], [2, 'Personal', true, 5, 6], [3, 'Varia', true, 7, 8]]);
+  assert.match(T(res), /would make 3 sections/);
+  assert.equal(json(await B.getNote(nid)).body.includes('[['), false, 'Probelauf ändert nichts');
+  bad(await call('extract_to_child', { id: nid, from_line: 3, to_line: 8, sections: [4] }), 'INVALID_INPUT');
+  bad(await call('extract_to_child', { id: nid, from_line: 3, to_line: 8, sections: [] }), 'INVALID_INPUT');
+  bad(await call('extract_to_child', { id: nid, from_line: 9, to_line: 2 }), 'INVALID_INPUT');
+  bad(await call('extract_to_child', { id: nid, from_line: 30, to_line: 31 }), 'INVALID_INPUT');
+  bad(await call('extract_to_child', { id: nid, from_line: 2, to_line: 2 }), 'INVALID_INPUT');
+  bad(await call('extract_to_child', { id: nid, from_line: 3, to_line: 8, base_updated_at: '2020-01-01T00:00:00.000Z' }), 'NOTE_CONFLICT');
+  res = ok(await call('extract_to_child', { id: nid, from_line: 3, to_line: 8, sections: [1, 3] }));
+  const out = S(res).notes;
+  assert.deepEqual(out.map(x => x.title), ['Budget', 'Varia']);
+  assert.equal(json(await B.getNote(nid)).body, `Traktanden\n\n- [[Budget#${out[0].id}]]\n- [[Varia#${out[1].id}]]\n\nEnde`);
+  assert.equal(json(await B.getNote(out[0].id)).body, '5000\n\n## Personal\nZwei Stellen', 'der Abschnitt ohne Wahl im Knoten davor, mit Leerzeile');
+  assert.equal(json(await B.getNote(out[0].id)).updated_by, 'Agent');
+  assert.match(T(res), /into 2 child notes of note/);
+  res = ok(await call('extract_to_child', { id: out[1].id, from_line: 1, to_line: 1 }));
+  assert.equal(S(res).notes[0].title, 'Nichts');
+  await B.archiveNote(nid);
+  bad(await call('extract_to_child', { id: nid, from_line: 1, to_line: 1 }), 'ARCHIVED_READONLY');
+  part('Agenten: extract_to_child mit Probelauf, Wahl der Abschnitte, Prüfungen, Basisstand, Autor, nicht im Lesemodus und im Archiv');
+}
+
 suite('Kern-Test', [
   { name: 'Zusammenführen: Myers-Vergleich, Dreiwege-Zusammenführung mit Zufallsdaten, Konflikte, Cursor', run: runMerge },
   { name: 'Datenbank: Standardschema, Angleichen alter Dateien (Schema 1, 11, 12, 13), Konflikterkennung, Autor im Verlauf, Querverweise, Entscheide und Personen', run: runDb },
@@ -3060,6 +3237,7 @@ suite('Kern-Test', [
   { name: 'Programm für den eigenen Rechner: Einträge für Claude Code und andere, Datei, MCP über die Standardeingabe, Änderungen von aussen, zwei Prozesse mit Sperre, Lesemodus', run: runAgentProgram },
   { name: 'Termine mit «>» (v3.0.0): Schreibweise, Frist und Erinnerungen, Umstellung alter Dateien, Speichern, Index, Vorschau, Kalender, Agenten, Programm mit Sicherung, Seiten der Mindmap', run: runDatesV3 },
   { name: 'Link am Knoten und Auslösen in einen neuen Bereich (v3.2.0): Schema 18, Prüfung der Links, Umschreiben, Umzug zwischen zwei Datenbanken', run: runNodeLinks },
+  { name: 'In Unterknoten auslagern (v4.2.0): Abschnitte nach Überschriften, Wahl, erster Satz, Inline und Zeilen, Listen, Bilder, Rückgängig, Agenten', run: runExtract },
   { name: 'PDF-Schreiber (v4.1.0): Aufbau, Text in WinAnsi mit Breite, Formen, Bilder mit Maske und JPEG, Links, Lesezeichen, ohne Kompression', run: runPdf },
   { name: 'Release-Notizen: Pflicht ab v2.12.0, Prüfung, Beschreibung für GitHub, Screenshots aus einem Drehbuch, alle Ordner im Repository', run: runReleaseNotes },
 ]);
