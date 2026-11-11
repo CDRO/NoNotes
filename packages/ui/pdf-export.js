@@ -7,7 +7,9 @@
      (wie der Markdown-Export, Endung .pdf). Verweise und die Liste der Unternotizen führen von Datei zu Datei.
 
    Gesetzt wird wie im Druck (packages/ui/print.js), gezeichnet mit packages/core/pdf.js über packages/ui/pdf-layout.js. Bilder stecken
-   in den Dateien. options: { archived, pageBreaks, version, svg (Mindmap), attachmentUrl(id), tableFormat, mapSections, onProgress(n, gesamt) } */
+   in den Dateien. options: { archived, pageBreaks, version, svg (Mindmap), attachmentUrl(id), tableFormat, mapSections, onProgress(n, gesamt) }
+
+   - buildNote (seit 4.3.0): eine Notiz allein, für den Versand per E-Mail und Teilen. */
 (function (global) {
   'use strict';
 
@@ -167,5 +169,31 @@
     return files;
   }
 
-  global.NoNotesPdfExport = { buildSingle, buildFolder };
+  /** Eine einzelne Notiz als PDF (seit 4.3.0, Versand per E-Mail und Teilen): Kopf mit Titel, Karte und Datum, Angaben, Text mit
+   *  Bildern, darunter die Titel der Unternotizen. Verweise auf andere Notizen bleiben Text (die Datei steht allein); Adressen bleiben
+   *  Links. Archivierte Notizen gehen auch. Ergebnis: { title, name (Titel.pdf), data, pages }. */
+  async function buildNote(backend, id, options) {
+    const opts = options || {};
+    const nodes = await Exporter().treeOrder(backend, { archived: true });
+    const n = nodes.find(x => x.id === id);
+    if (!n) throw Object.assign(new Error(t('Notiz nicht gefunden.')), { code: 'NOTE_NOT_FOUND' });
+    const mapTitle = await backend.getMapTitle();
+    const resolveRef = await Printer().titleResolver(backend);
+    const { notes, urls } = await notesOf(backend, [n], opts.attachmentUrl);
+    const note = notes.get(n.id);
+    const title = titleOf(n);
+    const body = Printer().noteBodyHtml(n, note, { resolveRef, urls, tableFormat: opts.tableFormat, refHref: () => null });
+    let html = headHtml(title, [mapTitle, stampText(opts.version)]) +
+      `<section class="print-note">${await Printer().metaHtml(backend, n, note)}<div class="md">${body}</div></section>`;
+    const children = n.children.filter(c => !c.archived_at || n.archived_at); // archivierte Unternotizen nur unter einer archivierten Notiz
+    if (children.length) {
+      html += `<section class="print-children"><h2>${esc(t('Unternotizen'))}</h2><ul>` + children.map(c => `<li>${esc(titleOf(c))}</li>`).join('') + '</ul></section>';
+    }
+    const doc = newDoc(title, opts.version);
+    await Layout().appendHtml(doc, html, { css: Layout().pdfCss() + '\n' + EXTRA_CSS, imageBytes: imageBytes(backend) });
+    Layout().footer(doc, `${mapTitle} · ${title}`);
+    return { title, name: global.NoNotesMail.fileName(title, '.pdf', t('Notiz')), data: await doc.toBytes(), pages: doc.pages.length };
+  }
+
+  global.NoNotesPdfExport = { buildSingle, buildFolder, buildNote };
 })(window);

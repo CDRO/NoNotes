@@ -3221,6 +3221,59 @@ async function runExtract(browser, part, step) {
   part('Agenten: extract_to_child mit Probelauf, Wahl der Abschnitte, Prüfungen, Basisstand, Autor, nicht im Lesemodus und im Archiv');
 }
 
+// ============================================================
+/* Mail-Entwurf als Datei (v4.3.0, packages/core/mail.js): Kopfzeilen nach RFC 2047, MIME mit Text und PDF, Entwurfsmarke, Dateinamen. */
+async function runMail(browser, part, step) {
+  const ctx = vm.createContext({ TextEncoder, Buffer });
+  ctx.window = ctx;
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'packages/core/mail.js'), 'utf8'), ctx, { filename: 'mail.js' });
+  const Mail = ctx.NoNotesMail;
+  // kleiner Leser für das Ergebnis: Kopf, Teile, Base64 und RFC-2047-Wörter
+  const decodeWords = v => v.replace(/\r\n /g, '').replace(/=\?UTF-8\?B\?([^?]*)\?=/g, (m, b) => Buffer.from(b, 'base64').toString('utf8'));
+  const parse = text => {
+    const [head, ...rest] = text.split('\r\n\r\n');
+    const headers = {};
+    for (const line of head.replace(/\r\n /g, ' ').split('\r\n')) { const i = line.indexOf(':'); headers[line.slice(0, i)] = line.slice(i + 1).trim(); }
+    const boundary = /boundary="([^"]+)"/.exec(headers['Content-Type'])[1];
+    const body = rest.join('\r\n\r\n');
+    const parts = body.split(`--${boundary}`).slice(1, -1).map(p => {
+      const [h, ...b] = p.replace(/^\r\n/, '').split('\r\n\r\n');
+      return { head: h, data: Buffer.from(b.join('\r\n\r\n').replace(/\s+/g, ''), 'base64') };
+    });
+    return { headers, parts, closed: body.includes(`--${boundary}--`), head: text.split('\r\n\r\n')[0] };
+  };
+
+  const pdf = new Uint8Array([37, 80, 68, 70, 45, 49, 46, 52, 10, ...new Array(300).fill(65)]);
+  const text = Mail.eml({ subject: 'Sitzung Vorstand – Budget 2027 mit einem langen Titel über Äpfel, Öl und Übermut', text: 'Anbei die Notiz.\nZweite Zeile', attachments: [{ name: 'Sitzung Vorstand – Budget.pdf', type: 'application/pdf', data: pdf }], draft: true, boundary: 'nonotes-test' });
+  const m = parse(text);
+  assert.ok(text.startsWith('X-Unsent: 1\r\n'), 'Entwurfsmarke zuerst');
+  assert.ok(!/[^\r]\n/.test(text), 'nur CRLF');
+  assert.ok(text.split('\r\n').every(l => l.length <= 998), 'Zeilen höchstens 998 Zeichen');
+  assert.equal(decodeWords(/Subject: ((?:.|\r\n )*)/.exec(text)[1]), 'Sitzung Vorstand – Budget 2027 mit einem langen Titel über Äpfel, Öl und Übermut');
+  for (const w of text.match(/=\?UTF-8\?B\?[^?]*\?=/g)) assert.ok(w.length <= 75, `Wort höchstens 75 Zeichen: ${w.length}`);
+  assert.equal(m.headers['MIME-Version'], '1.0');
+  assert.equal(m.parts.length, 2);
+  assert.match(m.parts[0].head, /Content-Type: text\/plain; charset="utf-8"/);
+  assert.equal(m.parts[0].data.toString('utf8'), 'Anbei die Notiz.\r\nZweite Zeile');
+  assert.match(m.parts[1].head, /Content-Type: application\/pdf; name="=\?UTF-8\?B\?/);
+  assert.equal(decodeWords(/filename="((?:[^"]|\r\n )*)"/.exec(m.parts[1].head)[1]), 'Sitzung Vorstand – Budget.pdf', 'Name des Anhangs mit Gedankenstrich');
+  assert.deepEqual([...m.parts[1].data], [...pdf], 'Anhang unverändert');
+  assert.ok(m.closed, 'Abschluss --boundary--');
+  part('Entwurf: X-Unsent, Betreff und Anhangname als RFC-2047-Wörter (je ≤ 75 Zeichen), Text und PDF in Base64, nur CRLF');
+
+  const plain = Mail.eml({ subject: 'Plain', text: '', attachments: [], draft: false });
+  assert.ok(!plain.includes('X-Unsent'), 'ohne Entwurfsmarke');
+  assert.match(plain, /^Subject: Plain\r\n/, 'ASCII-Betreff bleibt lesbar');
+  assert.equal(parse(plain).parts.length, 1, 'nur der Text');
+  assert.equal(Mail.headerText('Zeile\neins'), 'Zeile eins', 'kein Zeilenumbruch im Kopf');
+  assert.equal(Mail.fileName('Plan: A/B <neu>?', '.pdf'), 'Plan- A-B -neu-.pdf');
+  assert.equal(Mail.fileName('  ...  ', '.pdf', 'Notiz'), 'Notiz.pdf', 'ohne Titel der übersetzte Ersatz');
+  assert.equal(Mail.fileName('x'.repeat(200), '.eml').length, 124);
+  assert.equal(Mail.asciiName('Übersicht für Anna – «Budget».eml'), 'Uebersicht fuer Anna - Budget.eml');
+  assert.equal(Mail.asciiName('Café crème.pdf'), 'Cafe creme.pdf');
+  part('Ohne Entwurfsmarke, ASCII-Betreff, Dateinamen ohne verbotene Zeichen und als ASCII');
+}
+
 suite('Kern-Test', [
   { name: 'Zusammenführen: Myers-Vergleich, Dreiwege-Zusammenführung mit Zufallsdaten, Konflikte, Cursor', run: runMerge },
   { name: 'Datenbank: Standardschema, Angleichen alter Dateien (Schema 1, 11, 12, 13), Konflikterkennung, Autor im Verlauf, Querverweise, Entscheide und Personen', run: runDb },
@@ -3237,6 +3290,7 @@ suite('Kern-Test', [
   { name: 'Programm für den eigenen Rechner: Einträge für Claude Code und andere, Datei, MCP über die Standardeingabe, Änderungen von aussen, zwei Prozesse mit Sperre, Lesemodus', run: runAgentProgram },
   { name: 'Termine mit «>» (v3.0.0): Schreibweise, Frist und Erinnerungen, Umstellung alter Dateien, Speichern, Index, Vorschau, Kalender, Agenten, Programm mit Sicherung, Seiten der Mindmap', run: runDatesV3 },
   { name: 'Link am Knoten und Auslösen in einen neuen Bereich (v3.2.0): Schema 18, Prüfung der Links, Umschreiben, Umzug zwischen zwei Datenbanken', run: runNodeLinks },
+  { name: 'Mail-Entwurf als Datei (v4.3.0): Kopfzeilen nach RFC 2047, MIME mit Text und PDF, Entwurfsmarke, Dateinamen', run: runMail },
   { name: 'In Unterknoten auslagern (v4.2.0): Abschnitte nach Überschriften, Wahl, erster Satz, Inline und Zeilen, Listen, Bilder, Rückgängig, Agenten', run: runExtract },
   { name: 'PDF-Schreiber (v4.1.0): Aufbau, Text in WinAnsi mit Breite, Formen, Bilder mit Maske und JPEG, Links, Lesezeichen, ohne Kompression', run: runPdf },
   { name: 'Release-Notizen: Pflicht ab v2.12.0, Prüfung, Beschreibung für GitHub, Screenshots aus einem Drehbuch, alle Ordner im Repository', run: runReleaseNotes },

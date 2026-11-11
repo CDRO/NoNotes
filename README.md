@@ -156,6 +156,25 @@ Zeichen ausserhalb der westeuropäischen Schrift (→, ✓, Emojis, andere Schri
 sie sind zu sehen, aber nicht durchsuchbar. Der Export läuft ganz im Browser, auch bei dunkler Einstellung entsteht ein
 helles Dokument.
 
+### Versand per E-Mail oder Teilen (seit 4.3.0)
+
+Rechtsklick auf einen Knoten (auch einen archivierten) → **Versand** verschickt die Notiz als PDF, gesetzt wie beim PDF-Export:
+Titel, Angaben, Text mit Bildern, darunter die Titel der Unternotizen. Verweise auf andere Notizen bleiben Text, Adressen
+bleiben Links.
+
+- **E-Mail** lädt einen Mail-Entwurf (`Titel.eml`) herunter: Betreff ist der Titel, im Text steht «Anbei die Notiz … als PDF»,
+  angehängt ist `Titel.pdf`. Ein Klick auf den Download öffnet ihn im Mail-Programm als **neues Mail** mit dem Anhang; Empfänger
+  setzt du dort. Das klappt im klassischen Outlook und in Thunderbird (ab 91); andere Programme öffnen die Datei nur zum Lesen
+  (dort «Weiterleiten», der Anhang bleibt).
+- **Teilen** gibt das PDF an das Teilen-Fenster des Systems (Edge und Chrome unter Windows und macOS, Safari, Handys); dort
+  wählst du das Ziel, zum Beispiel das Mail-Programm. Firefox am Desktop und Linux haben kein Teilen-Fenster: dort bleibt E-Mail.
+  Öffnet der Browser das Fenster nicht mehr, weil das PDF lange brauchte, steht oben «Das PDF … ist bereit» mit **Teilen**.
+- **Einstellung:** `Datenbank → Versand` wählt, was im Menü steht: *E-Mail und Teilen* (vorgegeben), *Nur E-Mail (Entwurf)* oder
+  *Nur Teilen*. Sie gilt für diesen Browser, weil sie vom Mail-Programm des Geräts abhängt.
+
+Warum zwei Wege: Eine Webseite kann einem Mail-Programm keinen Anhang direkt geben (`mailto:` kennt keine Anhänge). Der
+Entwurf als Datei und das Teilen-Fenster kommen ohne Server und ohne Installation aus.
+
 ### Termine in den Kalender (.ics)
 
 `Datenbank → Termine in Kalender exportieren (.ics)…` schreibt alle Aufgaben und Fragen mit
@@ -775,6 +794,7 @@ dieselben wie bis v3.3.0. In der Tabelle steht bei diesen Teilen «Paket», geme
 | Export | `packages/core/export.js` baut die Dateien, `zip.js` ist ein kleiner ZIP-Writer; das Bild liefert `NoNotesMindmap.toSvgString`, PNG über ein Canvas |
 | Druck | `packages/ui/print.js` baut das Druckdokument in `#printArea`; `@media print` blendet den Rest der App aus |
 | PDF-Export | `packages/core/pdf.js`: eigener PDF-Schreiber (Standardschriften, Formen, Bilder, Links, Lesezeichen, Deflate), läuft auch in Node; `packages/ui/pdf-layout.js`: setzt HTML mit den Regeln des Drucks im unsichtbaren `#pdfArea`, liest Wörter, Flächen, Rahmen, Bilder und Links ab, bricht die Seiten um; `packages/ui/pdf-export.js`: eine Datei oder eine pro Notiz. Tests `test/core.cjs` und `test/app.cjs` |
+| Versand | `packages/core/mail.js`: Mail-Entwurf als `.eml` (MIME, RFC-2047-Wörter, Entwurfsmarke `X-Unsent`), läuft auch in Node; `packages/ui/send.js`: Untermenü «Versand» im Kontextmenü, Teilen über Web Share mit Datei (Banner, wenn der Klick zu lange her ist), Einstellung je Browser (`nonotes.sendWays`); das PDF macht `NoNotesPdfExport.buildNote`. Tests `test/core.cjs` und `test/app.cjs` |
 | Auslagern | `packages/core/extract.js`: Auswahl in Abschnitte zerlegen (Überschriften, erster Satz als Titel, Listen, Code), Ersatz mit `[[Titel#42]]`, Unternotizen anlegen mit ihren Bildern, Rückgängig; läuft auch in Node (Werkzeug `extract_to_child`). `packages/ui/extract-ui.js`: Schaltfläche am Ende der Auswahl (Textfeld über einen Spiegel, Vorschau über `data-line` der Blöcke), Dialog, Banner, Titel markieren, Verweis folgt dem Umbenennen. Tests `test/core.cjs` und `test/app.cjs` |
 | Scroll-Sync | Paket `scrollsync.js`: Spiegel des Textes misst Zeilenhöhen, Vorschau-Blöcke tragen `data-line`, lineare Interpolation dazwischen |
 | Erweiterungen | `packages/core/plugins.js` (Verzeichnis, Lader, Schalter, Ereignisse) und die Anbindung in `packages/ui/app.js`; Ordner `plugins/` mit Liste, Anleitung und Beispielen; das Verzeichnis des Ordners erzeugt `tools/build.cjs` (siehe [docs/PLUGINS.md](docs/PLUGINS.md)) |

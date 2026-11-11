@@ -9,7 +9,7 @@ dieselbe Oberfläche und denselben Kern benutzen können.
 ```
 packages/
   core/         reine Logik ohne Datenbank und ohne Oberfläche: Verweise (links.js), Vorlagen, Verlauf, Zusammenführen,
-                Export, Kalender, ZIP, PDF-Schreiber (pdf.js, seit 4.1.0), Auslagern in Unternotizen (extract.js, seit 4.2.0),
+                Export, Kalender, ZIP, PDF-Schreiber (pdf.js, seit 4.1.0), Auslagern in Unternotizen (extract.js, seit 4.2.0), Mail-Entwurf (mail.js, seit 4.3.0),
                 Sprachen (i18n), Erweiterungen, Backend-Schnittstelle
   data/         db.js: Schema und alle SQL-Abfragen (SQLite über sql.js); spricht nur SQL
   agent/        Werkzeuge für KI-Agenten über das Backend (catalog.js), Anmeldung beim Agenten des Browsers (webmcp.js),
@@ -17,7 +17,7 @@ packages/
   store-local/  alles, was nur die lokale Ausprägung braucht: Backend über db.js, lokale Hülle
                 (Speichern, Datei, Browser-Speicher, Bereiche), Persistenz (IndexedDB, File System Access)
   ui/           Oberfläche: app.js (Ablauf, bindet den Editor ein), Mindmap, Druck, PDF-Export (pdf-layout.js setzt im Browser,
-                pdf-export.js baut die Dateien), Auslagern (extract-ui.js, seit 4.2.0), Flaggen, app.css
+                pdf-export.js baut die Dateien), Auslagern (extract-ui.js, seit 4.2.0), Versand (send.js, seit 4.3.0), Flaggen, app.css
 editions/
   local/        edition.json (Skripte, Hilfeabschnitt, Dateien), edition.js, Startskripte: setzt die lokale Version zusammen;
                 agent/nonotes-mcp.cjs: MCP-Server für Agenten auf dem eigenen Rechner (Node), arbeitet auf derselben Datei wie die App

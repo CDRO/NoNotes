@@ -3551,6 +3551,159 @@ async function runExtractUi(browser, part, step) {
   }
 }
 
+// ============================================================
+/* Versand einer Notiz als PDF (v4.3.0): Rechtsklick → Versand → E-Mail (Mail-Entwurf .eml mit PDF) und Teilen (Web Share mit Datei,
+   hier nachgebaut), Banner, wenn der Klick zu lange her ist, Einstellung im Menü «Datenbank», archivierte Notiz, Browser ohne Teilen. */
+async function runSendUi(browser, part, step) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'de-CH', acceptDownloads: true });
+  await ctx.addInitScript(() => {
+    window.__shared = [];
+    window.__shareMode = 'ok';
+    navigator.canShare = d => !!(d && Array.isArray(d.files) && d.files.every(f => f.type === 'application/pdf'));
+    navigator.share = async d => {
+      if (window.__shareMode === 'late') { window.__shareMode = 'ok'; throw new DOMException('Must be handling a user gesture', 'NotAllowedError'); }
+      if (window.__shareMode === 'abort') { window.__shareMode = 'ok'; throw new DOMException('Share canceled', 'AbortError'); }
+      window.__shared.push({ title: d.title, text: d.text, files: await Promise.all(d.files.map(async f => ({ name: f.name, type: f.type, bytes: Array.from(new Uint8Array(await f.arrayBuffer())) }))) });
+    };
+  });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  page.on('dialog', d => d.accept());
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nonotes-send-'));
+  const decodeWords = v => v.replace(/\r\n /g, '').replace(/=\?UTF-8\?B\?([^?]*)\?=/g, (m, b) => Buffer.from(b, 'base64').toString('utf8'));
+  const parseEml = text => {
+    const head = text.split('\r\n\r\n')[0];
+    const boundary = /boundary="([^"]+)"/.exec(head)[1];
+    const parts = text.split(`--${boundary}`).slice(1, -1).map(p => {
+      const [h, ...b] = p.replace(/^\r\n/, '').split('\r\n\r\n');
+      return { head: h, data: Buffer.from(b.join('\r\n\r\n').replace(/\s+/g, ''), 'base64') };
+    });
+    return { head, subject: decodeWords(/Subject: ((?:.|\r\n )*)/.exec(head)[1]), parts };
+  };
+  try {
+    await page.goto(APP_URL);
+    await page.waitForSelector(READY, { timeout: 30000 });
+    const node = title => page.locator(`g.mm-node:has(> text:text-is("${title}"))`);
+    const TITLE = 'Sitzung Vorstand – Budget';
+    await page.click('#mindmap', { position: { x: 30, y: 700 } });
+    await page.keyboard.press('Tab');
+    await page.waitForSelector('#renameInput:not([hidden])');
+    await page.keyboard.type(TITLE);
+    await page.keyboard.press('Enter');
+    await node(TITLE).waitFor();
+    await node(TITLE).dblclick();
+    await page.waitForFunction(() => document.body.classList.contains('editor-open'));
+    await page.click('[data-mode="edit"]');
+    await page.fill('#body', '## Ziele\nWir wollen sparen, siehe [[Budget]].\n- [ ] Offerte einholen @anna >13.11.2026\n\nMehr unter https://example.org');
+    await page.waitForFunction(SAVED, null, { timeout: 15000 });
+    await page.click('#backBtn');
+    await page.waitForSelector('body:not(.editor-open)');
+    const openSend = async title => {
+      await node(title).click({ button: 'right' });
+      await page.click('#contextMenu button:has-text("Versand")');
+      await page.waitForSelector('.context-sub .send-panel');
+      return page.$$eval('.context-sub .send-panel button', l => l.map(b => b.textContent));
+    };
+    assert.deepEqual(await openSend(TITLE), ['E-Mail', 'Teilen'], 'Vorgabe: beide');
+    const items = await page.$$eval('#contextMenu > button', l => l.map(b => b.querySelector('span').textContent));
+    assert.equal(items[items.indexOf('Drucken…') + 1], 'Versand', 'nach «Drucken…»');
+
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('.context-sub button:has-text("E-Mail")')]);
+    assert.equal(dl.suggestedFilename(), 'Sitzung Vorstand - Budget.eml', 'Dateiname ohne Sonderzeichen');
+    const emlFile = path.join(tmp, 'mail.eml');
+    await dl.saveAs(emlFile);
+    const mail = parseEml(fs.readFileSync(emlFile, 'latin1'));
+    assert.match(mail.head, /^X-Unsent: 1\r\n/, 'als Entwurf');
+    assert.equal(mail.subject, TITLE, 'Betreff = Titel');
+    assert.equal(mail.parts[0].data.toString('utf8'), `Anbei die Notiz «${TITLE}» als PDF.`);
+    assert.equal(decodeWords(/filename="((?:[^"]|\r\n )*)"/.exec(mail.parts[1].head)[1]), `${TITLE}.pdf`);
+    const pdf = readPdf(mail.parts[1].data);
+    assert.equal(pdf.pages.length, 1);
+    const words = pdf.pages[0].text;
+    for (const w of ['Sitzung Vorstand – Budget', 'Ziele', 'Wir wollen sparen', 'Budget', 'Offerte einholen', 'example.org']) assert.ok(words.includes(w), `${w} im PDF: ${words}`);
+    assert.ok(pdf.pages[0].annots.some(a => /example\.org/.test(a)), 'Adresse bleibt ein Link');
+    assert.ok(!pdf.pages[0].annots.some(a => /GoTo/.test(a)), 'Verweise auf andere Notizen bleiben Text');
+    assert.match(await page.textContent('#status'), /Mail-Entwurf «Sitzung Vorstand - Budget\.eml» heruntergeladen/);
+    part('Rechtsklick → Versand → E-Mail: Mail-Entwurf mit Betreff, Text und dem PDF der Notiz, Dateiname ohne Sonderzeichen');
+
+    await openSend(TITLE);
+    await page.click('.context-sub button:has-text("Teilen")');
+    await page.waitForFunction(() => window.__shared.length === 1);
+    const shared = (await page.evaluate(() => window.__shared))[0];
+    assert.equal(shared.title, TITLE);
+    assert.equal(shared.text, `Anbei die Notiz «${TITLE}» als PDF.`);
+    assert.deepEqual(shared.files.map(f => [f.name, f.type]), [[`${TITLE}.pdf`, 'application/pdf']]);
+    assert.deepEqual(shared.files[0].bytes.slice(0, 5), [37, 80, 68, 70, 45], '%PDF-');
+    assert.match(await page.textContent('#status'), /geteilt/);
+    await page.evaluate(() => { window.__shareMode = 'abort'; });
+    await openSend(TITLE);
+    await page.click('.context-sub button:has-text("Teilen")');
+    await page.waitForFunction(() => /Teilen abgebrochen/.test(document.querySelector('#status').textContent));
+    await page.evaluate(() => { window.__shareMode = 'late'; });
+    await openSend(TITLE);
+    await page.click('.context-sub button:has-text("Teilen")');
+    await page.waitForSelector('#banner:not([hidden])');
+    assert.match(await page.textContent('#banner'), /Das PDF «Sitzung Vorstand – Budget\.pdf» ist bereit/);
+    await page.click('#banner button:text("Teilen")');
+    await page.waitForFunction(() => window.__shared.length === 2);
+    assert.ok(await page.$eval('#banner', b => b.hidden));
+    part('Teilen: PDF mit Titel und Text ans Teilen-Fenster, Abbrechen, Banner mit «Teilen», wenn der Klick zu lange her ist');
+
+    await page.click('#menuBtn');
+    assert.deepEqual(await page.$eval('#sendSelect', s => [s.value, [...s.options].map(o => o.disabled)]), ['both', [false, false, false]]);
+    await page.selectOption('#sendSelect', 'mail');
+    await page.click('#menuBtn');
+    assert.deepEqual(await openSend(TITLE), ['E-Mail'], 'nur E-Mail');
+    await page.keyboard.press('Escape');
+    await page.click('#menuBtn');
+    await page.selectOption('#sendSelect', 'share');
+    await page.click('#menuBtn');
+    assert.deepEqual(await openSend(TITLE), ['Teilen'], 'nur Teilen');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.evaluate(() => localStorage.getItem('nonotes.sendWays')), 'share', 'je Browser gemerkt');
+    await page.reload();
+    await page.waitForSelector(READY, { timeout: 30000 });
+    assert.equal(await page.$eval('#sendSelect', s => s.value), 'share', 'nach dem Neuladen');
+    await node(TITLE).click({ button: 'right' });
+    await page.click('#contextMenu button:has-text("Archivieren…")');
+    await node(TITLE).waitFor({ state: 'detached' });
+    await page.click('#mapArchiveBtn');
+    assert.deepEqual(await openSend(TITLE), ['Teilen'], 'auch für archivierte Notizen');
+    await page.click('.context-sub button:has-text("Teilen")');
+    await page.waitForFunction(() => window.__shared.length === 1); // nach dem Neuladen zählt die Liste neu
+    part('Einstellung im Menü: beide, nur E-Mail, nur Teilen, je Browser gemerkt; archivierte Notizen');
+
+    const plain = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'de-CH' });
+    const p2 = await plain.newPage();
+    await p2.addInitScript(() => { delete Navigator.prototype.share; delete Navigator.prototype.canShare; });
+    await p2.goto(APP_URL);
+    await p2.waitForSelector(READY, { timeout: 30000 });
+    await p2.evaluate(() => localStorage.setItem('nonotes.sendWays', 'share'));
+    await p2.reload();
+    await p2.waitForSelector(READY, { timeout: 30000 });
+    assert.deepEqual(await p2.$eval('#sendSelect', s => [s.value, [...s.options].map(o => o.disabled)]), ['mail', [true, false, true]], 'ohne Teilen nur E-Mail');
+    assert.match(await p2.$eval('#sendRow', r => r.title), /keine Dateien teilen/);
+    await p2.click('#mindmap', { position: { x: 30, y: 700 } });
+    await p2.keyboard.press('Tab');
+    await p2.waitForSelector('#renameInput:not([hidden])');
+    await p2.keyboard.type('Ohne Teilen');
+    await p2.keyboard.press('Enter');
+    const n2 = p2.locator('g.mm-node:has(> text:text-is("Ohne Teilen"))');
+    await n2.waitFor();
+    await n2.click({ button: 'right' });
+    await p2.click('#contextMenu button:has-text("Versand")');
+    assert.deepEqual(await p2.$$eval('.context-sub .send-panel button', l => l.map(b => b.textContent)), ['E-Mail'], 'auch wenn nur Teilen eingestellt ist');
+    await plain.close();
+    assert.deepEqual(errors, []);
+    part('Browser ohne Teilen (Firefox, Linux): nur E-Mail, Auswahl gesperrt mit Hinweis');
+  } finally {
+    await ctx.close();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 suite('App-Test', [
   { name: null, run: runSmoke }, // druckt seine Gruppen selbst
   { name: 'Bereiche: anlegen, wechseln (Statusleiste, Menü, Alt+1 … 9), Adresse #w=… und ?w=…, Weiterleitung eines Webservers, Datei und Hauptfarbe je Bereich, umbenennen, entfernen, Datei als Bereich, zwei Tabs', run: runAreas },
@@ -3559,5 +3712,6 @@ suite('App-Test', [
   { name: 'Link am Knoten und Auslösen in einen neuen Bereich (v3.2.0): Dialog, Symbol, Editor, Papierkorb, Wechsel und Zurück', run: runNodeLinkUi },
   { name: 'Export als PDF (v4.1.0): Dialog, eine Datei mit Mindmap, Inhalt, Lesezeichen, Links, Bildern und Titelzeilen auf jeder Seite, hell bei dunkler Einstellung, eine Datei pro Notiz als ZIP und in einen Ordner', run: runPdfExport },
   { name: 'In Unterknoten auslagern (v4.2.0): Schaltfläche an der Auswahl, Dialog, Rückgängig, Vorschau mit ganzen Blöcken, Titel aus dem ersten Satz, Verweis folgt dem Umbenennen, Bilder, Liste, Archiv', run: runExtractUi },
+  { name: 'Versand (v4.3.0): Rechtsklick → Versand → E-Mail-Entwurf mit PDF und Teilen, Banner, Einstellung je Browser, archivierte Notiz, Browser ohne Teilen', run: runSendUi },
   { name: 'Backend-Vertrag: Methodenliste, JSON-sichere Rückgaben, Änderungsmeldung, Fehlerkennungen', run: runBackend },
 ], { browser: true });

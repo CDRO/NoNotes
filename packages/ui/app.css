@@ -933,3 +933,6 @@ body:not(.view-tasks) .tasks-view { display: none; }
 .extract-list .extract-title { font-weight: 600; }
 .extract-list small { color: var(--muted); }
 @media print { .extract-btn { display: none !important; } }
+
+/* ---------- Versand: Untermenü (seit 4.3.0) ---------- */
+.context-menu .send-panel { display: flex; flex-direction: column; min-width: 140px; }

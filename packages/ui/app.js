@@ -18,6 +18,7 @@
   const Printer = window.NoNotesPrint;
   const PdfExport = window.NoNotesPdfExport;
   const ExtractUI = window.NoNotesExtractUI;
+  const SendUI = window.NoNotesSend;
   const T = window.NoNotesTasks;
   const Dates = window.NoNotesDates;
   const Cal = window.NoNotesCalendar;
@@ -104,7 +105,7 @@
     qaScopeFiltered: $('#qaScopeFiltered'), qaLines: $('#qaLines'), qSort: $('#qSort'),
     helpDialog: $('#helpDialog'), helpTabs: $('#helpTabs'), helpStorageStatus: $('#helpStorageStatus'),
     storageHelpBtn: $('#storageHelpBtn'), menuHelpBtn: $('#menuHelpBtn'), langMenu: $('#langMenu'), langBtn: $('#langBtn'), langList: $('#langList'), accentSwatches: $('#accentSwatches'),
-    themeRow: $('#themeRow'), themeSelect: $('#themeSelect'), pluginMenu: $('#pluginMenu'), pluginsBtn: $('#pluginsBtn'),
+    themeRow: $('#themeRow'), themeSelect: $('#themeSelect'), sendRow: $('#sendRow'), sendSelect: $('#sendSelect'), pluginMenu: $('#pluginMenu'), pluginsBtn: $('#pluginsBtn'),
     pluginsDialog: $('#pluginsDialog'), pluginList: $('#pluginList'), pluginFile: $('#pluginFile'), pluginLoadBtn: $('#pluginLoadBtn'),
     historyBtn: $('#historyBtn'), historyDialog: $('#historyDialog'), historyLead: $('#historyLead'), historyList: $('#historyList'),
     historyMeta: $('#historyMeta'), historyText: $('#historyText'), historyDiff: $('#historyDiff'), historyLegend: $('#historyLegend'),
@@ -913,6 +914,23 @@
     renderThemeOptions();
     el.themeSelect.addEventListener('change', () => chooseTheme(el.themeSelect.value));
   }
+
+  // ---------- Versand einer Notiz als PDF: E-Mail-Entwurf und Teilen (packages/ui/send.js, seit 4.3.0) ----------
+
+  let sender = null;
+  function setupSend() {
+    sender = SendUI.create({
+      backend: () => B,
+      pdfOptions: id => ({ version: window.NONOTES_VERSION || 'dev', attachmentUrl: aid => attachmentUrl(aid), tableFormat: tableFormatFor(id) }),
+      download: (bytes, name, type) => Store.download(bytes, name, type),
+      status: (text, kind) => setStatus(text, kind || saveState()),
+      showBanner, hideBannerIf, errorText,
+    });
+    sender.setupSelect(el.sendSelect, el.sendRow);
+  }
+
+  /** Eintrag «Versand» im Kontextmenü eines Knotens: Untermenü mit E-Mail und Teilen (je nach Einstellung). */
+  const sendItem = id => ({ label: t('Versand'), title: t('Die Notiz als PDF per E-Mail oder über das Teilen-Fenster verschicken'), panel: () => sender.panel(id, hideContextMenu) });
 
   // ---------- Verlauf ----------
 
@@ -4685,7 +4703,7 @@
         { write: true, label: t('Zurückholen'), action: () => unarchiveById(id) },
       ];
       if (info.childCount) archivedItems.push({ label: info.collapsed ? t('Ausklappen') : t('Einklappen'), action: () => toggleCollapse(id) });
-      archivedItems.push({ label: t('Als Bild kopieren'), key: 'Ctrl+C', action: () => copyMapImage([id]) });
+      archivedItems.push({ label: t('Als Bild kopieren'), key: 'Ctrl+C', action: () => copyMapImage([id]) }, sendItem(id));
       archivedItems.push('sep', { write: true, label: t('Löschen'), key: t('Entf'), danger: true, action: () => deleteNoteById(id) });
       showContextMenu(archivedItems, x, y);
       return;
@@ -4710,6 +4728,7 @@
       { label: t('Link kopieren'), action: () => copyNoteLink(id) },
       { label: t('Als Bild kopieren'), key: 'Ctrl+C', title: t('Den Weg von der Wurzel und diesen Ast als Bild in die Zwischenablage kopieren'), action: () => copyMapImage(state.multi.has(id) ? [...state.multi] : [id]) },
       { label: t('Drucken…'), action: () => openPrintDialog({ noteId: id, scope: 'subtree' }) },
+      sendItem(id),
       { write: true, label: t('Archivieren…'), action: () => archiveNotes([id]) },
       { write: true, label: t('Nach oben'), key: 'Alt+↑', action: async () => { state.mapSelection = id; await moveSelected(-1); } },
       { write: true, label: t('Nach unten'), key: 'Alt+↓', action: async () => { state.mapSelection = id; await moveSelected(1); } },
@@ -4842,6 +4861,7 @@
     setupLanguage();
     setupAccent();
     setupTheme();
+    setupSend();
     setupPluginHelp();
     el.pluginsBtn.addEventListener('click', openPluginsDialog);
     el.templatesBtn.addEventListener('click', openTemplatesDialog);
