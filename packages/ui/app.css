@@ -936,3 +936,18 @@ body:not(.view-tasks) .tasks-view { display: none; }
 
 /* ---------- Versand: Untermenü (seit 4.3.0) ---------- */
 .context-menu .send-panel { display: flex; flex-direction: column; min-width: 140px; }
+
+/* ---------- Stoppschirm, Sicherungen, Halt bei Massenverlust (seit 4.4.0) ---------- */
+.stop-screen { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 24px 16px; background: var(--bg); overflow: auto; }
+.stop-screen[hidden] { display: none; }
+.stop-card { max-width: 640px; width: 100%; background: var(--panel); border: 1px solid var(--border); border-top: 4px solid var(--danger); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px 22px; }
+.stop-card h2 { margin: 0 0 10px; font-size: 20px; }
+.stop-lines p { margin: 0 0 8px; line-height: 1.5; }
+.stop-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.banner.banner-danger { background: color-mix(in srgb, var(--danger) 14%, var(--panel)); color: var(--danger); border-bottom-color: color-mix(in srgb, var(--danger) 45%, var(--border)); font-weight: 600; }
+.backups-list { list-style: none; margin: 8px 0 4px; padding: 0; display: grid; gap: 6px; }
+.backups-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
+.backups-list .b-when { font-weight: 600; }
+.backups-list .b-why, .backups-list .b-size { color: var(--muted); font-size: 13px; }
+.backups-list .b-actions { margin-left: auto; display: flex; gap: 6px; }
+.backups-list .b-empty { color: var(--muted); border-style: dashed; }

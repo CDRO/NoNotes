@@ -64,6 +64,30 @@ lädt sie den neuen Stand still. Mit ungesicherten Änderungen führt sie beides
 derselben Stelle geändert wurde oder die eigene Änderung den Baum, Bilder, Papierkorb oder Archiv betrifft, fragt sie: **Datei laden** verwirft
 die eigenen Änderungen, **Meine Fassung behalten** überschreibt die Datei. Bis zur Entscheidung wird nichts geschrieben.
 
+**Sicher speichern** (seit 4.4.0). Die App macht aus «lässt sich nicht öffnen» nie einen leeren Start, der danach die echten Daten
+überschreibt:
+
+- **Stoppschirm statt leer:** Sind Daten da, die sich nicht öffnen lassen, sperrt ein Stoppschirm die App, und es wird nichts
+  gespeichert. Er nennt den Grund: Daten einer **neueren NoNotes-Version** (mit beiden Schema-Nummern und der Version der App),
+  **beschädigte** Daten (`PRAGMA quick_check`), **keine NoNotes-Datenbank**, **nicht lesbar** (etwa ein Netzlaufwerk, das gerade fehlt)
+  oder eine gemerkte Datei **ohne Freigabe** und ohne Browser-Kopie. Auswege: «Erneut versuchen», einen anderen Bereich öffnen, «Daten
+  unverändert herunterladen» und die Sicherungen (zum Herunterladen). Leer beginnt die App nur, wenn es wirklich keine Daten gibt.
+  Wird die Datei während der Arbeit von einer neueren Version überschrieben, kommt derselbe Stoppschirm; die eigenen ungespeicherten
+  Änderungen liegen dann in den Sicherungen.
+- **Schema im Dateikopf:** Jede gespeicherte Datenbank trägt ihre Schema-Nummer auch als `PRAGMA user_version` (Bytes 60–63 des
+  SQLite-Kopfs), die App die ihre als `window.NONOTES_SCHEMA` in `version.js`. So kann ein Skript vor dem Einspielen einer älteren
+  App-Version warnen.
+- **Vor jedem Schreiben vergleichen:** Die App liest die Datei zuerst und vergleicht sie mit dem Stand, den sie geladen oder zuletzt
+  gespeichert hat (erst Grösse und Zeitstempel, dann den Inhalt). Hat sich die Datei geändert, führt sie zusammen oder fragt wie oben.
+  Lässt sich die Datei nicht lesen, schreibt sie nichts, weder in die Datei noch in die Browser-Kopie, und sagt es in der Statuszeile.
+- **Halt bei Massenverlust:** Wären nach dem Speichern von mindestens 3 Notizen weniger als ein Viertel übrig (Papierkorb und Archiv
+  zählen mit), hält die App das Speichern mit einer roten Leiste an: **Gespeicherten Stand laden** (Vorgabe) oder **Trotzdem
+  speichern**. So lässt sich auch das Leeren des Papierkorbs bewusst bestätigen.
+- **Sicherungen:** Im Browser-Speicher liegen je Bereich die letzten 5 Stände, ohne Doppel: vor dem ersten Überschreiben nach dem
+  Öffnen, danach alle 30 Minuten, vor Import, Öffnen, Wiederherstellen, Zusammenführen und dem Überschreiben einer fremden Fassung,
+  sowie die ungespeicherten Änderungen vor einem Stopp. `Datenbank → Sicherungen…` listet sie mit Zeit, Anlass und Zahl der Notizen;
+  jede lässt sich herunterladen oder (nach Rückfrage) wiederherstellen. Wiederherstellen sichert vorher den aktuellen Stand.
+
 **Mehrere Bereiche** (seit 2.3.0). Für getrennte Themen, etwa Arbeit und Privat, legst du Bereiche an: jeder ist eine eigene
 Datenbank mit eigener Browser-Kopie, eigener Datei und eigener Hauptfarbe. Bearbeitet wird immer der aktive Bereich; Listen, Fragen,
 Entscheide, Aufgaben und Suche zeigen nur ihn.
@@ -96,6 +120,7 @@ Weitere Funktionen im Menü **Datenbank**:
 
 - **Datenbankdatei öffnen…**: eine bestehende `.sqlite` von NoNotes in den aktiven Bereich laden und ab dann darin arbeiten.
 - **Kopie herunterladen**: Stand als `NoNotes-JJJJ-MM-TT.sqlite` in den Download-Ordner legen.
+- **Sicherungen…** (seit 4.4.0): die letzten 5 Stände des Bereichs herunterladen oder wiederherstellen.
 - **Aus Datei importieren…**: eine solche Kopie wieder einlesen (ersetzt den aktuellen Stand).
 - **Dateiverbindung trennen**: nur noch im Browser-Speicher arbeiten.
 

@@ -3492,7 +3492,7 @@ async function runDatesUi(browser, part, step) {
     const d = NoNotesDB.open(SQL, null);
     const id = NoNotesDB.createNote(d, null);
     d.run("UPDATE notes SET title = 'Aus 2.12', body = '- [ ] Offerte @anna @30.10.2030 @6.11.2030\n? Frage? @1.11.2030' WHERE id = ?", [id]);
-    d.exec("ALTER TABLE tasks DROP COLUMN reminders; ALTER TABLE questions DROP COLUMN reminders; ALTER TABLE notes DROP COLUMN side; UPDATE meta SET value = '16' WHERE key = 'schema_version'");
+    d.exec("ALTER TABLE tasks DROP COLUMN reminders; ALTER TABLE questions DROP COLUMN reminders; ALTER TABLE notes DROP COLUMN side; UPDATE meta SET value = '16' WHERE key = 'schema_version'; PRAGMA user_version = 0");
     await NoNotesStorage.browserStore.saveDb(d.export());
   });
   await page.reload();

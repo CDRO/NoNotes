@@ -43,6 +43,7 @@
           <button type="button" id="disconnectBtn" role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 9.5 3.8 12.2a2 2 0 0 0 2.8 2.8l2.7-2.7 M9.5 6.5l2.7-2.7a2 2 0 0 0-2.8-2.8L6.7 3.7 M2.5 2.5l11 11"/></svg>Dateiverbindung trennen</button>
           <div class="sep" role="separator"></div>
           <button type="button" id="downloadBtn" role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8 M5 7l3 3 3-3 M2.5 12.5v1h11v-1"/></svg>Kopie herunterladen (.sqlite)</button>
+          <button type="button" id="backupsBtn" role="menuitem" hidden><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10v9H3z M3 6.5h10 M6.5 9h3"/></svg>Sicherungen…</button>
           <button type="button" id="importBtn" data-write role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 10V2 M5 5l3-3 3 3 M2.5 12.5v1h11v-1"/></svg>Aus Datei importieren…</button>
           <div class="sep" role="separator"></div>
           <button type="button" id="exportBtn" role="menuitem"><svg class="mi" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5l3 3v10H4z M9 1.5v3h3 M6 8h4 M6 10.5h4"/></svg>Als Markdown exportieren…</button>
@@ -566,6 +567,7 @@ Firmenname wie im Handelsregister, **ohne** Rechtsform.
             <tr><td>Vorschläge für Verweise</td><td><code>[[</code> tippen oder der Knopf <code>[[ ]]</code></td><td>Eine Liste mit den Notizen des Bereichs und ihrer Anzahl; Tippen schränkt sie ein. <kbd>↑</kbd> und <kbd>↓</kbd> wählen (auch über die ersten zehn hinaus), <kbd>Enter</kbd> oder <kbd>Tab</kbd> übernehmen, <kbd>Umschalt+Enter</kbd> als Querverweis, <kbd>Esc</kbd> schliesst. Gleichnamige Notizen zeigen ihren Eltern-Node, mit gedrückter <kbd>Strg</kbd>-Taste zeigen alle ihren Pfad. Gibt es den Titel mehrfach, kommt die Nummer dazu: <code>[[Protokoll#42]]</code> meint genau diese Notiz, auch nach Umbenennen oder Verschieben; die Vorschau zeigt nur «Protokoll».</td></tr>
             <tr><td>Link auf eine Notiz</td><td><em>Notiz → Link kopieren</em> (oder Rechtsklick in der Mindmap), die Adresse irgendwo einfügen</td><td>Die Adresse nennt Nummer und Titel der Notiz und öffnet sie direkt, auch als Lesezeichen. In einer Notiz zeigt die Vorschau statt der Adresse den aktuellen Titel; ein Klick öffnet die Notiz in der App. Zurück und Vor im Browser (auch mit den Maustasten) gehen von Notiz zu Notiz und zwischen den Ansichten.</td></tr>
             <tr><td>Querverweis</td><td><code>[[Titel einer Notiz*]]</code> (Stern am Ende)</td><td>Wie ein Verweis, dazu zieht die Mindmap eine gestrichelte Linie zu dieser Notiz, quer zur Hierarchie. Der Knopf «Verweise ausblenden» in der Mindmap-Leiste blendet alle Linien aus und wieder ein.</td></tr>
+            <tr><td>Sicherungen</td><td><em>Datenbank → Sicherungen…</em></td><td>Die letzten 5 Stände dieses Bereichs im Browser-Speicher: vor dem ersten Überschreiben nach dem Öffnen, alle 30 Minuten und vor Import, Öffnen, Wiederherstellen und Zusammenführen. Jeder lässt sich herunterladen oder wiederherstellen.</td></tr>
             <tr><td>Versand per E-Mail oder Teilen</td><td>Rechtsklick auf einen Knoten → <em>Versand</em> → <em>E-Mail</em> oder <em>Teilen</em></td><td><em>E-Mail</em> lädt einen Mail-Entwurf (.eml) mit dem Titel als Betreff und der Notiz als PDF herunter; ein Klick darauf öffnet ihn als neues Mail (klassisches Outlook, Thunderbird). <em>Teilen</em> gibt das PDF an das Teilen-Fenster des Systems, dort wählst du zum Beispiel das Mail-Programm. Welche der beiden im Menü stehen, stellst du unter <em>Datenbank → Versand</em> ein.</td></tr>
             <tr><td>In Unterknoten auslagern</td><td>Text auswählen, dann die runde Schaltfläche mit der Verzweigung am Ende der Auswahl oder <kbd>Strg+Alt+U</kbd></td><td>Die Auswahl wird zu einer Unternotiz, an ihrer Stelle steht ein Verweis darauf. Beginnt sie mit einer Überschrift, wird diese der Titel; tiefere Überschriften bleiben im Text. Mehrere Überschriften der obersten Ebene geben je einen Unterknoten, ein Dialog fragt, welche. Ohne Überschrift ist der erste Satz der Titel (höchstens 80 Zeichen); beim ersten Öffnen ist er markiert. In der Vorschau zählen ganze Absätze und Listenpunkte. Bilder gehen mit, «Rückgängig» oben holt den Text zurück.</td></tr>
             <tr><td>Bild aus der Datenbank</td><td><code>![Name](att:ID)</code>, entsteht beim Einfügen über den Bild-Knopf, per <code>Ctrl+V</code> oder Ablegen</td><td>Das Bild liegt in der SQLite-Datei und wird mitexportiert.</td></tr>
@@ -659,6 +661,26 @@ Firmenname wie im Handelsregister, **ohne** Rechtsform.
   </dialog>
 
   <div id="printArea" class="print-area" aria-hidden="true"></div>
+
+  <div id="stopScreen" class="stop-screen" role="alertdialog" aria-modal="true" aria-labelledby="stopTitle" hidden>
+    <div class="stop-card">
+      <h2 id="stopTitle"></h2>
+      <div id="stopLines" class="stop-lines"></div>
+      <div id="stopActions" class="stop-actions"></div>
+    </div>
+  </div>
+
+  <dialog id="backupsDialog" class="dialog" aria-labelledby="backupsTitle">
+    <form method="dialog">
+      <h2 id="backupsTitle">Sicherungen</h2>
+      <p class="dialog-lead">Im Browser-Speicher liegen für diesen Bereich bis zu fünf frühere Stände: vom ersten Speichern nach dem Öffnen, danach alle 30 Minuten, und vor jedem Import, Wiederherstellen, Zusammenführen oder Überschreiben eines fremden Stands.</p>
+      <ul id="backupsList" class="backups-list"></ul>
+      <p class="hint" id="backupsHint" aria-live="polite"></p>
+      <div class="row">
+        <button type="submit" value="close" class="ghost">Schliessen</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="exportDialog" class="dialog" aria-labelledby="exportTitle">
     <form method="dialog" id="exportForm">

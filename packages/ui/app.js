@@ -5,6 +5,7 @@
   const I18n = window.NoNotesI18n;
   const t = I18n.t;
   const tn = I18n.tn;
+  const N_ = I18n.N_;
   const Backend = window.NoNotesBackend;
   const Palette = window.NoNotesPalette;
   const Plugins = window.NoNotesPlugins;
@@ -74,6 +75,8 @@
   const $ = sel => document.querySelector(sel);
   const el = {
     app: $('#app'), boot: $('#boot'), version: $('#version'), status: $('#status'),
+    stopScreen: $('#stopScreen'), stopTitle: $('#stopTitle'), stopLines: $('#stopLines'), stopActions: $('#stopActions'),
+    backupsBtn: $('#backupsBtn'), backupsDialog: $('#backupsDialog'), backupsList: $('#backupsList'), backupsHint: $('#backupsHint'),
     storageInfo: $('#storageInfo'), banner: $('#banner'),
     menuBtn: $('#menuBtn'), menu: $('#menu'), menuHint: $('#menuHint'), noteMenuBtn: $('#noteMenuBtn'), noteMenu: $('#noteMenu'),
     statusbar: $('#statusbar'), toast: $('#toast'), toastText: $('#toastText'), toastCloseBtn: $('#toastCloseBtn'),
@@ -278,8 +281,10 @@
 
   function isEditorOpen() { return document.body.classList.contains('editor-open'); }
 
-  function showBanner(text, actions) {
+  /** opts.danger: rot (Halt bei Massenverlust, seit 4.4.0). */
+  function showBanner(text, actions, opts) {
     el.banner.replaceChildren();
+    el.banner.classList.toggle('banner-danger', !!(opts && opts.danger));
     const span = document.createElement('span');
     span.textContent = text;
     el.banner.appendChild(span);
@@ -301,6 +306,7 @@
   function hideBanner() {
     el.banner.hidden = true;
     el.banner.replaceChildren();
+    el.banner.classList.remove('banner-danger');
     syncBars();
   }
 
@@ -385,9 +391,108 @@
       renderAll: () => renderAll(),
       onDatabaseReplaced,
       confirmMigration,
+      showStop, hideStop,
+      openBackups: opts => openBackups(opts),
       // Adresse nachführen (v2.7.0); false, solange die Navigation noch nicht läuft (dann setzt die Hülle die Adresse selbst)
       replaceNav: () => { if (!state.navReady) return false; replaceNav(); return true; },
     };
+  }
+
+  // ---------- Stoppschirm und Sicherungen (seit 4.4.0) ----------
+  // Lassen sich die Daten eines Bereichs nicht öffnen (neuere Version, beschädigt, fremd, nicht lesbar, ohne Freigabe), zeigt die
+  // Hülle den Stoppschirm: die Seite dahinter ist gesperrt (inert), gespeichert wird nichts, bis die Person wählt.
+
+  /** stop: { kind, title, lines, actions: [{ label, primary, action }] } */
+  function showStop(stop) {
+    el.stopScreen.dataset.kind = stop.kind;
+    el.stopTitle.textContent = stop.title;
+    el.stopLines.replaceChildren(...stop.lines.map(line => { const p = document.createElement('p'); p.textContent = line; return p; }));
+    el.stopActions.replaceChildren(...stop.actions.map(a => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = a.label;
+      if (a.primary) b.className = 'primary';
+      b.addEventListener('click', () => a.action());
+      return b;
+    }));
+    el.app.inert = true;
+    el.stopScreen.hidden = false;
+    const first = el.stopActions.querySelector('button.primary') || el.stopActions.querySelector('button');
+    if (first) first.focus();
+  }
+
+  function hideStop() {
+    el.stopScreen.hidden = true;
+    el.app.inert = false;
+  }
+
+  const BACKUP_REASONS = {
+    opened: N_('vom ersten Speichern nach dem Öffnen'),
+    periodic: N_('regelmässig (alle 30 Minuten)'),
+    import: N_('vor einem Import'),
+    open: N_('vor dem Öffnen einer anderen Datei'),
+    restore: N_('vor dem Wiederherstellen'),
+    merge: N_('vor dem Zusammenführen'),
+    external: N_('vor dem Übernehmen eines Stands von aussen'),
+    overwritten: N_('ein Stand von aussen, der überschrieben wurde'),
+    unsaved: N_('ungespeicherte Änderungen'),
+    damaged: N_('beschädigte Browser-Kopie'),
+  };
+
+  /** Dialog «Sicherungen»: Liste der Stände des Bereichs mit «Herunterladen» und (ausser auf dem Stoppschirm) «Wiederherstellen». */
+  async function openBackups(opts) {
+    closeMenu();
+    const api = shell && shell.backups;
+    if (!api) return;
+    const canRestore = !(opts && opts.restore === false) && !readOnly();
+    el.backupsHint.textContent = '';
+    const list = await api.list();
+    const fmt = new Intl.DateTimeFormat(I18n.locale(), { dateStyle: 'medium', timeStyle: 'short' });
+    el.backupsList.replaceChildren(...(list.length ? list.map(b => {
+      const li = document.createElement('li');
+      li.dataset.id = b.id;
+      const when = document.createElement('span');
+      when.className = 'b-when';
+      when.textContent = fmt.format(new Date(b.at));
+      const why = document.createElement('span');
+      why.className = 'b-why';
+      why.textContent = BACKUP_REASONS[b.reason] ? t(BACKUP_REASONS[b.reason]) : b.reason; // i18n-dynamic
+      const size = document.createElement('span');
+      size.className = 'b-size';
+      size.textContent = (b.notes != null ? tn('{n} Notiz', '{n} Notizen', b.notes) + ' · ' : '') + `${Math.max(1, Math.round(b.size / 1024))} KB`;
+      const actions = document.createElement('span');
+      actions.className = 'b-actions';
+      const dl = document.createElement('button');
+      dl.type = 'button';
+      dl.className = 'b-download';
+      dl.textContent = t('Herunterladen');
+      dl.addEventListener('click', async () => {
+        try { await api.download(b.id); } catch (e) { el.backupsHint.textContent = errorText(e); }
+      });
+      actions.appendChild(dl);
+      if (canRestore) {
+        const rs = document.createElement('button');
+        rs.type = 'button';
+        rs.className = 'b-restore';
+        rs.textContent = t('Wiederherstellen');
+        rs.addEventListener('click', async () => {
+          if (!confirm(t('Den Stand vom {zeit} wiederherstellen? Der jetzige Stand wird vorher selbst gesichert.', { zeit: when.textContent }))) return;
+          try {
+            if (!(await ensureSaved())) return;
+            await api.restore(b.id);
+            el.backupsDialog.close();
+            setStatus(t('Stand vom {zeit} wiederhergestellt', { zeit: when.textContent }), saveState());
+          } catch (e) {
+            console.error(e);
+            el.backupsHint.textContent = t('Wiederherstellen fehlgeschlagen: {fehler}', { fehler: errorText(e) });
+          }
+        });
+        actions.appendChild(rs);
+      }
+      li.append(when, why, size, actions);
+      return li;
+    }) : [Object.assign(document.createElement('li'), { className: 'b-empty', textContent: t('Noch keine Sicherungen in diesem Bereich.') })]));
+    if (typeof el.backupsDialog.showModal === 'function') el.backupsDialog.showModal(); else el.backupsDialog.setAttribute('open', '');
   }
 
   async function boot() {
@@ -401,6 +506,7 @@
     await Plugins.loadAll(state.pluginFiles); // feste Liste und die hier eingeschalteten Dateien aus plugins/, bevor etwas gezeichnet wird (Designs)
     try { applyTheme(localStorage.getItem(THEME_KEY) || ''); } catch (e) { /* ohne Zwischenspeicher: Standard */ }
     B = await shell.start();
+    el.backupsBtn.hidden = !(shell.backups && shell.backups.supported); // nur, wo die Hülle Sicherungen führt (lokal, mit IndexedDB)
     if (readOnly()) { B = readOnlyBackend(B); document.body.classList.add('readonly-mode'); }
     if (B.capabilities && B.capabilities.files === false) { // Backend ohne Dateien auf dem Gerät: kein Datei-Menü
       for (const b of [el.createFileBtn, el.openFileBtn, el.disconnectBtn]) { b.hidden = true; b.disabled = true; }
@@ -4183,7 +4289,7 @@
 
   function anyDialogOpen() {
     return [el.exportDialog, el.pdfDialog, el.printDialog, el.qaPrintDialog, el.taskPrintDialog, el.helpDialog, el.calDialog, el.pluginsDialog, el.historyDialog, el.conflictDialog,
-      el.templateSaveDialog, el.templatePickDialog, el.templatesDialog, el.nodeLinkDialog, el.detachDialog, el.extractDialog].some(d => d.open);
+      el.templateSaveDialog, el.templatePickDialog, el.templatesDialog, el.nodeLinkDialog, el.detachDialog, el.extractDialog, el.backupsDialog].some(d => d.open);
   }
 
   function onQuestionSearchInput() {
@@ -5044,6 +5150,7 @@
     el.exportDirBtn.addEventListener('click', () => runExport('dir'));
     el.exportZipBtn.addEventListener('click', () => runExport('zip'));
     el.pdfExportBtn.addEventListener('click', openPdfDialog);
+    el.backupsBtn.addEventListener('click', () => { openBackups({}).catch(e => setStatus(errorText(e), 'error')); });
     el.pdfForm.addEventListener('change', updatePdfDialog);
     el.pdfDownloadBtn.addEventListener('click', () => runPdfExport('download'));
     el.pdfDirBtn.addEventListener('click', () => runPdfExport('dir'));

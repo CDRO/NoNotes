@@ -241,6 +241,48 @@
     setMeta(db, 'index_rules', INDEX_RULES);
   }
 
+  /** Schema-Version einer offenen Datenbank: das Grössere aus meta.schema_version und PRAGMA user_version (seit 4.4.0 schreibt jedes
+   *  Speichern beides; user_version steht in den Bytes 60–63 des Dateikopfs, wo auch Werkzeuge ausserhalb sie lesen). */
+  function schemaOf(db) {
+    const meta = hasTable(db, 'meta') ? Number(getMeta(db, 'schema_version') || 1) : 1;
+    let user = 0;
+    try { user = Number(db.exec('PRAGMA user_version')[0].values[0][0]) || 0; } catch (e) { user = 0; }
+    return Math.max(meta, user);
+  }
+
+  /** Prüft Bytes, ohne etwas zu ändern (seit 4.4.0): null, wenn sie sich öffnen lassen (auch leer); sonst ein Befund
+   *  { code: 'SCHEMA_TOO_NEW', params: { version, unterstuetzt } } (von einer neueren NoNotes-Version), 'NOT_NONOTES_FILE' (keine
+   *  NoNotes-Datenbank; params.sqlite: ob es überhaupt SQLite ist) oder 'DAMAGED' (beschädigt oder unvollständig; params.message). */
+  function check(SQL, bytes) {
+    if (!bytes || !bytes.length) return null;
+    const head = 'SQLite format 3\u0000';
+    let sqlite = bytes.length >= 100;
+    for (let i = 0; sqlite && i < head.length; i++) if (bytes[i] !== head.charCodeAt(i)) sqlite = false;
+    if (!sqlite) return { code: 'NOT_NONOTES_FILE', params: { sqlite: false } };
+    let db;
+    try {
+      db = new SQL.Database(bytes);
+      const ok = db.exec('PRAGMA quick_check');
+      const verdict = ok.length ? ok[0].values.map(v => String(v[0])) : ['ok'];
+      if (verdict.length !== 1 || verdict[0] !== 'ok') return { code: 'DAMAGED', params: { message: verdict.slice(0, 3).join('; ') } };
+      const tables = selectAll(db, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'");
+      if (!tables.length) return null;
+      if (!tables.some(x => x.name === 'notes')) return { code: 'NOT_NONOTES_FILE', params: { sqlite: true } };
+      const version = schemaOf(db);
+      if (version > SCHEMA_VERSION) return { code: 'SCHEMA_TOO_NEW', params: { version, unterstuetzt: SCHEMA_VERSION } };
+      return null;
+    } catch (e) {
+      return { code: 'DAMAGED', params: { message: e && e.message ? e.message : String(e) } };
+    } finally {
+      if (db) { try { db.close(); } catch (e) { /* schon zu */ } }
+    }
+  }
+
+  /** Zahl der Notizen insgesamt, auch im Papierkorb und im Archiv (für den Halt bei Massenverlust, seit 4.4.0). */
+  function countRecords(db) {
+    return Number(scalar(db, 'SELECT COUNT(*) FROM notes')) || 0;
+  }
+
   /** Öffnet eine Datenbank aus Bytes (oder legt eine neue an) und bringt sie auf das aktuelle Schema.
    *  Fremde SQLite-Dateien (Tabellen vorhanden, aber keine "notes") werden abgelehnt.
    *  info (wahlweise, wird gefüllt): upgradedFrom (die Version davor, wenn angeglichen wurde), rewritten (Notizen, deren
@@ -255,7 +297,7 @@
       } else if (!tables.some(t => t.name === 'notes')) {
         throw fail('NOT_NONOTES_FILE', 'Diese SQLite-Datei stammt nicht von NoNotes (keine Tabelle "notes").');
       } else {
-        const version = hasTable(db, 'meta') ? Number(getMeta(db, 'schema_version') || 1) : 1;
+        const version = schemaOf(db);
         if (version > SCHEMA_VERSION) {
           throw fail('SCHEMA_TOO_NEW', `Diese Datenbank hat Schema-Version ${version}, diese App versteht nur bis ${SCHEMA_VERSION}. Bitte App aktualisieren.`, { version, unterstuetzt: SCHEMA_VERSION });
         }
@@ -1372,6 +1414,7 @@
 
   /** Datenbank als Bytes (echte SQLite-Datei). */
   function exportBytes(db) {
+    db.run(`PRAGMA user_version = ${SCHEMA_VERSION}`); // seit 4.4.0: das Schema auch im Dateikopf (Bytes 60–63)
     const bytes = db.export();
     registerFunctions(db); // export() hat sie entfernt
     return bytes;
@@ -1387,6 +1430,8 @@
     configure,
     open,
     inspect,
+    check,
+    countRecords,
     listNotes,
     getTree,
     getNote,

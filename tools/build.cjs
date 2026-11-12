@@ -196,7 +196,9 @@ function main() {
     else dest = 'js/' + path.basename(abs);
     if (path.basename(abs) === 'version.js') {
       fs.mkdirSync(path.join(out, 'js'), { recursive: true });
-      fs.writeFileSync(path.join(out, 'js', 'version.js'), `// Von tools/build.cjs gesetzt.\nwindow.NONOTES_VERSION = '${args.version}';\n`);
+      // seit 4.4.0 auch das Schema der Datenbank: ein Werkzeug ausserhalb kann vor dem Einspielen einer älteren App warnen
+      const schema = (/const SCHEMA_VERSION = (\d+)/.exec(fs.readFileSync(path.join(ROOT, 'packages', 'data', 'db.js'), 'utf8')) || [])[1];
+      fs.writeFileSync(path.join(out, 'js', 'version.js'), `// Von tools/build.cjs gesetzt.\nwindow.NONOTES_VERSION = '${args.version}';\nwindow.NONOTES_SCHEMA = ${Number(schema) || 0};\n`);
       copied.set('js/version.js', abs);
     } else {
       place(abs, dest);

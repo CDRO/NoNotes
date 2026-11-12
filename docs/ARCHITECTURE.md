@@ -105,6 +105,27 @@ den ersten gibt, wird kein Verzeichnis geschrieben, und alles verhält sich wie 
 - **Agenten:** `NoNotesAgent.multi()` in `packages/agent/catalog.js` macht aus mehreren Katalogen einen mit `list_workspaces` und dem
   Parameter `workspace`; das Programm `agent/nonotes-mcp.cjs` nutzt es für mehrere Dateien. Kennungen bildet `NoNotesAgent.slug()`
   gleich wie die App.
+## Sicher laden und speichern (v4.4.0)
+
+`local-shell.js` liest einen Bereich mit `readArea` ohne etwas zu ändern: die Datei, wenn sie freigegeben ist, sonst die Browser-Kopie.
+Jede Quelle geht zuerst durch `NoNotesDB.check(SQL, bytes)` (SQLite-Kopf, `PRAGMA quick_check`, Tabelle `notes`, Schema aus dem
+grösseren Wert von `meta.schema_version` und `PRAGMA user_version`). Ein Befund wird zum Stopp `{ kind: tooNew | damaged | foreign |
+read | permission, source, name, bytes }`; `openArea` zeigt dann über `host.showStop` den Stoppschirm (`#app` ist `inert`, `s.blocked`
+verhindert jedes Speichern) und liest nach der Wahl neu. Leer beginnt ein Bereich nur ohne Daten. Ändert sich die Datei oder die
+Browser-Kopie während der Sitzung in etwas Unbrauchbares, sichert `stopNow` zuerst die ungespeicherten Änderungen und stoppt dann.
+
+`persistNow` schreibt in dieser Reihenfolge: Halt bei Massenverlust prüfen (`massLoss`: gespeichert ≥ 3, neu < ein Viertel; dann
+`holdSave` mit roter Leiste, `s.held`), die Datei lesen und vergleichen (`foreignFileBytes`: Zeitstempel und Grösse, dann FNV-Hash; eine
+nie gesehene Datei gilt als geändert, ausser leer oder gleich; ein Lesefehler heisst: nichts schreiben), die rollende Sicherung
+(`rollingBackup`), die Browser-Kopie, noch einmal die Datei vergleichen und erst dann die Datei schreiben. `DB.exportBytes` setzt dabei
+`PRAGMA user_version`; `tools/build.cjs` schreibt das Schema als `window.NONOTES_SCHEMA` in `version.js`.
+
+Sicherungen liegen in IndexedDB unter `backups:<bereich>` (Liste `[{ id, at, reason, size, notes, hash }]`, die neueste zuerst) und
+`backup:<bereich>:<id>` (die Bytes); `storage.js` hält höchstens 5, verwirft gleiche Inhalte (Hash und Grösse) und legt sie nacheinander
+an. Anlässe: `opened` (vor dem ersten Überschreiben nach dem Öffnen), `periodic` (alle 30 Minuten), `import`, `open`, `restore`, `merge`,
+`external`, `overwritten`, `unsaved`, `damaged` (eine beschädigte Browser-Kopie, während die Datei öffnet). Die Hülle bietet sie als `shell.backups` (`list`, `download`, `restore`), die Oberfläche zeigt sie
+im Dialog `#backupsDialog`.
+
 ## Asynchron arbeiten
 
 Weil jedes Backend im Netz liegen kann, ist jeder Datenzugriff asynchron. Für Code in der Oberfläche gelten

@@ -24,6 +24,10 @@
   const dbKey = area => (!area || area === MAIN ? KEY_DB : `area:${area}:db`);
   const handleKeyOf = area => (!area || area === MAIN ? KEY_HANDLE : `area:${area}:handle`);
   const lsDbKey = area => (!area || area === MAIN ? LS_KEY_DB : `nonotes.area.${area}.db.b64`);
+  const BACKUPS_MAX = 5; // rollende Sicherungen je Bereich (seit 4.4.0)
+  const backupsKey = area => `backups:${area || MAIN}`;
+  const backupKey = (area, id) => `backup:${area || MAIN}:${id}`;
+  let backupChain = Promise.resolve(); // Sicherungen nacheinander anlegen
 
   // ---------- IndexedDB als einfacher Key-Value-Speicher ----------
 
@@ -131,6 +135,7 @@
       if (this.backend === 'indexeddb') {
         try { await idbDel(dbKey(area)); } catch (e) { /* nichts zu tun */ }
         try { await idbDel(handleKeyOf(area)); } catch (e) { /* nichts zu tun */ }
+        try { for (const b of await this.listBackups(area)) await idbDel(backupKey(area, b.id)); await idbDel(backupsKey(area)); } catch (e) { /* nichts zu tun */ }
       } else if (this.backend === 'localstorage') {
         try { localStorage.removeItem(lsDbKey(area)); } catch (e) { /* nichts zu tun */ }
       }
@@ -185,6 +190,49 @@
       if (this.backend === 'indexeddb') { await idbSet('value:' + key, value); return; }
       if (this.backend === 'localstorage') { localStorage.setItem('nonotes.value.' + key, JSON.stringify(value)); return; }
       throw new Error(t('Kein Browser-Speicher verfügbar'));
+    },
+
+    // ---------- Rollende Sicherungen (seit 4.4.0) ----------
+    // Je Bereich höchstens BACKUPS_MAX Stände in IndexedDB, ohne doppelte Inhalte: ein Verzeichnis unter backups:<bereich> (Angaben),
+    // die Bytes je unter backup:<bereich>:<kennung>. Ohne IndexedDB (localStorage ist zu klein) gibt es keine.
+
+    /** Gibt es Sicherungen in diesem Browser? */
+    get backups() { return this.backend === 'indexeddb'; },
+
+    /** Sicherungen eines Bereichs, die neueste zuerst: [{ id, at, reason, size, notes, hash }]. */
+    async listBackups(area) {
+      if (this.backend !== 'indexeddb') return [];
+      try { const v = await idbGet(backupsKey(area)); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+    },
+
+    /** Legt eine Sicherung an. meta: { reason, notes, hash }. Gleicher Inhalt wie eine vorhandene: nichts (gibt dann deren Angaben).
+     *  Die älteste über BACKUPS_MAX fällt weg. */
+    addBackup(area, bytes, meta) {
+      // nacheinander: zwei gleichzeitige Sicherungen lesen sonst dieselbe Liste und eine ginge verloren
+      const run = backupChain.then(() => this.addBackupNow(area, bytes, meta));
+      backupChain = run.catch(() => null);
+      return run;
+    },
+
+    async addBackupNow(area, bytes, meta) {
+      if (this.backend !== 'indexeddb' || !bytes || !bytes.length) return null;
+      const list = await this.listBackups(area);
+      const same = list.find(b => b.hash === meta.hash && b.size === bytes.length);
+      if (same) return same;
+      const entry = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: new Date().toISOString(), reason: meta.reason || '',
+        size: bytes.length, notes: meta.notes == null ? null : meta.notes, hash: meta.hash };
+      await idbSet(backupKey(area, entry.id), bytes);
+      const next = [entry, ...list];
+      const drop = next.splice(BACKUPS_MAX);
+      await idbSet(backupsKey(area), next);
+      for (const b of drop) { try { await idbDel(backupKey(area, b.id)); } catch (e) { /* bleibt liegen, stört nicht */ } }
+      return entry;
+    },
+
+    async loadBackup(area, id) {
+      if (this.backend !== 'indexeddb') return null;
+      const v = await idbGet(backupKey(area, id));
+      return v ? new Uint8Array(v) : null;
     },
 
     /** Weitere gemerkte Datei-Handles (z. B. die Kalenderdatei) unter eigenem Schlüssel. */

@@ -58,6 +58,7 @@
   }
 
   const FILE_CHECK_MS = 30000; // wie oft nachgesehen wird, ob die Datei von aussen geändert wurde
+  const BACKUP_EVERY_MS = 30 * 60 * 1000; // rollende Sicherung des gespeicherten Stands höchstens alle 30 Minuten (seit 4.4.0)
 
   function create(host) {
     const el = host.el;
@@ -87,6 +88,12 @@
       sessionHandles: new Map(), // Bereich → Datei-Handle, das sich nicht merken liess (gilt nur in dieser Sitzung)
       missingArea: null,      // ?w=… ohne passenden Bereich: beim Start anbieten, ihn anzulegen
       baseTitle: null,        // Titel der Seite ohne Bereich
+      // Seit 4.4.0 (Datenverlust verhindern)
+      blocked: null,          // Stoppschirm offen: die Daten lassen sich nicht öffnen, es wird nichts gespeichert
+      baseBytes: null,        // die Bytes, wie sie zuletzt gelesen oder gespeichert wurden (für Sicherungen und «Gespeicherten Stand laden»)
+      backupAt: 0,            // Zeit der letzten rollenden Sicherung in diesem Bereich (0: seit dem Öffnen noch keine)
+      held: false,            // Speichern angehalten: fast alle Notizen wären weg, die Person entscheidet
+      allowShrink: false,     // die Person hat entschieden (oder Import, Wiederherstellen): bis zum nächsten gelungenen Speichern nicht anhalten
     };
 
     const setStatus = (text, state) => host.setStatus(text, state);
@@ -155,42 +162,64 @@
       if (s.saving) return; // läuft bereits; am Ende wird bei Bedarf nachgezogen
       if (s.editSeq === s.savedSeq) return;
       if (s.external) return; // die Datei oder der Browser-Speicher wurde von aussen geändert: erst entscheiden lassen
+      if (s.held && s.allowShrink) { s.held = false; host.hideBanner(); } // inzwischen entschieden (Import, Wiederherstellen …)
+      if (s.blocked || s.held) return; // Stoppschirm oder Halt bei Massenverlust: nichts schreiben, bis entschieden ist (seit 4.4.0)
 
       s.saving = true;
       const seq = s.editSeq;
       setStatus(t('Speichern…'), 'saving');
       let ok = true;
       let foreign = null; // Inhalt der Datei, falls sie inzwischen von jemand anderem geändert wurde
+      let held = false;
       try {
         const snap = snapshot(s.db); // was gleich geschrieben wird; danach die Grundlage für das Zusammenführen
-        const bytes = DB.exportBytes(s.db);
-        try {
-          await Store.browserStore.saveDb(bytes, s.area.id);
-          if (s.channel) { try { s.channel.postMessage({ tab: s.tabId, area: s.area.id }); } catch (e) { /* egal */ } }
-        } catch (e) {
-          ok = false;
-          console.warn('Browser-Speicher', e);
-          setStatus(t('Browser-Speicher nicht beschreibbar: {fehler}', { fehler: errorText(e) }), 'error');
-        }
-        if (s.fileHandle && s.filePermission === 'granted') {
+        // Halt bei Massenverlust (seit 4.4.0): fast alle gespeicherten Notizen wären weg
+        if (!s.allowShrink && massLoss(snap)) { ok = false; held = true; }
+        const bytes = ok ? DB.exportBytes(s.db) : null;
+        const linked = !!(s.fileHandle && s.filePermission === 'granted');
+        // Zuerst die Datei prüfen (seit 4.4.0): von aussen geändert → zusammenführen oder fragen; nicht lesbar → nichts schreiben
+        if (ok && linked && !s.overwrite) {
           try {
-            // Kurz vor dem Schreiben noch einmal nachsehen: Wurde die Datei inzwischen von aussen geändert, nicht blind überschreiben.
-            foreign = s.overwrite ? null : await foreignFileBytes();
-            if (foreign) {
-              ok = false;
-            } else {
-              await Store.fileAccess.write(s.fileHandle, bytes);
-              await rememberFile(bytes);
-            }
+            foreign = await foreignFileBytes(bytes);
+            if (foreign) ok = false;
           } catch (e) {
             ok = false;
-            console.warn('Dateischreiben', e);
-            setStatus(t('Datei konnte nicht geschrieben werden: {fehler}', { fehler: errorText(e) }), 'error');
+            console.warn('Datei vor dem Schreiben', e);
+            setStatus(t('Die Datei „{name}“ ist gerade nicht lesbar; es wurde nichts gespeichert. Beim nächsten Speichern wird es wieder versucht. ({fehler})', { name: s.fileHandle.name, fehler: errorText(e) }), 'error');
+          }
+        }
+        if (ok) {
+          await rollingBackup(); // der gespeicherte Stand vor dem ersten Überschreiben nach dem Öffnen, danach alle 30 Minuten
+          try {
+            await Store.browserStore.saveDb(bytes, s.area.id);
+            if (s.channel) { try { s.channel.postMessage({ tab: s.tabId, area: s.area.id }); } catch (e) { /* egal */ } }
+          } catch (e) {
+            ok = false;
+            console.warn('Browser-Speicher', e);
+            setStatus(t('Browser-Speicher nicht beschreibbar: {fehler}', { fehler: errorText(e) }), 'error');
+          }
+          if (linked) {
+            try {
+              // Kurz vor dem Schreiben noch einmal nachsehen: Wurde die Datei inzwischen von aussen geändert, nicht blind überschreiben.
+              foreign = s.overwrite ? null : await foreignFileBytes(bytes);
+              if (foreign) {
+                ok = false;
+              } else {
+                await Store.fileAccess.write(s.fileHandle, bytes);
+                await rememberFile(bytes);
+              }
+            } catch (e) {
+              ok = false;
+              console.warn('Dateischreiben', e);
+              setStatus(t('Datei konnte nicht geschrieben werden: {fehler}', { fehler: errorText(e) }), 'error');
+            }
           }
         }
         if (ok) {
           s.savedSeq = seq;
           s.baseSnap = snap;
+          s.baseBytes = bytes;
+          s.allowShrink = false; // gilt nur bis zum ersten gelungenen Speichern danach
           setStatus(t('Gespeichert {zeit}', { zeit: timeFormat().format(new Date()) }), 'saved');
         }
       } catch (e) {
@@ -201,11 +230,78 @@
         s.saving = false;
         if (ok && s.editSeq !== seq) persistNow(); // zwischenzeitlich kam Neues
       }
+      if (held) { holdSave(); return; }
       if (foreign) {
         s.pendingFileBytes = foreign;
         setStatus(t('Ungespeicherte Änderungen'), 'dirty');
         await onExternalChange('file');
       }
+    }
+
+    // ---------- Halt bei Massenverlust, Sicherungen (seit 4.4.0) ----------
+
+    /** Wären fast alle gespeicherten Notizen weg? Gespeichert sind mindestens 3, übrig blieben weniger als ein Viertel. Notizen im
+     *  Papierkorb und im Archiv zählen mit; so lässt sich auch das Leeren des Papierkorbs bestätigen. */
+    function massLoss(snap) {
+      const stored = s.baseSnap ? s.baseSnap.notes.size : 0;
+      return stored >= 3 && snap.notes.size < stored / 4;
+    }
+
+    function holdSave() {
+      if (s.held) return;
+      s.held = true;
+      const stored = s.baseSnap ? s.baseSnap.notes.size : 0;
+      const now = DB.countRecords(s.db);
+      host.showBanner(
+        t('Fast alle Notizen wären weg: gespeichert sind {alt}, jetzt wären es {neu}. Gespeichert wird erst nach deiner Entscheidung.', { alt: stored, neu: now }),
+        [
+          { label: t('Gespeicherten Stand laden'), primary: true, onClick: loadStored },
+          { label: t('Trotzdem speichern'), onClick: saveAnyway },
+        ],
+        { danger: true });
+      setStatus(t('Nicht gespeichert: bitte entscheiden (Leiste oben)'), 'dirty');
+    }
+
+    /** «Gespeicherten Stand laden»: zurück zu dem, was zuletzt gespeichert war; die Änderungen seither gehen in eine Sicherung. */
+    async function loadStored() {
+      await backup(DB.exportBytes(s.db), 'unsaved');
+      s.held = false;
+      host.hideBanner();
+      replaceDb(DB.open(s.SQL, s.baseBytes && s.baseBytes.length ? s.baseBytes : null));
+      s.baseSnap = snapshot(s.db);
+      s.savedSeq = s.editSeq;
+      await host.renderAll();
+      setStatus(t('Gespeicherter Stand geladen'), 'saved');
+    }
+
+    async function saveAnyway() {
+      s.held = false;
+      host.hideBanner();
+      s.allowShrink = true;
+      s.editSeq++;
+      await persistNow();
+    }
+
+    /** Ein Stand als Sicherung (rollend, je Bereich höchstens 5, ohne doppelte Inhalte). reason: opened, periodic, import, open,
+     *  restore, merge, external, overwritten, unsaved, damaged. */
+    async function backup(bytes, reason) {
+      if (!bytes || !bytes.length || !Store.browserStore.backups || !s.area) return null;
+      let notes = null;
+      try {
+        const d = new s.SQL.Database(bytes);
+        try { notes = Number(d.exec('SELECT COUNT(*) FROM notes')[0].values[0][0]); } finally { d.close(); }
+      } catch (e) { notes = null; }
+      try { return await Store.browserStore.addBackup(s.area.id, bytes, { reason, notes, hash: hashBytes(bytes) }); }
+      catch (e) { console.warn('Sicherung', e); return null; }
+    }
+
+    /** Vor dem Überschreiben: der gespeicherte Stand als Sicherung, beim ersten Mal nach dem Öffnen und danach alle 30 Minuten. */
+    async function rollingBackup() {
+      const now = Date.now();
+      if (s.backupAt && now - s.backupAt < BACKUP_EVERY_MS) return;
+      const first = !s.backupAt;
+      s.backupAt = now;
+      if (s.baseBytes && s.baseBytes.length) await backup(s.baseBytes, first ? 'opened' : 'periodic');
     }
 
     // ---------- Datenbank austauschen ----------
@@ -228,23 +324,28 @@
       } catch (e) { /* ohne Zeitstempel prüfen wir jedes Mal den Inhalt */ }
     }
 
-    /** Hat jemand anders die verbundene Datei verändert? Dann ihr Inhalt, sonst null. Billig, solange Grösse und Zeitstempel gleich bleiben. */
-    async function foreignFileBytes() {
-      if (!s.fileHandle || s.filePermission !== 'granted' || s.fileHash == null) return null;
-      try {
-        const f = await s.fileHandle.getFile();
-        if (s.fileStamp && f.size === s.fileStamp.size && f.lastModified === s.fileStamp.modified) return null;
-        const bytes = new Uint8Array(await f.arrayBuffer());
-        if (hashBytes(bytes) === s.fileHash) { s.fileStamp = { size: f.size, modified: f.lastModified }; return null; } // nur der Zeitstempel, nicht der Inhalt
-        return bytes;
-      } catch (e) {
-        return null; // Datei gerade nicht lesbar: beim nächsten Mal wieder
-      }
+    /** Hat jemand anders die verbundene Datei verändert? Dann ihr Inhalt, sonst null. Billig, solange Grösse und Zeitstempel gleich
+     *  bleiben. Seit 4.4.0: Lässt sie sich nicht lesen, wirft es (dann wird nichts geschrieben); eine Datei, die dieser Tab noch nie
+     *  gelesen oder geschrieben hat, gilt als geändert, ausser sie ist leer oder gleich mit dem, was gleich geschrieben wird (mine). */
+    async function foreignFileBytes(mine) {
+      if (!s.fileHandle || s.filePermission !== 'granted') return null;
+      const f = await s.fileHandle.getFile();
+      if (s.fileHash != null && s.fileStamp && f.size === s.fileStamp.size && f.lastModified === s.fileStamp.modified) return null;
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      if (mine && Store.bytesEqual(bytes, mine)) return null; // steht schon so drin (etwa ein Schreiben, das trotz Fehler ankam)
+      if (s.fileHash == null) return bytes.length ? bytes : null; // nie gesehen: gilt als geändert, ausser leer oder gleich
+      if (hashBytes(bytes) === s.fileHash) { s.fileStamp = { size: f.size, modified: f.lastModified }; return null; } // nur der Zeitstempel, nicht der Inhalt
+      return bytes;
+    }
+
+    /** Wie foreignFileBytes, aber ein Lesefehler ist kein Befund (beim nächsten Nachsehen wieder). */
+    async function foreignQuiet() {
+      try { return await foreignFileBytes(null); } catch (e) { return null; }
     }
 
     async function checkFile() {
-      if (s.external || s.saving) return;
-      const bytes = await foreignFileBytes();
+      if (s.external || s.saving || s.blocked || s.held || s.fileHash == null) return;
+      const bytes = await foreignQuiet();
       if (!bytes || s.saving || s.external) return;
       s.pendingFileBytes = bytes;
       await onExternalChange('file');
@@ -258,7 +359,16 @@
     }
 
     async function onExternalChange(kind) {
-      if (s.external) return;
+      if (s.external || s.blocked) return;
+      // Seit 4.4.0: Was von aussen kam, zuerst prüfen. Eine neuere, fremde oder beschädigte Fassung wird weder geladen noch überschrieben.
+      let outside = null;
+      try { outside = kind === 'file' ? (s.pendingFileBytes || await Store.fileAccess.read(s.fileHandle)) : await Store.browserStore.loadDb(s.area.id); }
+      catch (e) { outside = null; }
+      if (outside && outside.length) {
+        const problem = DB.check(s.SQL, outside);
+        if (problem) { s.pendingFileBytes = null; await stopNow(stopOf(problem, kind === 'file' ? 'file' : 'mirror', outside)); return; }
+        if (kind === 'file') s.pendingFileBytes = outside;
+      }
       if (!isDirty()) { await loadExternal(kind, true); return; } // nichts Ungesichertes zu verlieren: still übernehmen (die Statuszeile meldet es)
       if (await mergeExternal(kind)) return; // eigene Änderungen und fremde vertragen sich: vereint, ohne Rückfrage
       s.external = kind;
@@ -283,8 +393,10 @@
         s.pendingFileBytes = null;
         if (!bytes || !bytes.length) { s.external = null; host.hideBanner(); return; }
         await beforeMigration(bytes); // etwa von NoNotes 2.x geschrieben: vor der Umstellung fragen
+        await backup(silent ? s.baseBytes : DB.exportBytes(s.db), silent ? 'external' : 'unsaved'); // der bisherige Stand (seit 4.4.0)
         replaceDb(DB.open(s.SQL, bytes));
         s.baseSnap = snapshot(s.db);
+        s.baseBytes = bytes;
         if (kind === 'file') await rememberFile(bytes);
         s.external = null;
         s.editedSinceStart = false;
@@ -301,6 +413,10 @@
     }
 
     async function keepMine() {
+      // die fremde Fassung, die gleich überschrieben wird, zuerst als Sicherung (seit 4.4.0)
+      let theirs = s.pendingFileBytes;
+      if (!theirs) { try { theirs = s.external === 'file' ? await Store.fileAccess.read(s.fileHandle) : await Store.browserStore.loadDb(s.area.id); } catch (e) { theirs = null; } }
+      await backup(theirs, 'overwritten');
       s.external = null;
       s.pendingFileBytes = null;
       host.hideBanner();
@@ -394,10 +510,12 @@
       if (!bytes || !bytes.length) return false;
       const merged = mergeWithExternal(bytes);
       if (!merged) { if (kind === 'file') s.pendingFileBytes = bytes; return false; }
+      await backup(DB.exportBytes(s.db), 'merge'); // die eigene Fassung vor dem Zusammenführen (seit 4.4.0)
       s.pendingFileBytes = null;
       if (s.db) { try { s.db.close(); } catch (e) { /* egal */ } }
       s.db = merged.db; // ohne onDatabaseReplaced: die Oberfläche behält die offene Notiz, Bilder und Baum sind unverändert
       s.baseSnap = merged.base;
+      s.baseBytes = bytes;
       if (kind === 'file') await rememberFile(bytes); // der fremde Stand ist jetzt die Grundlage; gleich kommt der vereinte darüber
       s.editSeq++;
       setStatus(kind === 'file' ? t('Änderungen aus „{name}“ mit deinen zusammengeführt', { name: s.fileHandle.name }) : t('Änderungen aus dem anderen Tab mit deinen zusammengeführt'), 'dirty');
@@ -461,6 +579,8 @@
         if (s.filePermission !== 'granted') { showConnectBanner(); updateStorageInfo(); return; }
 
         const fileBytes = await Store.fileAccess.read(handle);
+        const problem = DB.check(s.SQL, fileBytes); // seit 4.4.0: eine neuere, fremde oder beschädigte Datei weder laden noch überschreiben
+        if (problem) { host.hideBanner(); await stopNow(stopOf(problem, 'file', fileBytes)); return; }
         const fileUnchanged = s.mirrorAtStart && Store.bytesEqual(fileBytes, s.mirrorAtStart);
         await rememberFile(fileBytes);
 
@@ -469,7 +589,7 @@
           s.editSeq++;
         } else if (!s.editedSinceStart || fileUnchanged) {
           // Nichts Eigenes verloren: Datei ist massgebend bzw. identisch, aktueller Stand gewinnt bei Änderungen.
-          if (!s.editedSinceStart) { await beforeMigration(fileBytes); replaceDb(DB.open(s.SQL, fileBytes)); }
+          if (!s.editedSinceStart) { await beforeMigration(fileBytes); replaceDb(DB.open(s.SQL, fileBytes)); s.baseSnap = snapshot(s.db); s.baseBytes = fileBytes; }
           s.editSeq++;
         } else {
           const loadFile = confirm(
@@ -477,7 +597,9 @@
             t('OK: Datei laden und die Änderungen dieser Sitzung verwerfen.') + '\n' +
             t('Abbrechen: Datei mit dem aktuellen Stand überschreiben.')
           );
-          if (loadFile) { await beforeMigration(fileBytes); replaceDb(DB.open(s.SQL, fileBytes)); }
+          await backup(loadFile ? DB.exportBytes(s.db) : fileBytes, loadFile ? 'unsaved' : 'overwritten');
+          if (loadFile) { await beforeMigration(fileBytes); replaceDb(DB.open(s.SQL, fileBytes)); s.baseSnap = snapshot(s.db); s.baseBytes = fileBytes; }
+          else s.allowShrink = true; // die Person hat entschieden, die Datei zu überschreiben
           s.editSeq++;
         }
         s.editedSinceStart = false;
@@ -492,11 +614,13 @@
       }
     }
 
-    async function adoptHandle(handle) {
+    /** bytes: der Inhalt der Datei, wie gerade gelesen (Datei öffnen); ohne: eine neue, leere Datei. */
+    async function adoptHandle(handle, bytes) {
       s.fileHandle = handle;
       s.filePermission = 'granted';
       s.editedSinceStart = false;
       s.handleRemembered = false;
+      if (bytes) await rememberFile(bytes); else { s.fileHash = null; s.fileStamp = null; }
       // Erst die Oberfläche und das Schreiben, dann das Merken: der Benutzer sieht sofort, was gilt.
       host.hideBanner();
       updateStorageInfo();
@@ -517,11 +641,16 @@
 
     async function createFile() {
       host.closeMenu();
+      if (s.held) { setStatus(t('Nicht gespeichert: bitte entscheiden (Leiste oben)'), 'error'); return; } // erst den Halt entscheiden
       try {
         const handle = await Store.fileAccess.pickNew(s.area.id === MAIN && !multiArea() ? DEFAULT_FILENAME : `${s.area.name}.sqlite`);
         const perm = await Store.fileAccess.permission(handle, true);
         if (perm !== 'granted') { setStatus(t('Kein Schreibzugriff auf die Datei'), 'error'); return; }
-        await adoptHandle(handle);
+        // Eine bestehende Datei, deren Ersetzen die Person im Dialog bestätigt hat: ihr Inhalt zuerst als Sicherung (seit 4.4.0)
+        let existing = null;
+        try { existing = await Store.fileAccess.read(handle); } catch (e) { existing = null; }
+        if (existing && existing.length) await backup(existing, 'overwritten');
+        await adoptHandle(handle, existing || new Uint8Array(0));
         if (!isDirty()) setStatus(t('Datenbankdatei „{name}“ angelegt', { name: handle.name }), 'saved');
       } catch (e) {
         if (isAbort(e)) return;
@@ -550,8 +679,12 @@
           t('Bei Bedarf vorher „Kopie herunterladen“.')
         )) { newDb.close(); return; }
         await beforeMigration(bytes); // Datei von NoNotes 2.x: vor dem Schreiben der umgestellten Fassung sichern
+        await backup(DB.exportBytes(s.db), 'open'); // der bisherige Stand (seit 4.4.0)
         replaceDb(newDb);
-        await adoptHandle(handle);
+        s.baseSnap = snapshot(s.db);
+        s.baseBytes = bytes;
+        s.held = false; // die geöffnete Datei ist der neue gespeicherte Stand
+        await adoptHandle(handle, bytes);
         if (!isDirty()) setStatus(t('„{name}“ geöffnet', { name: handle.name }), 'saved');
       } catch (e) {
         if (isAbort(e)) return;
@@ -600,9 +733,11 @@
           tn('Die aktuell angezeigte Notiz wird ersetzt', 'Die aktuell angezeigten {n} Notizen werden ersetzt', n) +
           (linked ? t(', auch in der verbundenen Datei „{name}“.', { name: s.fileHandle.name }) : '.')
         )) { newDb.close(); return; }
+        await backup(DB.exportBytes(s.db), 'import'); // der bisherige Stand (seit 4.4.0)
         replaceDb(newDb);
         await host.renderAll();
         s.editSeq++;
+        s.allowShrink = true; // die Person hat den Import bestätigt
         await persistNow();
         if (!isDirty()) setStatus(t('„{name}“ importiert', { name: file.name }), 'saved');
       } catch (e) {
@@ -671,25 +806,41 @@
       return true;
     }
 
-    /** Lädt einen Bereich: Datei, wenn sie freigegeben ist (interactive: bei Bedarf nachfragen, braucht einen Klick), sonst die Browser-Kopie. */
-    async function openArea(area, interactive) {
-      s.area = { id: area.id, name: area.name };
-      s.fileHandle = null;
-      s.filePermission = null;
-      s.handleRemembered = false;
-      s.openedFromFile = false;
-      s.fileHash = null;
-      s.fileStamp = null;
-      s.external = null;
-      s.pendingFileBytes = null;
-      s.editedSinceStart = false;
+    /** Was mit Bytes, die es gibt, nicht stimmt: ein Halt für den Stoppschirm (seit 4.4.0). */
+    function stopOf(problem, source, bytes) {
+      const kind = problem.code === 'SCHEMA_TOO_NEW' ? 'tooNew' : problem.code === 'NOT_NONOTES_FILE' ? 'foreign' : 'damaged';
+      return { kind, source, name: source === 'file' && s.fileHandle ? s.fileHandle.name : null, bytes,
+        version: problem.params && problem.params.version, error: (problem.params && problem.params.message) || '' };
+    }
+
+    /** Liest einen Bereich, ohne etwas zu ändern: { db, bytes, source, migrated } oder { stop }. Seit 4.4.0 wird nie still leer
+     *  gestartet, wenn es Daten gibt, die sich nicht öffnen lassen: Datei, wenn sie freigegeben ist (interactive: bei Bedarf
+     *  nachfragen, braucht einen Klick), sonst die Browser-Kopie; leer nur, wenn es wirklich keine Daten gibt. */
+    async function readArea(area, interactive) {
+      Object.assign(s, { area: { id: area.id, name: area.name }, fileHandle: null, filePermission: null, handleRemembered: false,
+        openedFromFile: false, fileHash: null, fileStamp: null, external: null, pendingFileBytes: null, editedSinceStart: false, held: false });
       let mirror = null;
+      let mirrorFailed = null;
       try { mirror = await Store.browserStore.loadDb(area.id); }
-      catch (e) { console.warn('Browser-Speicher nicht lesbar', e); }
+      catch (e) { console.warn('Browser-Speicher nicht lesbar', e); mirrorFailed = { kind: 'read', source: 'mirror', error: errorText(e) }; }
       s.mirrorAtStart = mirror;
-      let db = null;
       let migrated = false; // auf ein neues Schema angeglichen: gleich wieder sichern, damit die Umstellung nur einmal läuft
-      const opened = bytes => { const info = {}; const d = DB.open(s.SQL, bytes, info); if (info.upgradedFrom) migrated = true; return d; };
+      const opened = async (bytes, source) => {
+        const problem = DB.check(s.SQL, bytes);
+        if (problem) return { stop: stopOf(problem, source, bytes) };
+        try {
+          await beforeMigration(bytes);
+          const info = {};
+          const d = DB.open(s.SQL, bytes, info);
+          if (info.upgradedFrom) migrated = true;
+          return { db: d };
+        } catch (e) {
+          return { stop: stopOf(e && e.code ? e : { code: 'DAMAGED', params: { message: errorText(e) } }, source, bytes) };
+        }
+      };
+      let db = null;
+      let bytes = null;
+      let source = null;
       if (Store.fileAccess.supported) {
         let handle = s.sessionHandles.get(area.id) || null;
         if (!handle) { handle = await Store.browserStore.loadHandle(area.id); s.handleRemembered = !!handle; }
@@ -698,34 +849,147 @@
           try { s.filePermission = await Store.fileAccess.permission(handle, interactive); }
           catch (e) { s.filePermission = 'prompt'; }
           if (s.filePermission === 'granted') {
-            try {
-              const bytes = await Store.fileAccess.read(handle);
-              await beforeMigration(bytes);
-              db = opened(bytes);
-              s.openedFromFile = true;
-              await rememberFile(bytes);
-            } catch (e) {
-              console.warn('Datei nicht lesbar, verwende Browser-Kopie', e);
-              s.filePermission = 'prompt';
+            let fileBytes;
+            try { fileBytes = await Store.fileAccess.read(handle); }
+            catch (e) {
+              console.warn('Datei nicht lesbar', e);
+              return { stop: { kind: 'read', source: 'file', name: handle.name, error: errorText(e) } };
             }
+            if (fileBytes.length) {
+              const r = await opened(fileBytes, 'file');
+              if (r.stop) return r;
+              db = r.db;
+              bytes = fileBytes;
+              source = 'file';
+              s.openedFromFile = true;
+            }
+            await rememberFile(fileBytes); // eine leere Datei hat keine Daten: die Browser-Kopie gilt und kommt hinein
           }
         }
       }
-      if (!db) {
-        try { await beforeMigration(mirror); db = opened(mirror); }
-        catch (e) { console.warn('Browser-Kopie unbrauchbar, starte mit leerer Datenbank', e); db = DB.open(s.SQL, null); }
+      if (mirrorFailed) { if (db) db.close(); return { stop: mirrorFailed }; }
+      if (mirror && mirror.length) {
+        const problem = DB.check(s.SQL, mirror);
+        if (db) {
+          // die Datei gilt; eine Browser-Kopie, die eine neuere NoNotes-Version geschrieben hat, wird nicht überschrieben, eine
+          // beschädigte zuerst gesichert
+          if (problem && problem.code === 'SCHEMA_TOO_NEW') { db.close(); return { stop: stopOf(problem, 'mirror', mirror) }; }
+          if (problem) await backup(mirror, 'damaged');
+        } else {
+          const r = await opened(mirror, 'mirror');
+          if (r.stop) return r;
+          db = r.db;
+          bytes = mirror;
+          source = 'mirror';
+        }
       }
-      if (s.db) replaceDb(db); else s.db = db;
+      if (!db) {
+        // eine gemerkte Datei ohne Freigabe und keine Browser-Kopie: ihre Daten dürfen nicht durch eine leere Datenbank ersetzt werden
+        if (s.fileHandle && s.filePermission !== 'granted') return { stop: { kind: 'permission', source: 'file', name: s.fileHandle.name, denied: s.filePermission === 'denied' } };
+        db = DB.open(s.SQL, null);
+      }
+      return { db, bytes, source, migrated };
+    }
+
+    /** Lädt einen Bereich (interactive: Freigabe der Datei bei Bedarf erfragen). Lassen sich seine Daten nicht öffnen, steht der
+     *  Stoppschirm, bis die Person «Erneut versuchen» oder einen anderen Bereich wählt; gespeichert wird so lange nichts. */
+    async function openArea(area, interactive) {
+      let target = area;
+      let ask = interactive;
+      for (;;) {
+        const r = await readArea(target, ask);
+        if (!r.stop) { await install(r); return; }
+        const choice = await stopScreen(r.stop);
+        ask = true; // «Erneut versuchen» und die Wahl eines Bereichs sind Klicks: die Freigabe darf gefragt werden
+        if (choice.area) target = choice.area;
+      }
+    }
+
+    async function install(r) {
+      if (s.db) replaceDb(r.db); else s.db = r.db;
+      if (s.blocked) { s.blocked = null; if (host.hideStop) host.hideStop(); }
       s.baseSnap = snapshot(s.db);
+      s.baseBytes = r.bytes && r.bytes.length ? r.bytes : null;
+      s.backupAt = 0;
       s.savedSeq = s.editSeq;
-      if (migrated) { // die umgestellte Fassung gleich sichern, damit die Umstellung (und die Frage davor) nur einmal kommt
+      if (r.migrated) { // die umgestellte Fassung gleich sichern, damit die Umstellung (und die Frage davor) nur einmal kommt
         s.editSeq++;
         try { await persistNow(); } catch (e) { console.warn('Speichern nach der Umstellung', e); scheduleSave(); }
       }
     }
 
+    // ---------- Stoppschirm (seit 4.4.0) ----------
+
+    function stopTexts(stop) {
+      const version = global.NONOTES_VERSION || 'dev';
+      const lines = [];
+      if (stop.kind === 'tooNew') {
+        lines.push(t('Diese Daten wurden mit einer neueren NoNotes-Version gespeichert (Schema {n}); diese App ist {version} (Schema {m}). Bitte die neuere Version verwenden. Es wurde nichts verändert.', { n: stop.version, version, m: DB.SCHEMA_VERSION }));
+      } else if (stop.kind === 'foreign') {
+        lines.push(t('Diese Daten sind keine NoNotes-Datenbank. Es wurde nichts verändert.'));
+      } else if (stop.kind === 'damaged') {
+        lines.push(t('Diese Daten lassen sich nicht öffnen: sie sind beschädigt oder unvollständig. Es wurde nichts verändert. Bitte erneut versuchen; hilft das nicht, eine Sicherung verwenden.'));
+      } else if (stop.kind === 'read') {
+        lines.push(t('Diese Daten konnten nicht gelesen werden, zum Beispiel weil das Netzlaufwerk gerade nicht erreichbar ist. Es wurde nichts verändert. Bitte erneut versuchen.'));
+      } else if (stop.kind === 'permission') {
+        lines.push(stop.denied ? t('Der Zugriff auf die Datei „{name}“ wurde verweigert. Ohne Zugriff wird nichts angezeigt und nichts gespeichert.', { name: stop.name })
+          : t('Die Daten liegen in der Datei „{name}“. Zum Öffnen einmal mit der Datei verbinden; bis dahin wird nichts angezeigt und nichts gespeichert.', { name: stop.name }));
+      }
+      if (stop.kind !== 'permission') {
+        lines.push(stop.source === 'file' ? t('Betroffen: die Datei „{name}“.', { name: stop.name || '' }) : t('Betroffen: die Kopie im Browser-Speicher.'));
+      }
+      if (multiArea()) lines.push(t('Bereich: „{name}“', { name: s.area.name }));
+      if (stop.error && stop.kind !== 'tooNew') lines.push(t('Meldung: {fehler}', { fehler: stop.error }));
+      const title = stop.kind === 'tooNew' ? t('Neuere Daten: bitte die neuere NoNotes-Version verwenden')
+        : stop.kind === 'read' ? t('Daten konnten nicht gelesen werden')
+          : stop.kind === 'permission' ? t('Mit der Datei verbinden')
+            : t('Daten lassen sich nicht öffnen');
+      return { title, lines };
+    }
+
+    /** Zeigt den Stoppschirm und löst auf mit der Wahl der Person: { retry } oder { area }. Solange er steht, wird nichts gespeichert
+     *  (s.blocked) und die Seite dahinter ist gesperrt. */
+    function stopScreen(stop) {
+      s.blocked = stop;
+      clearTimeout(s.saveTimer);
+      const { title, lines } = stopTexts(stop);
+      if (!host.showStop) return Promise.reject(new Error(title + '\n' + lines.join('\n')));
+      return new Promise(resolve => {
+        const actions = [];
+        if (stop.kind === 'permission') {
+          actions.push({ label: t('Mit Datei verbinden'), primary: true, action: () => resolve({ retry: true }) });
+          actions.push({ label: t('Dateiverbindung trennen'), action: async () => {
+            await Store.browserStore.clearHandle(s.area.id);
+            s.sessionHandles.delete(s.area.id);
+            resolve({ retry: true });
+          } });
+        } else {
+          actions.push({ label: t('Erneut versuchen'), primary: stop.kind !== 'tooNew', action: () => resolve({ retry: true }) });
+        }
+        for (const a of (s.areas ? s.areas.list : []).filter(x => x.id !== s.area.id).slice(0, 9)) {
+          actions.push({ label: t('Bereich „{name}“ öffnen', { name: a.name }), action: () => resolve({ area: a }) });
+        }
+        if (stop.bytes && stop.bytes.length) {
+          actions.push({ label: t('Daten unverändert herunterladen'), action: () => Store.download(stop.bytes, `NoNotes-${s.area.id}-${todayStamp()}.sqlite`) });
+        }
+        if (Store.browserStore.backups && host.openBackups) actions.push({ label: t('Sicherungen…'), action: () => host.openBackups({ restore: false }) });
+        host.showStop({ kind: stop.kind, title, lines, actions });
+      });
+    }
+
+    /** Ein Halt mitten in der Sitzung (die Datei oder die Browser-Kopie wurde von aussen unbrauchbar): die ungespeicherten Änderungen
+     *  dieser Sitzung zuerst sichern, dann den Stoppschirm; danach den gewählten Bereich neu lesen. */
+    async function stopNow(stop) {
+      if (s.blocked) return;
+      clearTimeout(s.saveTimer);
+      if (isDirty()) await backup(DB.exportBytes(s.db), 'unsaved');
+      const choice = await stopScreen(stop);
+      await enterArea(choice.area || s.area);
+    }
+
     /** Vor dem Wechsel: alles Ungesicherte schreiben. false, wenn die Person lieber bleibt. */
     async function leaveCurrent() {
+      if (s.blocked) return true; // Stoppschirm: es gibt nichts Gespeichertes zu verlieren
       if (host.ensureSaved && !(await host.ensureSaved())) return false; // zuerst die offene Notiz (Konflikt: die Person entscheidet)
       if (s.external) { setStatus(t('Bitte zuerst entscheiden, welche Fassung gilt (Leiste oben).'), 'error'); return false; }
       clearTimeout(s.saveTimer);
@@ -735,7 +999,10 @@
         tries++;
         await persistNow();
       }
-      if (isDirty() && !confirm(t('Die Änderungen in „{name}“ konnten nicht gespeichert werden. Trotzdem wechseln? Sie gehen dann verloren.', { name: s.area.name }))) return false;
+      if (isDirty()) {
+        if (!confirm(t('Die Änderungen in „{name}“ konnten nicht gespeichert werden. Trotzdem wechseln? Sie gehen dann verloren.', { name: s.area.name }))) return false;
+        await backup(DB.exportBytes(s.db), 'unsaved'); // wenigstens als Sicherung (seit 4.4.0)
+      }
       return true;
     }
 
@@ -1190,9 +1457,44 @@
     // Vorlagen: ein Ordner (templates/) für alle Bereiche, siehe templates-local.js
     const templates = global.NoNotesTemplatesLocal ? global.NoNotesTemplatesLocal.create({ areaName: () => (s.area ? s.area.name : '') }) : null;
 
+    // ---------- Sicherungen für die Oberfläche (seit 4.4.0) ----------
+
+    const backupStamp = iso => { const d = new Date(iso); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`; };
+    const backups = {
+      get supported() { return !!Store.browserStore.backups; },
+      /** Die Sicherungen des aktiven Bereichs, die neueste zuerst: [{ id, at, reason, size, notes }]. */
+      list: () => (s.area ? Store.browserStore.listBackups(s.area.id) : Promise.resolve([])),
+      async download(id) {
+        const list = await Store.browserStore.listBackups(s.area.id);
+        const entry = list.find(b => b.id === id);
+        const bytes = entry ? await Store.browserStore.loadBackup(s.area.id, id) : null;
+        if (!bytes) throw new Error(t('Diese Sicherung gibt es nicht mehr.'));
+        Store.download(bytes, `NoNotes-${s.area.id}-${backupStamp(entry.at)}.sqlite`);
+      },
+      /** Macht eine Sicherung zum aktuellen Stand (der bisherige wird vorher selbst gesichert) und speichert ihn. */
+      async restore(id) {
+        if (s.blocked) throw new Error(t('Erst den Bereich öffnen, dann wiederherstellen.'));
+        const bytes = await Store.browserStore.loadBackup(s.area.id, id);
+        if (!bytes) throw new Error(t('Diese Sicherung gibt es nicht mehr.'));
+        const problem = DB.check(s.SQL, bytes);
+        if (problem) throw Object.assign(new Error(t('Diese Sicherung lässt sich nicht öffnen.')), { code: problem.code });
+        await backup(DB.exportBytes(s.db), 'restore');
+        replaceDb(DB.open(s.SQL, bytes));
+        await host.renderAll();
+        s.editSeq++;
+        s.allowShrink = true;
+        await persistNow();
+      },
+    };
+
     return {
       id: 'local',
       start, afterReady, bind,
+      backups,
+      /** Steht der Stoppschirm? Seine Art ('tooNew', 'damaged', 'foreign', 'read', 'permission') oder null (für Tests). */
+      stopKind: () => (s.blocked ? s.blocked.kind : null),
+      /** Ist das Speichern angehalten (Massenverlust)? (für Tests) */
+      isHeld: () => s.held,
       templates,
       routes,
       /** Aktiver Bereich und Verzeichnis (für Tests und Erweiterungen). */

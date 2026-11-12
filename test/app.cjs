@@ -1821,7 +1821,7 @@ async function runSmoke(browser, part, step) {
     assert.equal(db21.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], SCHEMA_VERSION);
     const rows21 = db21.exec('SELECT t.text, t.depth, p.text FROM tasks t LEFT JOIN tasks p ON p.id = t.parent_id ORDER BY t.line_no')[0].values;
     assert.deepEqual(rows21, [['Haupt', 0, null], ['Unter A', 1, 'Haupt'], ['Enkel', 2, 'Unter A'], ['Einzel', 0, null]]);
-    db21.run("ALTER TABLE tasks DROP COLUMN parent_id; ALTER TABLE tasks DROP COLUMN depth; UPDATE meta SET value = '8' WHERE key = 'schema_version';");
+    db21.run("ALTER TABLE tasks DROP COLUMN parent_id; ALTER TABLE tasks DROP COLUMN depth; UPDATE meta SET value = '8' WHERE key = 'schema_version'; PRAGMA user_version = 0;");
     const v8Path = path.join(tmp, 'schema8.sqlite');
     fs.writeFileSync(v8Path, Buffer.from(db21.export()));
     db21.close();
@@ -2112,7 +2112,7 @@ async function runSmoke(browser, part, step) {
     assert.equal(db22.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], SCHEMA_VERSION);
     assert.deepEqual(db22.exec('SELECT title, archived_at IS NOT NULL FROM notes ORDER BY id')[0].values,
       [['Alpha', 0], ['Beta', 1], ['Gamma', 1], ['Delta', 1], ['Epsilon', 1]]);
-    db22.run("ALTER TABLE notes DROP COLUMN archived_at; UPDATE meta SET value = '9' WHERE key = 'schema_version';");
+    db22.run("ALTER TABLE notes DROP COLUMN archived_at; UPDATE meta SET value = '9' WHERE key = 'schema_version'; PRAGMA user_version = 0;");
     const v9Path = path.join(tmp, 'schema9.sqlite');
     fs.writeFileSync(v9Path, Buffer.from(db22.export()));
     db22.close();
@@ -2162,7 +2162,8 @@ async function runBackend(browser, part, step) {
     if (miss.length) fail('Methoden fehlen: ' + miss.join(', '));
     // Jede Funktion in db.js, die mit db als erstem Argument arbeitet, ist Teil des Vertrags oder bewusst intern.
     const INTERNAL = new Set(['open', 'exportBytes', 'configure', 'normalizeTag', 'syncQuestions', 'syncTasks', 'syncLinks', 'subtreeNoteIds', 'inspect',
-      'normalizeLink', 'exportSubtree', 'importSubtree', 'finishDetach']); // die letzten drei arbeiten über zwei Datenbanken (Auslösen, v3.2.0)
+      'normalizeLink', 'exportSubtree', 'importSubtree', 'finishDetach', // die drei davor arbeiten über zwei Datenbanken (Auslösen, v3.2.0)
+      'check', 'countRecords']); // Prüfen ohne Öffnen und Zählen für die Hülle (Stoppschirm, Halt bei Massenverlust, v4.4.0)
     for (const [name, fn] of Object.entries(DB)) {
       if (typeof fn !== 'function' || INTERNAL.has(name)) continue;
       if (!C.METHODS.includes(name)) fail(`db.js-Funktion ${name} ist weder im Vertrag noch als intern vermerkt`);
@@ -3704,6 +3705,265 @@ async function runSendUi(browser, part, step) {
   }
 }
 
+// ============================================================
+/* Speichern sicher (v4.4.0): Stoppschirm statt leerem Start (zu neu, beschädigt, fremd), nichts geschrieben, «Erneut versuchen»,
+   Daten unverändert herunterladen; Schema im Dateikopf; Halt bei Massenverlust; Sicherungen (Liste, Herunterladen, Wiederherstellen,
+   höchstens 5, ohne Doppel); vor jedem Schreiben die Datei prüfen (nicht lesbar → nichts geschrieben, von aussen zu neu → Stopp). */
+async function runSaveSafety(browser, part, step) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'de-CH', acceptDownloads: true });
+  await ctx.addInitScript(() => {
+    // eine nachgebaute Datei: window.__file.readFail lässt das Lesen scheitern (etwa ein Netzlaufwerk, das gerade fehlt)
+    window.__file = { bytes: new Uint8Array(), writes: 0, mtime: 1, readFail: false };
+    const handle = {
+      kind: 'file', name: 'Sicher.sqlite',
+      queryPermission: async () => 'granted', requestPermission: async () => 'granted',
+      getFile: async () => {
+        if (window.__file.readFail) throw new DOMException('A requested file or directory could not be found at the time an operation was processed.', 'NotFoundError');
+        return new File([window.__file.bytes], 'Sicher.sqlite', { lastModified: window.__file.mtime });
+      },
+      createWritable: async () => {
+        const chunks = [];
+        return {
+          write: async d => { chunks.push(new Uint8Array(d)); },
+          close: async () => {
+            const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+            let o = 0;
+            for (const c of chunks) { out.set(c, o); o += c.length; }
+            Object.assign(window.__file, { bytes: out, writes: window.__file.writes + 1, mtime: window.__file.mtime + 1 });
+          },
+          abort: async () => {},
+        };
+      },
+    };
+    window.showSaveFilePicker = async () => handle;
+    window.showOpenFilePicker = async () => [handle];
+  });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  page.on('dialog', d => d.accept());
+  const SQL = await initSqlJs();
+  const notesIn = bytes => { const d = new SQL.Database(new Uint8Array(bytes)); try { return d.exec('SELECT title FROM notes ORDER BY id')[0]?.values.map(r => r[0]) || []; } finally { d.close(); } };
+  const same = (a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)) === 0; // ohne riesige Unterschiede im Fehlerfall
+  const userVersion = b => (b[60] << 24 | b[61] << 16 | b[62] << 8 | b[63]) >>> 0;
+  const mirror = () => page.evaluate(async () => Array.from(await NoNotesStorage.browserStore.loadDb() || []));
+  const setMirror = bytes => page.evaluate(async b => NoNotesStorage.browserStore.saveDb(new Uint8Array(b)), bytes);
+  const altered = (bytes, sql) => { const d = new SQL.Database(new Uint8Array(bytes)); d.run(sql); const out = Array.from(d.export()); d.close(); return out; };
+  const stopKind = () => page.$eval('#stopScreen', e => e.hidden ? null : e.dataset.kind);
+  const stopButtons = () => page.$$eval('#stopActions button', l => l.map(b => b.textContent));
+  const node = t => page.locator(`g.mm-node:has(> text:text-is("${t}"))`);
+  const add = async t => {
+    await page.click('#mindmap', { position: { x: 30, y: 700 } });
+    await page.keyboard.press('Tab');
+    await page.waitForSelector('#renameInput:not([hidden])');
+    await page.keyboard.type(t);
+    await page.keyboard.press('Enter');
+    await node(t).waitFor();
+  };
+  const reopen = async () => {
+    await page.reload();
+    await page.waitForFunction(() => document.body.dataset.ready === 'true' || !document.querySelector('#stopScreen').hidden, null, { timeout: 30000 });
+  };
+  try {
+    await page.goto(APP_URL);
+    await page.waitForSelector(READY, { timeout: 30000 });
+    assert.equal(await page.evaluate(() => window.NONOTES_SCHEMA), Number(SCHEMA_VERSION), 'das Schema steht in version.js');
+    for (const t of ['Eins', 'Zwei', 'Drei', 'Vier']) await add(t);
+    await page.waitForFunction(SAVED);
+    const good = await mirror();
+    assert.equal(userVersion(good), Number(SCHEMA_VERSION), 'die Browser-Kopie trägt das Schema im Dateikopf');
+    assert.deepEqual(notesIn(good), ['Eins', 'Zwei', 'Drei', 'Vier']);
+    part('Schema in version.js (window.NONOTES_SCHEMA) und im Kopf jeder gespeicherten Datenbank (user_version)');
+
+    // ---------- zu neu: Stoppschirm, nichts geschrieben ----------
+    const tooNew = altered(good, 'PRAGMA user_version = 99');
+    await setMirror(tooNew);
+    await reopen();
+    assert.equal(await stopKind(), 'tooNew');
+    assert.match(await page.textContent('#stopTitle'), /neuere NoNotes-Version/);
+    assert.match(await page.textContent('#stopLines'), /Schema 99.*Schema 18.*nichts verändert/s);
+    assert.match(await page.textContent('#stopLines'), /Kopie im Browser-Speicher/);
+    assert.deepEqual(await stopButtons(), ['Erneut versuchen', 'Daten unverändert herunterladen', 'Sicherungen…'], 'kein «neu anfangen», kein Wiederherstellen');
+    assert.equal(await page.evaluate(() => document.querySelector('#app').inert), true, 'die Seite dahinter ist gesperrt');
+    const [download] = await Promise.all([page.waitForEvent('download'), page.click('#stopActions button:has-text("Daten unverändert herunterladen")')]);
+    assert.match(download.suggestedFilename(), /^NoNotes-main-\d{4}-\d{2}-\d{2}\.sqlite$/);
+    assert.ok(same(fs.readFileSync(await download.path()), tooNew), 'die Daten wie sie sind');
+    await page.waitForTimeout(1200);
+    assert.ok(same(await mirror(), tooNew), 'die Browser-Kopie ist unverändert');
+    part('Zu neu: Stoppschirm mit beiden Schemas und der App-Version, Seite gesperrt, unverändert herunterladen, nichts geschrieben');
+
+    await setMirror(good);
+    await page.click('#stopActions button:has-text("Erneut versuchen")');
+    await page.waitForSelector('#stopScreen', { state: 'hidden' });
+    await node('Vier').waitFor();
+    assert.equal(await page.evaluate(() => document.querySelector('#app').inert), false);
+    part('«Erneut versuchen», nachdem die Daten wieder lesbar sind: der Bereich öffnet sich normal');
+
+    // ---------- beschädigt und fremd ----------
+    await setMirror(good.slice(0, 2000));
+    await reopen();
+    assert.equal(await stopKind(), 'damaged');
+    assert.match(await page.textContent('#stopLines'), /beschädigt oder unvollständig.*Meldung:/s);
+    assert.equal((await mirror()).length, 2000, 'unverändert');
+    const foreign = (() => { const d = new SQL.Database(); d.run('CREATE TABLE kunden (id INTEGER, name TEXT)'); const out = Array.from(d.export()); d.close(); return out; })();
+    await setMirror(foreign);
+    await page.click('#stopActions button:has-text("Erneut versuchen")');
+    await page.waitForFunction(() => /keine NoNotes-Datenbank/.test(document.querySelector('#stopLines').textContent));
+    assert.equal(await stopKind(), 'foreign');
+    assert.ok(same(await mirror(), foreign), 'unverändert');
+    await setMirror(good);
+    await page.click('#stopActions button:has-text("Erneut versuchen")');
+    await page.waitForSelector('#stopScreen', { state: 'hidden' });
+    await node('Vier').waitFor();
+    part('Beschädigt (quick_check) und fremd (keine Tabelle notes): eigener Stoppschirm, die Daten bleiben, wie sie sind');
+
+    // ---------- Halt bei Massenverlust ----------
+    for (const t of ['Eins', 'Zwei', 'Drei', 'Vier']) { await node(t).click(); await page.keyboard.press('Delete'); await node(t).waitFor({ state: 'detached' }); }
+    await page.waitForFunction(SAVED);
+    assert.equal(await page.locator('#banner:not([hidden])').count(), 0, 'in den Papierkorb ist kein Verlust');
+    await page.click('[data-view="list"]');
+    await page.selectOption('#listScope', 'trash');
+    await page.click('#emptyTrashBtn');
+    await page.waitForSelector('#banner.banner-danger:not([hidden])');
+    assert.match(await page.textContent('#banner'), /gespeichert sind 4, jetzt wären es 0/);
+    assert.deepEqual(await page.$$eval('#banner button', l => l.map(b => b.textContent)), ['Gespeicherten Stand laden', 'Trotzdem speichern']);
+    await page.waitForTimeout(1200);
+    assert.equal(notesIn(await mirror()).length, 4, 'nicht gespeichert, solange nicht entschieden ist');
+    assert.equal(await page.evaluate(() => document.querySelector('#status').dataset.state), 'dirty');
+    await page.click('#banner button:text("Gespeicherten Stand laden")');
+    await page.waitForSelector('#banner', { state: 'hidden' });
+    await page.selectOption('#listScope', 'trash');
+    await page.waitForFunction(() => document.querySelectorAll('#list li').length === 4);
+    part('Halt bei Massenverlust: Papierkorb leeren hält das Speichern mit roter Leiste an; «Gespeicherten Stand laden» holt die 4 zurück');
+
+    await page.click('#emptyTrashBtn');
+    await page.waitForSelector('#banner.banner-danger:not([hidden])');
+    await page.click('#banner button:text("Trotzdem speichern")');
+    await page.waitForSelector('#banner', { state: 'hidden' });
+    await page.waitForFunction(SAVED);
+    assert.deepEqual(notesIn(await mirror()), [], '«Trotzdem speichern» speichert');
+    await page.selectOption('#listScope', 'live');
+    await page.click('[data-view="map"]');
+    for (const t of ['Fünf']) await add(t);
+    await page.waitForFunction(SAVED);
+    assert.equal(await page.locator('#banner:not([hidden])').count(), 0, 'danach wieder normal');
+    part('«Trotzdem speichern»: der kleinere Stand wird gespeichert, danach geht es normal weiter');
+
+    // ---------- Sicherungen ----------
+    await page.click('#menuBtn');
+    await page.click('#backupsBtn');
+    await page.waitForSelector('#backupsDialog[open]');
+    const rows = await page.$$eval('#backupsList li', l => l.map(x => x.innerText.replace(/\s+/g, ' ')));
+    assert.ok(rows.length >= 2 && rows.length <= 5, rows.join('\n'));
+    const four = rows.findIndex(r => /4 Notizen/.test(r));
+    assert.ok(four >= 0, 'der Stand mit den 4 Notizen ist gesichert: ' + rows.join('\n'));
+    assert.ok(rows.some(r => /ungespeicherte Änderungen/.test(r)), 'die verworfenen Änderungen auch: ' + rows.join('\n'));
+    const [bdl] = await Promise.all([page.waitForEvent('download'), page.click(`#backupsList li:nth-child(${four + 1}) .b-download`)]);
+    assert.match(bdl.suggestedFilename(), /^NoNotes-main-\d{4}-\d{2}-\d{2}-\d{4}\.sqlite$/);
+    assert.equal(notesIn(fs.readFileSync(await bdl.path())).length, 4);
+    await page.click(`#backupsList li:nth-child(${four + 1}) .b-restore`);
+    await page.waitForFunction(() => !document.querySelector('#backupsDialog').open);
+    await page.waitForFunction(SAVED);
+    await node('Vier').waitFor();
+    assert.equal(notesIn(await mirror()).length, 4, 'wiederhergestellt und gespeichert');
+    assert.match(await page.textContent('#status'), /wiederhergestellt|Gespeichert/);
+    part('Sicherungen: Liste mit Anlass und Zahl der Notizen, Herunterladen, Wiederherstellen (mit Rückfrage), gespeichert');
+
+    // Wiederherstellen ist auch eine Entscheidung: es hebt einen Halt auf; eine neue Datei anlegen nicht
+    for (const t of ['Eins', 'Zwei', 'Drei', 'Vier']) { await node(t).click(); await page.keyboard.press('Delete'); await node(t).waitFor({ state: 'detached' }); }
+    await page.waitForFunction(SAVED);
+    await page.click('[data-view="list"]');
+    await page.selectOption('#listScope', 'trash');
+    await page.click('#emptyTrashBtn');
+    await page.waitForSelector('#banner.banner-danger:not([hidden])');
+    await page.click('#menuBtn');
+    await page.click('#createFileBtn');
+    await page.waitForFunction(() => document.querySelector('#status').dataset.state === 'error');
+    assert.match(await page.textContent('#status'), /bitte entscheiden/);
+    assert.equal(await page.evaluate(() => window.__file.writes), 0, 'keine Datei angelegt, solange der Halt gilt');
+    await page.click('#menuBtn');
+    await page.click('#backupsBtn');
+    await page.waitForSelector('#backupsDialog[open]');
+    const rows2 = await page.$$eval('#backupsList li', l => l.map(x => x.innerText.replace(/\s+/g, ' ')));
+    const four2 = rows2.findIndex(r => /4 Notizen/.test(r));
+    assert.ok(four2 >= 0, rows2.join('\n'));
+    await page.click(`#backupsList li:nth-child(${four2 + 1}) .b-restore`);
+    await page.waitForFunction(() => !document.querySelector('#backupsDialog').open);
+    await page.waitForSelector('#banner', { state: 'hidden' });
+    await page.waitForFunction(SAVED);
+    assert.equal(notesIn(await mirror()).length, 4, 'wiederhergestellt und gespeichert, der Halt ist aufgehoben');
+    await page.selectOption('#listScope', 'live');
+    await page.click('[data-view="map"]');
+    await node('Vier').waitFor();
+    part('Während eines Halts: keine neue Datei; Wiederherstellen einer Sicherung hebt den Halt auf und speichert');
+
+    const kept = await page.evaluate(async () => {
+      const S = NoNotesStorage.browserStore;
+      await Promise.all([0, 1, 2, 3, 4, 5, 6].map(i => S.addBackup('probe', new Uint8Array([i, 1, 2, 3]), { reason: 'periodic', notes: i, hash: 'h' + i })));
+      const again = await S.addBackup('probe', new Uint8Array([6, 1, 2, 3]), { reason: 'periodic', notes: 6, hash: 'h6' });
+      const list = await S.listBackups('probe');
+      return { notes: list.map(b => b.notes), again: again.id === list[0].id, bytes: Array.from(await S.loadBackup('probe', list[0].id)), gone: await S.loadBackup('probe', 'nix') };
+    });
+    assert.deepEqual(kept, { notes: [6, 5, 4, 3, 2], again: true, bytes: [6, 1, 2, 3], gone: null }, 'höchstens 5, die neueste zuerst, gleicher Inhalt nur einmal, auch gleichzeitig');
+    await page.keyboard.press('Escape');
+    part('Sicherungen je Bereich: höchstens 5, die neueste zuerst, ohne Doppel, gleichzeitige Sicherungen gehen nicht verloren');
+
+    // ---------- Mit Datei: vor jedem Schreiben prüfen ----------
+    await page.click('#menuBtn');
+    await page.click('#createFileBtn');
+    await page.waitForFunction(() => /Sicher\.sqlite/.test(document.querySelector('#storageInfo .label').textContent));
+    await page.waitForFunction(() => window.__file.writes >= 1);
+    await page.waitForFunction(SAVED);
+    await page.click('[data-view="list"]');
+    await page.click('#newBtn');
+    await page.fill('#title', 'Vor dem Ausfall');
+    await page.waitForFunction(() => window.__file.writes >= 2);
+    await page.waitForFunction(SAVED);
+    const writes = await page.evaluate(() => window.__file.writes);
+    await page.evaluate(() => { window.__file.readFail = true; });
+    await page.fill('#title', 'Während des Ausfalls');
+    await page.waitForFunction(() => document.querySelector('#status').dataset.state === 'error', null, { timeout: 5000 });
+    assert.match(await page.textContent('#status'), /„Sicher\.sqlite“ ist gerade nicht lesbar; es wurde nichts gespeichert/);
+    assert.equal(await page.evaluate(() => window.__file.writes), writes, 'nicht in die Datei geschrieben');
+    assert.ok(!notesIn(await mirror()).includes('Während des Ausfalls'), 'auch nicht in die Browser-Kopie');
+    await page.evaluate(() => { window.__file.readFail = false; });
+    await page.fill('#title', 'Nach dem Ausfall');
+    await page.waitForFunction(n => window.__file.writes > n, writes);
+    await page.waitForFunction(SAVED);
+    assert.ok(notesIn(await page.evaluate(() => Array.from(window.__file.bytes))).includes('Nach dem Ausfall'));
+    part('Datei vor dem Schreiben nicht lesbar: nichts geschrieben (weder Datei noch Browser-Kopie), klare Meldung, beim nächsten Speichern wieder');
+
+    // Die Datei wird von aussen mit einer neueren Version gespeichert: Stopp, die Datei bleibt, die eigene Änderung ist gesichert
+    const fileNow = await page.evaluate(() => Array.from(window.__file.bytes));
+    const fileNewer = altered(fileNow, "UPDATE meta SET value = '25' WHERE key = 'schema_version'; PRAGMA user_version = 25;");
+    await page.evaluate(b => { Object.assign(window.__file, { bytes: new Uint8Array(b), mtime: window.__file.mtime + 5 }); }, fileNewer);
+    const writes2 = await page.evaluate(() => window.__file.writes);
+    await page.fill('#title', 'Meine letzte Änderung');
+    await page.waitForSelector('#stopScreen:not([hidden])', { timeout: 5000 });
+    assert.equal(await stopKind(), 'tooNew');
+    assert.match(await page.textContent('#stopLines'), /Schema 25.*Betroffen: die Datei „Sicher\.sqlite“/s);
+    await page.waitForTimeout(1200);
+    assert.equal(await page.evaluate(() => window.__file.writes), writes2, 'die neuere Datei wurde nicht überschrieben');
+    assert.ok(same(await page.evaluate(() => Array.from(window.__file.bytes)), fileNewer), 'die Datei ist unverändert');
+    const unsaved = await page.evaluate(async () => {
+      const S = NoNotesStorage.browserStore;
+      const b = (await S.listBackups()).find(x => x.reason === 'unsaved');
+      return b ? Array.from(await S.loadBackup(undefined, b.id)) : null;
+    });
+    assert.ok(unsaved && notesIn(unsaved).includes('Meine letzte Änderung'), 'die eigene Änderung liegt in den Sicherungen');
+    await page.evaluate(b => { Object.assign(window.__file, { bytes: new Uint8Array(b), mtime: window.__file.mtime + 1 }); }, fileNow);
+    await page.click('#stopActions button:has-text("Erneut versuchen")');
+    await page.waitForSelector('#stopScreen', { state: 'hidden' });
+    await page.waitForFunction(() => document.querySelector('#list').textContent.includes('Nach dem Ausfall'));
+    part('Datei von aussen mit neuerem Schema gespeichert: Stopp vor dem Schreiben, die Datei bleibt, die eigene Änderung ist gesichert');
+
+    assert.deepEqual(errors, []);
+  } finally {
+    await ctx.close();
+  }
+}
+
 suite('App-Test', [
   { name: null, run: runSmoke }, // druckt seine Gruppen selbst
   { name: 'Bereiche: anlegen, wechseln (Statusleiste, Menü, Alt+1 … 9), Adresse #w=… und ?w=…, Weiterleitung eines Webservers, Datei und Hauptfarbe je Bereich, umbenennen, entfernen, Datei als Bereich, zwei Tabs', run: runAreas },
@@ -3713,5 +3973,6 @@ suite('App-Test', [
   { name: 'Export als PDF (v4.1.0): Dialog, eine Datei mit Mindmap, Inhalt, Lesezeichen, Links, Bildern und Titelzeilen auf jeder Seite, hell bei dunkler Einstellung, eine Datei pro Notiz als ZIP und in einen Ordner', run: runPdfExport },
   { name: 'In Unterknoten auslagern (v4.2.0): Schaltfläche an der Auswahl, Dialog, Rückgängig, Vorschau mit ganzen Blöcken, Titel aus dem ersten Satz, Verweis folgt dem Umbenennen, Bilder, Liste, Archiv', run: runExtractUi },
   { name: 'Versand (v4.3.0): Rechtsklick → Versand → E-Mail-Entwurf mit PDF und Teilen, Banner, Einstellung je Browser, archivierte Notiz, Browser ohne Teilen', run: runSendUi },
+  { name: 'Speichern sicher (v4.4.0): Stoppschirm statt leer (zu neu, beschädigt, fremd), Schema im Dateikopf, Halt bei Massenverlust, Sicherungen, Datei vor jedem Schreiben geprüft', run: runSaveSafety },
   { name: 'Backend-Vertrag: Methodenliste, JSON-sichere Rückgaben, Änderungsmeldung, Fehlerkennungen', run: runBackend },
 ], { browser: true });

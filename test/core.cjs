@@ -394,7 +394,7 @@ async function runDb(browser, part, step) {
     // Migration aus Schema 12: bestehende Texte werden gelesen
     const old = new SQL.Database(DB.exportBytes(d));
     old.run('DROP TABLE note_links');
-    old.run("UPDATE meta SET value = '12' WHERE key = 'schema_version'");
+    old.run("UPDATE meta SET value = '12' WHERE key = 'schema_version'; PRAGMA user_version = 0");
     const bytes = old.export();
     old.close();
     const mig = DB.open(SQL, bytes);
@@ -456,7 +456,7 @@ async function runDb(browser, part, step) {
 
     // Migration aus Schema 13: eine "?!"-Zeile war bisher eine Frage mit Text "! …" und wird zum Entscheid
     const old = new SQL.Database(DB.exportBytes(d));
-    old.run("UPDATE meta SET value = '13' WHERE key = 'schema_version'");
+    old.run("UPDATE meta SET value = '13' WHERE key = 'schema_version'; PRAGMA user_version = 0");
     old.run("UPDATE questions SET kind = 'question', decided = NULL, people = NULL");
     const bytes = old.export();
     old.close();
@@ -1366,7 +1366,7 @@ async function runEntries(browser, part, step) {
   // ---------- Angleichen aus Schema 14 ----------
   {
     const old = new SQL.Database(DB.exportBytes(d));
-    old.run("DROP INDEX idx_questions_parent; ALTER TABLE questions DROP COLUMN details; ALTER TABLE questions DROP COLUMN parent_id; UPDATE meta SET value = '14' WHERE key = 'schema_version'");
+    old.run("DROP INDEX idx_questions_parent; ALTER TABLE questions DROP COLUMN details; ALTER TABLE questions DROP COLUMN parent_id; UPDATE meta SET value = '14' WHERE key = 'schema_version'; PRAGMA user_version = 0");
     const mig = DB.open(SQL, old.export());
     old.close();
     assert.equal(DB.getMeta(mig, 'schema_version'), SCHEMA_VERSION);
@@ -2280,7 +2280,7 @@ async function runCellsPeople(browser, part, step) {
   const old = DB.open(SQL, null);
   const on = DB.createNote(old, null);
   DB.updateNote(old, on, 'Alt', LIST + '\n\n' + TABLE);
-  old.run("ALTER TABLE tasks DROP COLUMN people; DELETE FROM tasks; UPDATE meta SET value = '15' WHERE key = 'schema_version'; UPDATE meta SET value = '2' WHERE key = 'index_rules'");
+  old.run("ALTER TABLE tasks DROP COLUMN people; DELETE FROM tasks; UPDATE meta SET value = '15' WHERE key = 'schema_version'; PRAGMA user_version = 0; UPDATE meta SET value = '2' WHERE key = 'index_rules'");
   const re = DB.open(SQL, old.export());
   assert.equal(DB.getMeta(re, 'schema_version'), SCHEMA_VERSION);
   assert.equal(DB.getMeta(re, 'index_rules'), '3');
@@ -2704,7 +2704,7 @@ async function runDatesV3(browser, part, step) {
     D.rewriteLegacy = rewrite;
     const plain = DB.createNote(d, null);
     d.run("UPDATE notes SET title = 'Ohne', body = 'nichts @ hier', updated_at = '2026-01-01T00:00:00.000Z' WHERE id = ?", [plain]);
-    d.exec("ALTER TABLE tasks DROP COLUMN reminders; ALTER TABLE questions DROP COLUMN reminders; ALTER TABLE notes DROP COLUMN side; UPDATE meta SET value = '16' WHERE key = 'schema_version'; DELETE FROM meta WHERE key = 'dates_migrated_at'");
+    d.exec("ALTER TABLE tasks DROP COLUMN reminders; ALTER TABLE questions DROP COLUMN reminders; ALTER TABLE notes DROP COLUMN side; UPDATE meta SET value = '16' WHERE key = 'schema_version'; PRAGMA user_version = 0; DELETE FROM meta WHERE key = 'dates_migrated_at'");
     const bytes = d.export();
     const updatedBefore = d.exec('SELECT updated_at FROM notes WHERE id = ' + id)[0].values[0][0];
     d.close();
@@ -2791,7 +2791,7 @@ async function runDatesV3(browser, part, step) {
     const old = DB.open(SQL, null);
     const nid = DB.createNote(old, null);
     old.run("UPDATE notes SET title = 'Alt', body = '- [ ] Alt @1.12.2026' WHERE id = ?", [nid]);
-    old.exec("ALTER TABLE notes DROP COLUMN side; UPDATE meta SET value = '16' WHERE key = 'schema_version'");
+    old.exec("ALTER TABLE notes DROP COLUMN side; UPDATE meta SET value = '16' WHERE key = 'schema_version'; PRAGMA user_version = 0");
     const oldBytes = Buffer.from(old.export());
     old.close();
     fs.writeFileSync(file, oldBytes);
@@ -3222,6 +3222,86 @@ async function runExtract(browser, part, step) {
 }
 
 // ============================================================
+/* Speichern sicher (v4.4.0, packages/data/db.js): Schema im Dateikopf, Prüfung ohne Ändern (zu neu, beschädigt, fremd), Zahl der
+   Notizen für den Halt bei Massenverlust. */
+async function runSaveCheck(browser, part, step) {
+  const sandbox = { console };
+  sandbox.window = sandbox;
+  const context = vm.createContext(sandbox);
+  for (const f of ['packages/core/i18n.js', ED('labels.js'), 'packages/core/history.js', ED('dates.js'), ED('questions.js'), ED('tasks.js'), 'packages/core/links.js', 'packages/core/backend.js', 'packages/core/merge.js', 'packages/data/db.js']) {
+    vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
+  }
+  const SQL = await require(path.join(ROOT, 'vendor', 'sql.js', 'sql-asm.js'))();
+  const DB = sandbox.NoNotesDB;
+  const json = v => JSON.parse(JSON.stringify(v));
+  const userVersion = b => (b[60] << 24 | b[61] << 16 | b[62] << 8 | b[63]) >>> 0;
+
+  const db = DB.open(SQL, null);
+  for (let i = 0; i < 30; i++) DB.updateNote(db, DB.createNote(db, null), 'Notiz ' + i, 'Text '.repeat(100));
+  const bytes = DB.exportBytes(db);
+  assert.equal(userVersion(bytes), DB.SCHEMA_VERSION, 'user_version in den Bytes 60–63');
+  assert.equal(String(DB.SCHEMA_VERSION), SCHEMA_VERSION);
+  assert.equal(DB.check(SQL, bytes), null, 'eine gute Datei ist ohne Befund');
+  assert.equal(DB.check(SQL, null), null, 'nichts: kein Befund');
+  assert.equal(DB.check(SQL, new Uint8Array(0)), null, 'leer: kein Befund');
+  DB.updateNote(db, 1, 'Nach dem Export', 'weiter');
+  assert.equal(DB.getNote(db, 1).title, 'Nach dem Export', 'nach dem Export geht es normal weiter');
+  part('Schema im Dateikopf: PRAGMA user_version bei jedem Export (Bytes 60–63); leere und gute Dateien ohne Befund');
+
+  // zu neu: über user_version (die Tabelle meta sagt nichts Neues) oder über meta
+  const newer = (meta, user) => {
+    const d = new SQL.Database(bytes);
+    if (meta != null) d.run("UPDATE meta SET value = ? WHERE key = 'schema_version'", [String(meta)]);
+    if (user != null) d.run(`PRAGMA user_version = ${user}`);
+    const out = d.export();
+    d.close();
+    return out;
+  };
+  assert.deepEqual(json(DB.check(SQL, newer(null, 99))), { code: 'SCHEMA_TOO_NEW', params: { version: 99, unterstuetzt: DB.SCHEMA_VERSION } });
+  assert.deepEqual(json(DB.check(SQL, newer(42, null))), { code: 'SCHEMA_TOO_NEW', params: { version: 42, unterstuetzt: DB.SCHEMA_VERSION } });
+  assert.throws(() => DB.open(SQL, newer(null, 99)), e => e.code === 'SCHEMA_TOO_NEW' && e.params.version === 99, 'Öffnen nimmt den grösseren der beiden Werte');
+  // eine alte Datei ohne user_version (0) wird wie bisher angeglichen und trägt danach das aktuelle Schema auch im Kopf
+  const old = newer(16, 0);
+  assert.equal(DB.check(SQL, old), null);
+  const info = {};
+  const up = DB.open(SQL, old, info);
+  assert.equal(info.upgradedFrom, 16);
+  assert.equal(userVersion(DB.exportBytes(up)), DB.SCHEMA_VERSION);
+  up.close();
+  part('Zu neu: Schema über user_version oder meta, Öffnen lehnt ab; alte Dateien mit user_version 0 werden angeglichen');
+
+  // fremd: keine SQLite-Datei oder SQLite ohne Tabelle notes
+  assert.deepEqual(json(DB.check(SQL, new TextEncoder().encode('Das ist ein Text und keine Datenbank. '.repeat(10)))), { code: 'NOT_NONOTES_FILE', params: { sqlite: false } });
+  assert.deepEqual(json(DB.check(SQL, bytes.slice(0, 50))), { code: 'NOT_NONOTES_FILE', params: { sqlite: false } }, 'zu kurz');
+  const other = new SQL.Database();
+  other.run('CREATE TABLE kunden (id INTEGER PRIMARY KEY, name TEXT)');
+  assert.deepEqual(json(DB.check(SQL, other.export())), { code: 'NOT_NONOTES_FILE', params: { sqlite: true } });
+  other.close();
+  part('Fremd: keine SQLite-Datei, zu kurz, SQLite ohne Tabelle notes');
+
+  // beschädigt: eine Seite mitten in der Datei überschrieben
+  const pageSize = bytes[16] << 8 | bytes[17];
+  assert.ok(bytes.length / pageSize > 6, 'die Probe hat genug Seiten');
+  for (const page of [2, 5]) {
+    const bad = bytes.slice();
+    for (let i = (page - 1) * pageSize; i < page * pageSize; i++) bad[i] = (i * 7) & 255;
+    const found = DB.check(SQL, bad);
+    assert.equal(found && found.code, 'DAMAGED', `Seite ${page}: ${JSON.stringify(found)}`);
+    assert.ok(found.params.message, 'mit Meldung');
+  }
+  assert.equal(DB.check(SQL, bytes), null, 'die Prüfung ändert die Bytes nicht');
+  part('Beschädigt: PRAGMA quick_check findet überschriebene Seiten, die Prüfung ändert nichts');
+
+  // Zahl der Notizen: Papierkorb und Archiv zählen mit
+  assert.equal(DB.countRecords(db), 30);
+  DB.deleteNote(db, 2);
+  DB.archiveNote(db, 3);
+  assert.equal(DB.countRecords(db), 30, 'Papierkorb und Archiv zählen mit');
+  db.close();
+  part('Zahl der Notizen für den Halt bei Massenverlust: Papierkorb und Archiv zählen mit');
+}
+
+// ============================================================
 /* Mail-Entwurf als Datei (v4.3.0, packages/core/mail.js): Kopfzeilen nach RFC 2047, MIME mit Text und PDF, Entwurfsmarke, Dateinamen. */
 async function runMail(browser, part, step) {
   const ctx = vm.createContext({ TextEncoder, Buffer });
@@ -3290,6 +3370,7 @@ suite('Kern-Test', [
   { name: 'Programm für den eigenen Rechner: Einträge für Claude Code und andere, Datei, MCP über die Standardeingabe, Änderungen von aussen, zwei Prozesse mit Sperre, Lesemodus', run: runAgentProgram },
   { name: 'Termine mit «>» (v3.0.0): Schreibweise, Frist und Erinnerungen, Umstellung alter Dateien, Speichern, Index, Vorschau, Kalender, Agenten, Programm mit Sicherung, Seiten der Mindmap', run: runDatesV3 },
   { name: 'Link am Knoten und Auslösen in einen neuen Bereich (v3.2.0): Schema 18, Prüfung der Links, Umschreiben, Umzug zwischen zwei Datenbanken', run: runNodeLinks },
+  { name: 'Speichern sicher (v4.4.0): Schema im Dateikopf, Prüfung auf zu neu, fremd und beschädigt, Zahl der Notizen', run: runSaveCheck },
   { name: 'Mail-Entwurf als Datei (v4.3.0): Kopfzeilen nach RFC 2047, MIME mit Text und PDF, Entwurfsmarke, Dateinamen', run: runMail },
   { name: 'In Unterknoten auslagern (v4.2.0): Abschnitte nach Überschriften, Wahl, erster Satz, Inline und Zeilen, Listen, Bilder, Rückgängig, Agenten', run: runExtract },
   { name: 'PDF-Schreiber (v4.1.0): Aufbau, Text in WinAnsi mit Breite, Formen, Bilder mit Maske und JPEG, Links, Lesezeichen, ohne Kompression', run: runPdf },

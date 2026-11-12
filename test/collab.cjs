@@ -340,7 +340,7 @@ async function runHistory(browser, part, step) {
     const db = new SQL.Database(new Uint8Array(fs.readFileSync(dlPath)));
     assert.equal(db.exec("SELECT value FROM meta WHERE key='schema_version'")[0].values[0][0], SCHEMA_VERSION);
     assert.ok(db.exec('SELECT count(*) FROM note_history')[0].values[0][0] >= 1);
-    db.run('DROP TABLE note_history; UPDATE meta SET value = \'10\' WHERE key = \'schema_version\';');
+    db.run('DROP TABLE note_history; UPDATE meta SET value = \'10\' WHERE key = \'schema_version\'; PRAGMA user_version = 0;');
     const v10 = path.join(tmp, 'schema10.sqlite');
     fs.writeFileSync(v10, Buffer.from(db.export()));
     db.close();
