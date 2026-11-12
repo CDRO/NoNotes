@@ -763,7 +763,7 @@ async function runAgent(browser, part, step) {
   assert.match(T(r), /\[q \d+\] \(note \d+ "Projekt"\) Welche Bank\? — open/);
   assert.match(T(r), /\[d \d+\] \(note \d+ "Projekt"\) Variante A oder B\? @anna \(@ben\) — open/);
   assert.match(T(r), /\[t \d+\] \(note \d+ "Projekt"\) Angebot einholen — due 2026-10-20 — 1 of 1 subtasks open — open/);
-  assert.match(T(r), /\[t \d+\] \(note \d+ "Projekt"\)   Bank anrufen — open/);
+  assert.match(T(r), /\[t \d+\] \(note \d+ "Projekt"\)   Bank anrufen — due 2026-10-20 \(from parent task\) — open/); // seit 4.5.0 mit der Frist der Hauptaufgabe
   r = ok(await call('list_notes', {}));
   assert.equal(T(r), `- [${pid}] Projekt  (1 open question, 1 open decision, 2 open tasks)\n  - [${cid}] Kind`);
   assert.equal(S(r).notes[1].depth, 1);
@@ -2292,7 +2292,7 @@ async function runCellsPeople(browser, part, step) {
   const cat = sandbox.NoNotesAgent.create(backend, { author: 'Agent' });
   let res = await cat.call('list_tasks', { person: 'anna', status: 'all' });
   assert.ok(!res.isError, res.content[0].text);
-  assert.match(res.content[0].text, /Preise vergleichen — assigned via parent task: @anna, @ben/);
+  assert.match(res.content[0].text, /Preise vergleichen — due 2026-11-15 \(from parent task\) — assigned via parent task: @anna, @ben/); // seit 4.5.0 mit der Frist der Hauptaufgabe
   assert.deepEqual(json(res.structuredContent).items.find(x => x.text === 'Offerten @anna').people, [{ handle: 'anna', optional: false, inherited: false }]);
   res = await cat.call('list_people', {});
   assert.match(res.content[0].text, /@anna, @ben, @cem, @dora/);
@@ -3222,6 +3222,116 @@ async function runExtract(browser, part, step) {
 }
 
 // ============================================================
+/* Frist der Hauptaufgabe (v4.5.0): eine Unteraufgabe ohne eigenes Datum hat die Frist der nächsten Hauptaufgabe darüber; die eigene geht
+   vor. Liste, Sortierung, überfällig, Zähler, Export, Agenten; der Kalender nur mit eigenen Fristen; der Text bleibt unverändert. */
+async function runInheritedDue(browser, part, step) {
+  const sandbox = { console, TextEncoder, crypto: globalThis.crypto };
+  sandbox.window = sandbox;
+  const context = vm.createContext(sandbox);
+  for (const f of ['packages/core/i18n.js', ED('labels.js'), ED('placeholders.js'), 'packages/core/history.js', ED('dates.js'), ED('questions.js'),
+    ED('tables.js'), ED('tasks.js'), 'packages/core/links.js', ED('embeds.js'), ED('markdown.js'), 'packages/core/backend.js',
+    'packages/core/merge.js', 'packages/core/templates.js', 'packages/core/ical.js', 'packages/core/export.js', 'packages/data/db.js',
+    'packages/store-local/backend-local.js', 'packages/agent/catalog.js']) {
+    vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
+  }
+  const DB = sandbox.NoNotesDB;
+  const json = v => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
+  const SQL = await initSqlJs();
+  const d = DB.open(SQL, null);
+  const B = sandbox.NoNotesBackendLocal.create({ getDb: () => d });
+  const id = await B.createNote(null);
+  const BODY = [
+    '- [ ] Haupt @anna >20.11.2026',
+    '  - [ ] Unter A',
+    '  - [ ] Unter B >18.11.2026',
+    '    - [ ] Enkel B',
+    '  - [ ] Unter C >10.11.2026 >25.11.2026',
+    '  - [ ] Unter D',
+    '    - [ ] Enkel D',
+    '- [ ] Ohne Frist',
+    '  - [ ] Unter ohne',
+    '- [ ] Alt >1.10.2026',
+    '  - [x] Alt erledigt',
+    '  - [ ] Alt offen',
+    '',
+    '| Wer | Was |',
+    '|---|---|',
+    '| anna | [ ] Im Feld |',
+  ].join('\n');
+  await B.updateNote(id, 'Plan', BODY, {});
+  const byText = rows => Object.fromEntries(rows.map(r => [r.text.replace(/ @anna$/, ''), [r.due, r.due_inherited]]));
+  let rows = json(await B.listTasks({ status: 'all' }));
+  assert.deepEqual(byText(rows), {
+    'Haupt': ['2026-11-20', false],
+    'Unter A': ['2026-11-20', true],
+    'Unter B': ['2026-11-18', false],
+    'Enkel B': ['2026-11-18', true],
+    'Unter C': ['2026-11-25', false],
+    'Unter D': ['2026-11-20', true],
+    'Enkel D': ['2026-11-20', true],
+    'Ohne Frist': [null, false],
+    'Unter ohne': [null, false],
+    'Alt': ['2026-10-01', false],
+    'Alt erledigt': ['2026-10-01', true],
+    'Alt offen': ['2026-10-01', true],
+    'Im Feld': [null, false],
+  });
+  assert.deepEqual(rows.find(r => r.text === 'Unter A').reminders, [], 'Erinnerungen erbt sie nicht');
+  assert.equal(json(await B.getNote(id)).body, BODY, 'der Text bleibt, wie er ist');
+  assert.equal(json(await B.getTask(rows.find(r => r.text === 'Unter A').id)).due, null, 'der Index hält nur die eigene Frist');
+  part('Liste: ohne eigenes Datum die Frist der nächsten Hauptaufgabe darüber (beliebig tief), die eigene geht vor, keine Erinnerungen, Text und Index unverändert');
+
+  rows = json(await B.listTasks({ status: 'open', sort: 'due' }));
+  assert.deepEqual(rows.map(r => r.text.replace(/ @anna$/, '')),
+    ['Alt', 'Alt offen', 'Unter B', 'Enkel B', 'Haupt', 'Unter A', 'Unter D', 'Enkel D', 'Unter C', 'Ohne Frist', 'Unter ohne', 'Im Feld']);
+  assert.deepEqual(json(await B.countTasks('2026-11-12T10:00')), { open: 12, total: 13, overdue: 2 }, 'die offene Unteraufgabe von «Alt» ist mit überfällig');
+  rows = json(await B.listTasks({ status: 'open', person: 'anna' }));
+  assert.ok(rows.some(r => r.text === 'Unter A' && r.due === '2026-11-20'), 'mit der geerbten Person auch die geerbte Frist');
+  part('Sortierung nach Frist mit der geerbten Frist, überfällig und Zähler, Filter nach Person');
+
+  // Die Frist der Hauptaufgabe ändert sich: die Unteraufgaben folgen; ein eigenes Datum löst sie davon
+  await B.updateNote(id, 'Plan', BODY.replace('Haupt @anna >20.11.2026', 'Haupt @anna >27.11.2026').replace('  - [ ] Unter A', '  - [ ] Unter A >15.11.2026'), {});
+  rows = json(await B.listTasks({ status: 'all' }));
+  assert.deepEqual(byText(rows)['Unter D'], ['2026-11-27', true]);
+  assert.deepEqual(byText(rows)['Enkel D'], ['2026-11-27', true]);
+  assert.deepEqual(byText(rows)['Unter A'], ['2026-11-15', false]);
+  await B.updateNote(id, 'Plan', BODY.replace('Haupt @anna >20.11.2026', 'Haupt @anna'), {});
+  rows = json(await B.listTasks({ status: 'all' }));
+  assert.deepEqual(byText(rows)['Unter A'], [null, false], 'ohne Frist oben keine');
+  assert.deepEqual(byText(rows)['Enkel B'], ['2026-11-18', true]);
+  await B.updateNote(id, 'Plan', BODY, {});
+  part('Ändert sich die Frist der Hauptaufgabe, folgen die Unteraufgaben; ein eigenes Datum geht vor; ohne Frist oben keine');
+
+  // Kalender: nur eigene Fristen
+  const { ics } = await sandbox.NoNotesCalendar.build(B, { dryRun: true, now: '2026-11-12T08:00:00Z' });
+  const summaries = ics.split('\r\n').filter(l => l.startsWith('SUMMARY:')).map(l => l.slice(8));
+  assert.ok(summaries.some(x => /Haupt/.test(x)) && summaries.some(x => /Unter B/.test(x)) && summaries.some(x => /Unter C/.test(x)), summaries.join(' | '));
+  assert.ok(!summaries.some(x => /Unter A|Enkel|Unter D|Alt offen/.test(x)), 'keine Einträge für geerbte Fristen: ' + summaries.join(' | '));
+  part('Kalender (.ics): nur Aufgaben mit eigener Frist, keine Einträge für geerbte');
+
+  // Export: «Offene Aufgaben» nennt die Frist mit Hinweis
+  const nodes = [{ id, title: 'Plan' }];
+  const lines = await sandbox.NoNotesExport.openLines(B, nodes, () => 'plan.md', false);
+  const unterA = lines.find(l => l.includes('Unter A'));
+  assert.match(unterA, /\(bis 20\.11\.2026, Frist der Hauptaufgabe\)/);
+  assert.ok(!/Frist der Hauptaufgabe/.test(lines.find(l => l.includes('Unter B'))), 'eigene Frist ohne Hinweis');
+  part('Export: in «Offene Aufgaben» die geerbte Frist mit «Frist der Hauptaufgabe»');
+
+  // Agenten
+  const A = sandbox.NoNotesAgent;
+  assert.match(A.INSTRUCTIONS, /A subtask without its own date has the deadline of its parent task/);
+  const agent = A.create(B);
+  const r = await agent.call('list_tasks', { query: 'Unter' });
+  const items = json(r.structuredContent.items);
+  assert.deepEqual(items.filter(x => x.text === 'Unter A').map(x => [x.due, x.due_inherited]), [['2026-11-20', true]]);
+  assert.deepEqual(items.filter(x => x.text === 'Unter B').map(x => [x.due, x.due_inherited]), [['2026-11-18', false]]);
+  assert.match(r.content[0].text, /Unter A — due 2026-11-20 \(from parent task\)/);
+  assert.match(r.content[0].text, /Unter B — due 2026-11-18 —/);
+  part('Agenten: list_tasks mit due und due_inherited, im Text «(from parent task)»; die Anleitung erklärt es');
+  d.close();
+}
+
+// ============================================================
 /* Speichern sicher (v4.4.0, packages/data/db.js): Schema im Dateikopf, Prüfung ohne Ändern (zu neu, beschädigt, fremd), Zahl der
    Notizen für den Halt bei Massenverlust. */
 async function runSaveCheck(browser, part, step) {
@@ -3370,6 +3480,7 @@ suite('Kern-Test', [
   { name: 'Programm für den eigenen Rechner: Einträge für Claude Code und andere, Datei, MCP über die Standardeingabe, Änderungen von aussen, zwei Prozesse mit Sperre, Lesemodus', run: runAgentProgram },
   { name: 'Termine mit «>» (v3.0.0): Schreibweise, Frist und Erinnerungen, Umstellung alter Dateien, Speichern, Index, Vorschau, Kalender, Agenten, Programm mit Sicherung, Seiten der Mindmap', run: runDatesV3 },
   { name: 'Link am Knoten und Auslösen in einen neuen Bereich (v3.2.0): Schema 18, Prüfung der Links, Umschreiben, Umzug zwischen zwei Datenbanken', run: runNodeLinks },
+  { name: 'Frist der Hauptaufgabe (v4.5.0): Unteraufgaben ohne eigenes Datum, beliebig tief, Sortierung, überfällig, Kalender nur eigene, Export, Agenten', run: runInheritedDue },
   { name: 'Speichern sicher (v4.4.0): Schema im Dateikopf, Prüfung auf zu neu, fremd und beschädigt, Zahl der Notizen', run: runSaveCheck },
   { name: 'Mail-Entwurf als Datei (v4.3.0): Kopfzeilen nach RFC 2047, MIME mit Text und PDF, Entwurfsmarke, Dateinamen', run: runMail },
   { name: 'In Unterknoten auslagern (v4.2.0): Abschnitte nach Überschriften, Wahl, erster Satz, Inline und Zeilen, Listen, Bilder, Rückgängig, Agenten', run: runExtract },

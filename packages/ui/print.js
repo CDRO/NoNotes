@@ -265,7 +265,7 @@
       const u = r.done ? 'none' : T.urgency(r.due, today);
       const inherited = (r.people || []).filter(p => p.inherited).map(p => '@' + p.handle);
       const meta = [
-        r.due ? D.dueText(r.due, r.done ? [] : r.reminders) : null,
+        r.due ? D.dueText(r.due, r.done ? [] : r.reminders) + (r.due_inherited ? ' ' + t('(Frist der Hauptaufgabe)') : '') : null,
         inherited.length ? t('über die Hauptaufgabe: {personen}', { personen: inherited.join(', ') }) : null,
         r.sub_total ? t('{erledigt}/{gesamt} Unteraufgaben', { erledigt: r.sub_done, gesamt: r.sub_total }) : null,
         options.groupBy === 'note' ? null : (r.parent_text ? t('Teil von „{aufgabe}“', { aufgabe: r.parent_text }) : null),

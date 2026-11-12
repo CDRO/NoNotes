@@ -210,7 +210,7 @@
     if (!rows.length) return [t('Keine offenen Aufgaben.')];
     return rows.map(r => {
       const n = byId.get(r.note_id);
-      const due = (r.due ? ' (' + D.dueText(r.due, r.reminders) + ')' : '') + (r.parent_text ? ' · ' + t('Teil von „{aufgabe}“', { aufgabe: r.parent_text }) : '');
+      const due = (r.due ? ' (' + D.dueText(r.due, r.reminders) + (r.due_inherited ? ', ' + t('Frist der Hauptaufgabe') : '') + ')' : '') + (r.parent_text ? ' · ' + t('Teil von „{aufgabe}“', { aufgabe: r.parent_text }) : '');
       return n ? `- [ ] ${r.text}${due} — ${t('aus')} [${n.title.trim() || t('Ohne Titel')}](${hrefOf(n)})` : `- [ ] ${r.text}${due}`;
     });
   }

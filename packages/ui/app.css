@@ -816,6 +816,7 @@ body:not(.view-tasks) .tasks-view { display: none; }
 .history-mark { list-style: none; margin: 6px 0; padding: 4px 8px; font-size: 12px; color: var(--muted); border-left: 3px solid var(--accent-ink); }
 .q-item .q-head .due { margin-left: auto; }
 .q-item .q-head .due.reminder + .due { margin-left: 6px; }
+.q-item .q-head .due.inherited { opacity: .6; font-style: italic; } /* Frist der Hauptaufgabe (seit 4.5.0) */
 .segmented .count.q-overdue { background: var(--danger); }
 .segmented .count.decisions { background: var(--text); color: var(--panel); }
 .segmented .count.decisions.overdue { background: var(--danger); color: #fff; }

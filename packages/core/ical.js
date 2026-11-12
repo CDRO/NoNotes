@@ -102,7 +102,7 @@
     const items = [];
     const path = async noteId => (await backend.getPath(noteId)).map(p => p.title.trim() || t('Ohne Titel'));
     for (const task of await backend.listTasks({ status: includeDone ? 'all' : 'open', sort: 'due' })) {
-      if (!task.due) continue;
+      if (!task.due || task.due_inherited) continue; // nur eigene Fristen; Unteraufgaben mit der Frist der Hauptaufgabe nicht (seit 4.5.0)
       items.push({ kind: 'task', id: task.id, text: task.text, due: task.due, reminders: task.reminders || [], closed: !!task.done, noteId: task.note_id, noteTitle: task.note_title, path: await path(task.note_id), tags: await backend.getTags(task.note_id), answer: null });
     }
     for (const q of await backend.listQuestions({ status: includeDone ? 'all' : 'open', sort: 'due' })) {

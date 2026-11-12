@@ -977,9 +977,19 @@
     return out;
   }
 
+  /** Frist jeder Aufgabe, wie sie gilt (seit 4.5.0): die eigene aus dem Text, sonst die der nächsten Hauptaufgabe darüber, die eine
+   *  hat (beliebig tief). Als Tabelle eff(id, due, inherited) für ein WITH; inherited = 1, wenn die Frist von oben kommt. Der Index
+   *  behält nur die eigene Frist (tasks.due), so bleibt der Text die einzige Wahrheit und das Schema gleich. */
+  const EFFECTIVE_DUE = `WITH RECURSIVE eff(id, due, inherited) AS (
+      SELECT id, due, 0 FROM tasks WHERE parent_id IS NULL
+      UNION ALL
+      SELECT c.id, COALESCE(c.due, eff.due), CASE WHEN c.due IS NULL AND eff.due IS NOT NULL THEN 1 ELSE 0 END
+        FROM tasks c JOIN eff ON c.parent_id = eff.id)`;
+
   /** Aufgaben über alle lebenden Notizen. status: 'open' | 'done' | 'all'; sort: 'due' | 'note' | 'person' (nach der ersten
    *  verantwortlichen Person, ohne Person am Schluss, darin nach Termin); person: nur Aufgaben, die diese Person nennen (auch
-   *  geerbt von der Hauptaufgabe). people je Zeile als Liste [{ handle, optional, inherited? }]. */
+   *  geerbt von der Hauptaufgabe). people je Zeile als Liste [{ handle, optional, inherited? }]. due ist die geltende Frist: ohne
+   *  eigenes Datum die der Hauptaufgabe (due_inherited: true, seit 4.5.0); reminders sind immer die eigenen. */
   function listTasks(db, options) {
     const status = (options && options.status) || 'open';
     const q = ((options && options.query) || '').trim().toLowerCase();
@@ -1006,14 +1016,15 @@
     }
     const order = sort === 'note'
       ? 't.done, n.updated_at DESC, n.id, t.line_no, t.id'
-      : 't.done, (t.due IS NULL), t.due, n.updated_at DESC, n.id, t.line_no, t.id';
+      : 't.done, (COALESCE(e.due, t.due) IS NULL), COALESCE(e.due, t.due), n.updated_at DESC, n.id, t.line_no, t.id';
     const rows = selectAll(db,
-      `SELECT t.id, t.note_id, t.text, t.norm, t.done, t.due, t.reminders, t.line_no, t.created_at, t.done_at, t.parent_id, t.depth, t.people,
-              n.title AS note_title, n.updated_at AS note_updated_at
-         FROM tasks t JOIN notes n ON n.id = t.note_id
+      `${EFFECTIVE_DUE}
+       SELECT t.id, t.note_id, t.text, t.norm, t.done, COALESCE(e.due, t.due) AS due, COALESCE(e.inherited, 0) AS due_inherited, t.reminders,
+              t.line_no, t.created_at, t.done_at, t.parent_id, t.depth, t.people, n.title AS note_title, n.updated_at AS note_updated_at
+         FROM tasks t JOIN notes n ON n.id = t.note_id LEFT JOIN eff e ON e.id = t.id
         WHERE ${where.join(' AND ')}
         ORDER BY ${order}`, params);
-    for (const r of rows) { r.people = peopleOf(r); r.reminders = remindersOf(r); }
+    for (const r of rows) { r.people = peopleOf(r); r.reminders = remindersOf(r); r.due_inherited = !!r.due_inherited; }
     if (sort === 'person') {
       // nach der ersten verantwortlichen Person (sonst der ersten genannten); ohne Person am Schluss; sonst bleibt die Reihenfolge
       const key = r => { const p = r.people.find(x => !x.optional) || r.people[0]; return p ? p.handle.toLowerCase() : null; };
@@ -1065,9 +1076,11 @@
     const now = nowIso || '0000-00-00';
     const today = now.slice(0, 10);
     const row = selectOne(db,
-      `SELECT sum(t.done = 0) AS open, count(*) AS total,
-              sum(t.done = 0 AND t.due IS NOT NULL AND ${overdueClause('t.due')}) AS overdue
-         FROM tasks t JOIN notes n ON n.id = t.note_id WHERE n.deleted_at IS NULL AND n.archived_at IS NULL`, [today, now]);
+      `${EFFECTIVE_DUE}
+       SELECT sum(t.done = 0) AS open, count(*) AS total,
+              sum(t.done = 0 AND COALESCE(e.due, t.due) IS NOT NULL AND ${overdueClause('COALESCE(e.due, t.due)')}) AS overdue
+         FROM tasks t JOIN notes n ON n.id = t.note_id LEFT JOIN eff e ON e.id = t.id
+        WHERE n.deleted_at IS NULL AND n.archived_at IS NULL`, [today, now]);
     return { open: Number(row && row.open || 0), total: Number(row && row.total || 0), overdue: Number(row && row.overdue || 0) };
   }
 

@@ -3136,6 +3136,13 @@ async function runCellsPeopleUi(browser, part, step) {
   assert.equal(await inherited.innerText(), '@anna', 'geerbte Person blass');
   assert.equal(await inherited.getAttribute('title'), 'Über die Hauptaufgabe');
   assert.equal(await page.locator('#tList .t-item:has-text("Offerte einholen") .md-person:not(.inherited)').innerText(), '@anna', 'eigene Person als Marke');
+  // Frist der Hauptaufgabe (seit 4.5.0): die Unteraufgabe ohne eigenes Datum zeigt sie blass
+  const inheritedDue = page.locator('#tList .t-item:has-text("Preise vergleichen") .due');
+  assert.equal(await inheritedDue.innerText(), '15.11.2030');
+  assert.equal(await inheritedDue.getAttribute('class'), 'due later inherited');
+  assert.equal(await inheritedDue.getAttribute('title'), 'Frist der Hauptaufgabe');
+  assert.equal(await page.locator('#tList .t-item:has-text("Offerte einholen"):not(:has-text("Preise vergleichen")) .due').getAttribute('class'), 'due later', 'die eigene Frist wie bisher');
+  assert.equal(await page.locator('#tList .t-item:has-text("Vertrag prüfen") .due').count(), 0, 'ohne Hauptaufgabe keine Frist');
   await page.selectOption('#tPersonFilter', 'anna');
   await page.waitForFunction(() => document.querySelectorAll('#tList .t-item').length === 3);
   assert.deepEqual((await page.locator('#tList .t-item .q-text').allInnerTexts()).map(x => x.split('@')[0].trim()).sort(), ['Offerte einholen', 'Preise vergleichen', 'Vertrag prüfen'], 'Filter: verantwortlich, beteiligt und geerbt');
@@ -3145,7 +3152,7 @@ async function runCellsPeopleUi(browser, part, step) {
   assert.deepEqual((await page.locator('#tList h3').allInnerTexts()).map(h => h.split('\n')[0].replace(/\d+ Aufgaben?$/, '').trim()), ['@anna', '@ben', '@cem', 'Ohne Person']);
   assert.deepEqual(await page.evaluate(() => [...[...document.querySelectorAll('#tList section')][0].querySelectorAll('.t-item .q-text')].map(x => x.textContent.split('@')[0].trim()).sort()),
     ['Offerte einholen', 'Preise vergleichen', 'Vertrag prüfen'], 'bei @anna: verantwortlich, geerbt und beteiligt; eine Aufgabe für zwei steht bei beiden');
-  part('Aufgaben: Auswahl der Person, eigene und geerbte Personen (blass), Filter mit beteiligt und geerbt, nach Person mit einer Gruppe je Person');
+  part('Aufgaben: Auswahl der Person, eigene und geerbte Personen und Fristen (blass), Filter mit beteiligt und geerbt, nach Person mit einer Gruppe je Person');
 
   // Druck nach Person
   await page.click('#tPrintBtn');
@@ -3155,8 +3162,9 @@ async function runCellsPeopleUi(browser, part, step) {
   await page.waitForFunction(() => window.__printed.length === 1);
   const printed = await page.evaluate(() => window.__printed[0]);
   assert.ok(/<h2>@anna<\/h2>.*Preise vergleichen.*über die Hauptaufgabe: @anna/s.test(printed), 'nach Person gedruckt, geerbte Person genannt');
+  assert.ok(/Preise vergleichen.*bis 15\.11\.2030 \(Frist der Hauptaufgabe\)/s.test(printed), 'die geerbte Frist im Druck');
   assert.ok(printed.indexOf('<h2>Ohne Person</h2>') > printed.indexOf('<h2>@cem</h2>'));
-  part('Druck der Aufgaben nach Person, mit geerbten Personen');
+  part('Druck der Aufgaben nach Person, mit geerbten Personen und Fristen');
 
   // ---------- Tabellenfelder in der Vorschau und im Editor ----------
   await page.evaluate(i => __ctx.openNote(i), ids.a);

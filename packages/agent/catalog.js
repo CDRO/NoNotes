@@ -23,7 +23,7 @@
     'NoNotes is a personal and team note-taking app: notes form a tree (a mind map), each note has a title and a Markdown body.',
     'Conventions inside the body: a line starting with "?" is a question, "?!" is a decision to take; answer lines start with "!" (questions) or "!!" (decisions), directly below.',
     'The same works in a list ("- ?! Buy the tool?" with the answer indented below) and over several lines: "?!``` Title" opens a block that a line "```" closes; the lines inside describe it, single-line "?!"/"?" lines inside are sub-decisions/sub-questions with their own answers, and the block\'s own answer follows right after "```". A block can also be a list item ("- ?!``` Title", its lines and closing "```" indented under the item\'s text).',
-    'Tasks are Markdown checkboxes "- [ ] text"; indented checkboxes are subtasks.',
+    'Tasks are Markdown checkboxes "- [ ] text"; indented checkboxes are subtasks. A subtask without its own date has the deadline of its parent task; do not copy that date into the subtask line.',
     'A due date goes at the very end of a task, question or decision line, after ">" with a space before it: "- [ ] Get quotes @anna >2026-11-06" or ">6.11.2026", with a time ">6.11.2026 14:00". Always write the full date. Several dates at the end of a line: the latest is the deadline, the earlier ones are reminders ("- [ ] Get quotes >30.10.2026 >6.11.2026"); keep them in date order. "@" is only for people; an old "@date" at the end of a line still counts as a date and is rewritten to ">date" when the note is saved.',
     '"@handle" names a person who should answer, decide or do a task; "(@handle)" marks an optional participant. A subtask without its own @handle belongs to the people of its parent task.',
     'Markdown tables ("| a | b |" with a "|---|---|" line below the header) may hold these entries in cells: "[ ] text" is a task, "? text" a question and "?! text" a decision; "<br>" separates lines inside a cell, and an answer follows in the same cell as "<br>! answer" ("<br>!! date: decision"). Write "\\|" for a "|" inside a cell.',
@@ -210,7 +210,7 @@
 
   function taskItem(r) {
     return {
-      id: r.id, note_id: r.note_id, note_title: r.note_title, text: r.text, done: !!r.done, due: r.due, reminders: r.reminders || [], depth: r.depth,
+      id: r.id, note_id: r.note_id, note_title: r.note_title, text: r.text, done: !!r.done, due: r.due, due_inherited: !!r.due_inherited, reminders: r.reminders || [], depth: r.depth,
       parent_id: r.parent_id, parent_text: r.parent_text || null, subtasks_total: r.sub_total || 0, subtasks_open: r.sub_open || 0,
       people: (r.people || []).map(p => ({ handle: p.handle, optional: !!p.optional, inherited: !!p.inherited })),
       created_at: r.created_at, done_at: r.done_at,
@@ -219,7 +219,7 @@
 
   function taskLine(r) {
     const parts = [`[t ${r.id}] (note ${r.note_id} ${quote(r.note_title)}) ${'  '.repeat(r.depth || 0)}${r.text}`];
-    if (r.due) parts.push(`due ${r.due}`);
+    if (r.due) parts.push(`due ${r.due}${r.due_inherited ? ' (from parent task)' : ''}`);
     if (r.reminders && r.reminders.length) parts.push(`reminders ${r.reminders.join(', ')}`);
     const inherited = (r.people || []).filter(p => p.inherited); // die eigenen @kürzel stehen schon im Text
     if (inherited.length) parts.push(`assigned via parent task: ${inherited.map(p => '@' + p.handle).join(', ')}`);
@@ -546,7 +546,7 @@
     },
     {
       name: 'list_tasks', title: 'List tasks', readOnly: true,
-      description: 'Tasks ("- [ ]" lines, and "[ ]" in table cells) across all notes: open by default, or done, or all; with deadline (due) and earlier reminder dates, subtask counts and assigned people ("@handle" responsible, "(@handle)" involved; a subtask without its own people belongs to those of its parent task). Filter by text, tag, note or person; sort by due date (default), by note or by person. Each item has an id for complete_task.',
+      description: 'Tasks ("- [ ]" lines, and "[ ]" in table cells) across all notes: open by default, or done, or all; with deadline (due) and earlier reminder dates, subtask counts and assigned people ("@handle" responsible, "(@handle)" involved; a subtask without its own people belongs to those of its parent task; a subtask without its own date has the deadline of its parent task, marked due_inherited). Filter by text, tag, note or person; sort by due date (default), by note or by person. Each item has an id for complete_task.',
       inputSchema: schema({
         status: { type: 'string', enum: ['open', 'done', 'all'], description: 'Default open.' },
         query: STR('Text to look for in the task or the note title.'), tag: STR('Only tasks in notes with this tag.'), note_id: ID('Only tasks in this note.'),

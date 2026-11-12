@@ -643,6 +643,12 @@ und Erinnerungen (siehe oben). Dasselbe gilt für Fragen und Entscheide.
     alle Unteraufgaben ab. Ist schon alles erledigt, öffnet er die Aufgabe wieder.
   - Eine Hauptaufgabe wieder zu öffnen lässt die Unteraufgaben erledigt. Eine Unteraufgabe
     wieder zu öffnen öffnet erledigte Hauptaufgaben darüber mit.
+  - **Frist der Hauptaufgabe** (seit 4.5.0): Eine Unteraufgabe ohne eigenes Datum hat die Frist
+    ihrer Hauptaufgabe, bei tieferen Ebenen die der nächsten Hauptaufgabe darüber, die eine hat. Ein
+    eigenes Datum geht vor. Die Aufgabenliste zeigt die geerbte Frist blass («Frist der
+    Hauptaufgabe»), sortiert und gruppiert danach und zählt sie für «überfällig»; Druck, Export und
+    Agenten nennen sie mit Hinweis. Der Text bleibt, wie er ist: Ändert sich die Frist der
+    Hauptaufgabe, folgen die Unteraufgaben. In den Kalenderexport kommen nur eigene Fristen.
   - In der Aufgabenliste bleibt jede Unteraufgabe ein eigener Eintrag mit eigenem Termin. Die
     Hauptaufgabe zeigt den Fortschritt (`2/3`), die Unteraufgabe «Teil von …». Bei Sortierung
     nach Notiz stehen Unteraufgaben eingerückt unter der Hauptaufgabe. Die Vorschau zeigt den

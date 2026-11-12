@@ -4165,8 +4165,9 @@
       if (!r.done) appendReminder(head, r.reminders);
       const due = document.createElement('span');
       const u = r.done ? 'none' : T.urgency(r.due, today);
-      due.className = 'due ' + u;
+      due.className = 'due ' + u + (r.due_inherited ? ' inherited' : '');
       due.textContent = (u === 'overdue' ? t('überfällig') + ' · ' : u === 'today' ? t('heute') + ' · ' : '') + T.formatDue(r.due);
+      if (r.due_inherited) due.title = t('Frist der Hauptaufgabe'); // die Unteraufgabe hat kein eigenes Datum (seit 4.5.0)
       head.appendChild(due);
     }
     item.appendChild(head);
