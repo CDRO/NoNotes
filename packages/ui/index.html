@@ -690,6 +690,18 @@ Firmenname wie im Handelsregister, **ohne** Rechtsform.
     </form>
   </dialog>
 
+  <!-- Gerettete, nicht übernommene Änderung zum Lesen und Kopieren (seit 4.7.0) -->
+  <dialog id="textDialog" class="dialog" aria-labelledby="textTitle">
+    <form method="dialog">
+      <h2 id="textTitle"></h2>
+      <textarea id="textBody" class="text-view" readonly rows="14" aria-labelledby="textTitle"></textarea>
+      <div class="row">
+        <button type="button" id="textCopyBtn" class="primary">Kopieren</button>
+        <button type="submit" value="close" class="ghost">Schliessen</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="exportDialog" class="dialog" aria-labelledby="exportTitle">
     <form method="dialog" id="exportForm">
       <h2 id="exportTitle">Als Markdown exportieren</h2>

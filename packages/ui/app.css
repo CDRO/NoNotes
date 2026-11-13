@@ -941,6 +941,8 @@ body:not(.view-tasks) .tasks-view { display: none; }
 /* ---------- Stoppschirm, Sicherungen, Halt bei Massenverlust (seit 4.4.0) ---------- */
 .stop-screen { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 24px 16px; background: var(--bg); overflow: auto; }
 .stop-screen[hidden] { display: none; }
+/* Gerettete Änderung zum Lesen (seit 4.7.0) */
+.text-view { width: min(720px, calc(100vw - 80px)); max-width: 100%; font: 13px/1.5 var(--mono, ui-monospace, monospace); white-space: pre-wrap; resize: vertical; }
 /* Abgleich mit der Datei (seit 4.6.0) */
 .sync-bar { position: fixed; left: 50%; bottom: 44px; transform: translateX(-50%); z-index: 95; display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px); padding: 10px 14px; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius); box-shadow: var(--shadow); font-size: 14px; }
 .sync-bar[hidden] { display: none; }

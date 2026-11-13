@@ -110,6 +110,20 @@ die eigenen Änderungen, **Meine Fassung behalten** überschreibt die Datei. Bis
   geschieht das, bevor etwas zu sehen ist. **Abbrechen** arbeitet mit der Kopie weiter; die Datei bleibt, wie sie ist. Ohne Kopie
   erscheint die Leiste nach 2 Sekunden; Abbrechen führt dann zum Stoppschirm «Laden abgebrochen».
 
+**Die letzte Änderung beim Schliessen** (seit 4.7.0). Gespeichert wird kurz nach der Eingabe; wer den Tab genau dann schliesst, verlor
+bisher womöglich die letzten Zeichen.
+
+- **Rettungskopie:** Beim Schliessen, Neuladen und Verstecken des Tabs legt die App die Titel und Texte, die noch nicht gespeichert
+  sind, sofort (synchron) im `localStorage` ab, je Tab unter eigenem Schlüssel und nur die Texte, nie die ganze Datenbank. Beim
+  nächsten Öffnen des Bereichs übernimmt sie sie als neue Fassung (mit Verlauf). Wurde die Notiz inzwischen anders geändert, führt
+  sie zeilenweise zusammen; geht das nicht, bietet eine ruhige Leiste den Text an («Text anzeigen…» zum Lesen und Kopieren,
+  «Verwerfen»). Nichts wird auf dem Stoppschirm oder während des Abgleichs übernommen; ist alles gespeichert, verschwindet die
+  Rettungskopie wieder.
+- **Die Browser-Kopie sofort:** Beim Verlassen der Seite schreibt die App die Browser-Kopie, bevor sie die Datei liest, und markiert sie
+  als der Datei voraus. Der nächste Start bringt sie in die Datei oder führt zusammen (siehe oben).
+- **Tabs ohne Datei:** Bevor ein Tab die Browser-Kopie schreibt, sieht er im Abgleich-Eintrag nach, ob ein anderer Tab inzwischen
+  geschrieben hat, und führt dessen Stand zusammen, statt ihn zu überschreiben, auch wenn die Nachricht des anderen Tabs fehlt.
+
 **Mehrere Bereiche** (seit 2.3.0). Für getrennte Themen, etwa Arbeit und Privat, legst du Bereiche an: jeder ist eine eigene
 Datenbank mit eigener Browser-Kopie, eigener Datei und eigener Hauptfarbe. Bearbeitet wird immer der aktive Bereich; Listen, Fragen,
 Entscheide, Aufgaben und Suche zeigen nur ihn.

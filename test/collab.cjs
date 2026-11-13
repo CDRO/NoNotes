@@ -707,7 +707,7 @@ async function runExternal(browser, part, step) {
     window.__hold = true;
     const store = NoNotesStorage.browserStore;
     const orig = store.saveDb.bind(store);
-    store.saveDb = async bytes => { while (window.__hold) await new Promise(r => setTimeout(r, 30)); return orig(bytes); };
+    store.saveDb = async (...args) => { while (window.__hold) await new Promise(r => setTimeout(r, 30)); return orig(...args); }; // alle Angaben weiterreichen (seit 4.6.0 auch den Abgleich-Eintrag)
   });
   await page.fill('#title', 'Eigene Notiz mitten im Speichern');
   await page.waitForFunction(() => document.querySelector('#status').dataset.state === 'saving'); // das Speichern läuft und hängt im Browser-Speicher
@@ -749,7 +749,7 @@ async function runExternal(browser, part, step) {
     window.__hold = true;
     const store = NoNotesStorage.browserStore;
     const orig = store.saveDb.bind(store);
-    store.saveDb = async bytes => { while (window.__hold) await new Promise(r => setTimeout(r, 50)); return orig(bytes); };
+    store.saveDb = async (...args) => { while (window.__hold) await new Promise(r => setTimeout(r, 50)); return orig(...args); }; // alle Angaben weiterreichen (seit 4.6.0 auch den Abgleich-Eintrag)
   });
   await p2.click('#list li >> text=Aus Tab eins');
   await p2.fill('#title', 'In Tab zwei geändert');
@@ -768,7 +768,11 @@ async function runExternal(browser, part, step) {
   await p2.evaluate(() => { window.__hold = true; });
   await p2.click('#list li >> text=In Tab zwei geändert');
   await p2.fill('#title', 'In Tab zwei nochmals');
-  await p1.click('#list li >> text=Aus Tab eins'); // Tab eins kennt den Stand von Tab zwei nicht (gestellter Kanal) und benennt dieselbe Notiz um
+  // Tab eins übernimmt zuerst den Stand von Tab zwei (eine Nachricht auf dem echten Kanal) und benennt dann dieselbe Notiz um. Seit
+  // 4.7.0 überschriebe er sie sonst nicht mehr blind: vor dem Schreiben sieht er im Abgleich-Eintrag, dass Tab zwei geschrieben hat.
+  await p1.evaluate(() => { const c = new BroadcastChannel('nonotes-mirror'); c.postMessage({ tab: 'test', area: 'main' }); c.close(); });
+  await p1.waitForFunction(() => document.querySelector('#list').textContent.includes('In Tab zwei geändert'));
+  await p1.click('#list li >> text=In Tab zwei geändert');
   await p1.fill('#title', 'In Tab eins umbenannt');
   await p1.waitForFunction(SAVED);
   await tabMessage(p2);

@@ -77,6 +77,7 @@
     app: $('#app'), boot: $('#boot'), version: $('#version'), status: $('#status'),
     stopScreen: $('#stopScreen'), stopTitle: $('#stopTitle'), stopLines: $('#stopLines'), stopActions: $('#stopActions'),
     syncBar: $('#syncBar'), syncText: $('#syncText'), syncCancelBtn: $('#syncCancelBtn'),
+    textDialog: $('#textDialog'), textTitle: $('#textTitle'), textBody: $('#textBody'), textCopyBtn: $('#textCopyBtn'),
     backupsBtn: $('#backupsBtn'), backupsDialog: $('#backupsDialog'), backupsList: $('#backupsList'), backupsHint: $('#backupsHint'),
     storageInfo: $('#storageInfo'), banner: $('#banner'),
     menuBtn: $('#menuBtn'), menu: $('#menu'), menuHint: $('#menuHint'), noteMenuBtn: $('#noteMenuBtn'), noteMenu: $('#noteMenu'),
@@ -392,7 +393,9 @@
       renderAll: () => renderAll(),
       onDatabaseReplaced,
       confirmMigration,
-      showStop, hideStop, showSync, hideSync,
+      showStop, hideStop, showSync, hideSync, showText,
+      // seit 4.7.0: Titel und Text der offenen Notiz, solange sie noch nicht in der Datenbank stehen (für die Rettungskopie)
+      unsavedEditor: () => (noteUnsaved() ? { id: state.sync.id, title: el.title.value, body: el.body.value } : null),
       openBackups: opts => openBackups(opts),
       // Adresse nachführen (v2.7.0); false, solange die Navigation noch nicht läuft (dann setzt die Hülle die Adresse selbst)
       replaceNav: () => { if (!state.navReady) return false; replaceNav(); return true; },
@@ -443,6 +446,19 @@
     el.app.inert = !el.stopScreen.hidden;
   }
   el.syncCancelBtn.addEventListener('click', () => { if (syncCancel) syncCancel(); });
+
+  /** Ein Text zum Lesen und Kopieren (seit 4.7.0: eine gerettete Änderung, die sich nicht von selbst übernehmen liess). */
+  function showText(title, text) {
+    el.textTitle.textContent = title;
+    el.textBody.value = text;
+    if (!el.textDialog.open) el.textDialog.showModal();
+    el.textBody.scrollTop = 0;
+  }
+  el.textCopyBtn.addEventListener('click', async () => {
+    el.textBody.select();
+    try { await navigator.clipboard.writeText(el.textBody.value); setStatus(t('Kopiert'), 'saved'); }
+    catch (e) { document.execCommand('copy'); }
+  });
 
   const BACKUP_REASONS = {
     opened: N_('vom ersten Speichern nach dem Öffnen'),
@@ -4308,7 +4324,7 @@
 
   function anyDialogOpen() {
     return [el.exportDialog, el.pdfDialog, el.printDialog, el.qaPrintDialog, el.taskPrintDialog, el.helpDialog, el.calDialog, el.pluginsDialog, el.historyDialog, el.conflictDialog,
-      el.templateSaveDialog, el.templatePickDialog, el.templatesDialog, el.nodeLinkDialog, el.detachDialog, el.extractDialog, el.backupsDialog].some(d => d.open);
+      el.templateSaveDialog, el.templatePickDialog, el.templatesDialog, el.nodeLinkDialog, el.detachDialog, el.extractDialog, el.backupsDialog, el.textDialog].some(d => d.open);
   }
 
   function onQuestionSearchInput() {

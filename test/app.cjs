@@ -3980,41 +3980,46 @@ async function runSaveSafety(browser, part, step) {
 async function runUnreliableStorage(browser, part, step) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'de-CH', acceptDownloads: true });
   await ctx.addInitScript(() => {
-    // Eine nachgebaute Datei, die ein Neuladen übersteht (Inhalt in localStorage), mit Schaltern für Ausfälle
-    const LS = 'mock.file';
-    const st = { bytes: new Uint8Array(), mtime: 1 };
-    try {
-      const v = JSON.parse(localStorage.getItem(LS) || 'null');
-      if (v) { st.bytes = Uint8Array.from(atob(v.b64), c => c.charCodeAt(0)); st.mtime = v.mtime; }
-    } catch (e) { /* leer */ }
-    const persist = () => {
-      let s = '';
-      for (let i = 0; i < st.bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, st.bytes.subarray(i, i + 0x8000));
-      localStorage.setItem(LS, JSON.stringify({ b64: btoa(s), mtime: st.mtime }));
+    // Eine nachgebaute Datei, die ein Neuladen übersteht: ihr Inhalt liegt in einer eigenen IndexedDB (dort ist, was geschrieben ist, für
+    // die nächste Seite sicher da; localStorage kurz vor dem Neuladen nicht immer). Schalter für die nächste Seite über window.name.
+    const cfg = (() => { try { const v = JSON.parse(window.name || '{}'); return v && v.mock ? v.mock : {}; } catch (e) { return {}; } })();
+    const idb = async (mode, fn) => {
+      const db = await new Promise((res, rej) => { const r = indexedDB.open('mockfs', 1); r.onupgradeneeded = () => r.result.createObjectStore('f'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+      try {
+        return await new Promise((res, rej) => {
+          const tx = db.transaction('f', mode);
+          const q = fn(tx.objectStore('f'));
+          let v;
+          if (q) q.onsuccess = () => { v = q.result; };
+          tx.oncomplete = () => res(v);
+          tx.onerror = () => rej(tx.error);
+        });
+      } finally { db.close(); }
     };
+    const load = async () => (await idb('readonly', st => st.get('file'))) || { bytes: new Uint8Array(), mtime: 1 };
     const F = window.__file = {
-      get bytes() { return st.bytes; },
-      set(bytes) { st.bytes = bytes; st.mtime++; persist(); },
+      async read() { return (await load()).bytes; },
+      async set(bytes) { const cur = await load(); await idb('readwrite', st => st.put({ bytes, mtime: cur.mtime + 1 }, 'file')); },
       writes: 0, failRead: false, failWrite: false, truncate: false, throwAfterWrite: false,
-      delay: Number(localStorage.getItem('mock.delay') || 0),
+      delay: Number(cfg.delay || 0),
     };
     window.NONOTES_RETRY_MS = [30, 30, 30, 30, 30, 120];
     window.NONOTES_READ_CHUNK = 8192;
     window.NONOTES_LOADING_MS = 150;
-    const fileObj = () => {
-      const f = new File([st.bytes], 'Plan.sqlite', { lastModified: st.mtime });
+    const fileObj = cur => {
+      const f = new File([cur.bytes], 'Plan.sqlite', { lastModified: cur.mtime });
       if (!F.delay) return f;
       return { size: f.size, lastModified: f.lastModified, arrayBuffer: () => f.arrayBuffer(),
         slice: (a, b) => ({ arrayBuffer: async () => { await new Promise(r => setTimeout(r, F.delay)); return f.slice(a, b).arrayBuffer(); } }) };
     };
     const handle = {
       kind: 'file', name: 'Plan.sqlite', __mock: true,
-      queryPermission: async () => localStorage.getItem('mock.perm') || 'prompt',
+      queryPermission: async () => cfg.perm || 'prompt',
       requestPermission: async () => 'granted',
       isSameEntry: async o => !!(o && o.__mock),
       getFile: async () => {
         if (F.failRead) throw new DOMException('A requested file or directory could not be found at the time an operation was processed.', 'NotFoundError');
-        return fileObj();
+        return fileObj(await load());
       },
       createWritable: async () => {
         if (F.failWrite) throw new DOMException('The request is not allowed by the user agent or the platform in the current context.', 'NoModificationAllowedError');
@@ -4026,7 +4031,7 @@ async function runUnreliableStorage(browser, part, step) {
             let o = 0;
             for (const c of chunks) { out.set(c, o); o += c.length; }
             if (F.truncate) out = out.slice(0, out.length >> 1);
-            F.set(out);
+            await F.set(out);
             F.writes++;
             if (F.throwAfterWrite) { F.throwAfterWrite = false; throw new DOMException('The operation failed for an unknown transient reason.', 'InvalidStateError'); }
           },
@@ -4054,7 +4059,7 @@ async function runUnreliableStorage(browser, part, step) {
   page.on('dialog', d => { alerts.push(d.message()); d.accept(); });
   const SQL = await initSqlJs();
   const titles = bytes => { if (!bytes || !bytes.length) return []; const d = new SQL.Database(new Uint8Array(bytes)); try { return (d.exec('SELECT title FROM notes WHERE deleted_at IS NULL ORDER BY id')[0] || { values: [] }).values.map(r => r[0]); } finally { d.close(); } };
-  const fileTitles = async () => titles(await page.evaluate(() => Array.from(window.__file.bytes)));
+  const fileTitles = async () => titles(await page.evaluate(async () => Array.from(await window.__file.read())));
   const mirrorTitles = async () => titles(await page.evaluate(async () => Array.from(await NoNotesStorage.browserStore.loadDb() || [])));
   // warten, bis die Browser-Kopie einen Titel hat (die Wiederholung nimmt Eingaben mit, ohne eigenen Versuch)
   const untilMirror = async title => {
@@ -4066,10 +4071,10 @@ async function runUnreliableStorage(browser, part, step) {
   // eine Änderung an der Datei «von aussen», während dieser Tab sie nicht verbunden hat
   const changeFile = fn => page.evaluate(async src => {
     const SQLp = await initSqlJs();
-    const d = NoNotesDB.open(SQLp, window.__file.bytes);
+    const d = NoNotesDB.open(SQLp, await window.__file.read());
     // eslint-disable-next-line no-new-func
     new Function('DB', 'd', src)(NoNotesDB, d);
-    window.__file.set(NoNotesDB.exportBytes(d));
+    await window.__file.set(NoNotesDB.exportBytes(d));
     d.close();
   }, fn);
   const rename = async (from, to) => {
@@ -4191,8 +4196,8 @@ async function runUnreliableStorage(browser, part, step) {
     await rename('Drei', 'Drei gekürzt');
     await page.waitForFunction(n => window.__file.writes >= n + 2, w0, { timeout: 5000 }); // gekürzt geschrieben und wiederholt
     assert.equal((await status())[0], 'saving', 'still wiederholt');
-    assert.deepEqual(await page.evaluate(() => { const b = window.__file.bytes; return [b.length > 0, String.fromCharCode(...b.subarray(0, 15))]; }), [true, 'SQLite format 3']);
-    assert.equal(await page.evaluate(async () => !!NoNotesDB.check(await initSqlJs(), window.__file.bytes)), true, 'in der Datei steht ein halber Stand');
+    assert.deepEqual(await page.evaluate(async () => { const b = await window.__file.read(); return [b.length > 0, String.fromCharCode(...b.subarray(0, 15))]; }), [true, 'SQLite format 3']);
+    assert.equal(await page.evaluate(async () => !!NoNotesDB.check(await initSqlJs(), await window.__file.read())), true, 'in der Datei steht ein halber Stand');
     await page.evaluate(() => { window.__file.truncate = false; });
     await page.waitForFunction(SAVED, null, { timeout: 5000 });
     assert.equal(await page.locator('#banner:not([hidden])').count(), 0, 'keine Rückfrage wegen des eigenen halben Stands');
@@ -4208,7 +4213,7 @@ async function runUnreliableStorage(browser, part, step) {
 
     // ---------- schneller Start: die Kopie gleich, gesperrt, Abgleich mit Fortschritt ----------
     await changeFile("const id = DB.createNote(d, null); DB.updateNote(d, id, 'Schnellstart von aussen', '');");
-    await page.evaluate(() => { localStorage.setItem('mock.perm', 'granted'); localStorage.setItem('mock.delay', '60'); });
+    await page.evaluate(() => { window.name = JSON.stringify({ mock: { perm: 'granted', delay: 60 } }); });
     await page.reload();
     await page.waitForSelector(READY, { timeout: 30000 });
     await page.waitForSelector('#syncBar:not([hidden])', { timeout: 5000 });
@@ -4221,7 +4226,7 @@ async function runUnreliableStorage(browser, part, step) {
     assert.equal(await page.evaluate(() => document.querySelector('#app').inert), false);
     part('Öffnen mit freigegebener Datei: die Kopie sofort, gesperrt, Leiste mit Fortschritt (unter 1 MB in KB); danach gilt die neuere Datei');
 
-    await page.evaluate(() => localStorage.setItem('mock.delay', '400'));
+    await page.evaluate(() => { window.name = JSON.stringify({ mock: { perm: 'granted', delay: 400 } }); });
     await page.reload();
     await page.waitForSelector('#syncBar:not([hidden])', { timeout: 10000 });
     await page.click('#syncCancelBtn');
@@ -4258,6 +4263,181 @@ async function runUnreliableStorage(browser, part, step) {
   }
 }
 
+// ============================================================
+/* Die letzte Änderung beim Schliessen (v4.7.0): beim Verlassen synchron eine Rettungskopie der ungespeicherten Texte in localStorage,
+   beim nächsten Öffnen übernommen (gleich, zusammengeführt oder Leiste mit «Text anzeigen…» und «Verwerfen»); die Browser-Kopie sofort
+   geschrieben, als voraus markiert; Tabs ohne Datei überschreiben einander nicht. */
+async function runLastChange(browser, part, step) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'de-CH' });
+  await ctx.addInitScript(() => {
+    try { localStorage.setItem('nonotes.view', 'list'); } catch (e) { /* egal */ }
+    // eine Rettungskopie «von einem anderen Tab» einpflanzen: über window.name, das ein Neuladen sicher übersteht
+    if (window.name.startsWith('plant:')) { localStorage.setItem('nonotes.rescue.alt', window.name.slice(6)); window.name = ''; }
+    // window.__hangMirror lässt das Schreiben der Browser-Kopie hängen (ein Tab, der schneller zugeht, als sie ankommt). Ein Schalter in
+    // der Seite selbst: ein Wert in localStorage, kurz vor dem Neuladen gesetzt, sieht die neue Seite unter Last nicht immer.
+    let ns;
+    Object.defineProperty(window, 'NoNotesStorage', { configurable: true, get: () => ns, set: v => {
+      ns = v;
+      const save = v.browserStore.saveDb.bind(v.browserStore);
+      v.browserStore.saveDb = (...a) => (window.__hangMirror ? new Promise(() => {}) : save(...a));
+    } });
+    // eine Datei nur für diese Sitzung, deren Lesen hängen kann (window.__hangFile): ein Netzlaufwerk, das nicht antwortet
+    window.__hangFile = false;
+    const handle = {
+      kind: 'file', name: 'Haengt.sqlite', bytes: new Uint8Array(), m: 1,
+      queryPermission: async () => 'granted', requestPermission: async () => 'granted',
+      getFile: async () => (window.__hangFile ? new Promise(() => {}) : new File([handle.bytes], 'Haengt.sqlite', { lastModified: handle.m })),
+      createWritable: async () => {
+        const chunks = [];
+        return {
+          write: async d => { chunks.push(new Uint8Array(d)); },
+          close: async () => {
+            const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+            let o = 0;
+            for (const c of chunks) { out.set(c, o); o += c.length; }
+            handle.bytes = out;
+            handle.m++;
+          },
+          abort: async () => {},
+        };
+      },
+    };
+    window.showSaveFilePicker = async () => handle;
+  });
+  const errors = [];
+  const watch = p => {
+    p.on('pageerror', e => errors.push('pageerror: ' + e.message));
+    p.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+    p.on('dialog', d => d.accept());
+    return p;
+  };
+  const SQL = await initSqlJs();
+  const page = watch(await ctx.newPage());
+  const bodyOf = async (p, title) => p.evaluate(async t => {
+    const raw = await NoNotesStorage.browserStore.loadDb();
+    if (!raw) return null; // noch keine Browser-Kopie
+    const SQLp = await initSqlJs();
+    const d = new SQLp.Database(raw);
+    try { const r = d.exec('SELECT body FROM notes WHERE title = ? AND deleted_at IS NULL', [t]); return r.length ? r[0].values[0][0] : null; } finally { d.close(); }
+  }, title);
+  const open = async p => { await p.goto(APP_URL); await p.waitForSelector(READY, { timeout: 30000 }); };
+  // vor einem Neuladen warten, bis die Browser-Kopie den Stand wirklich hat (nicht nur «gespeichert» im Status)
+  const untilStored = async (p, title, body) => {
+    for (let i = 0; i < 100; i++) { if (await bodyOf(p, title) === body) return; await p.waitForTimeout(50); }
+    throw new Error(`nicht in der Browser-Kopie: ${title}`);
+  };
+  const openNote = async (p, title) => { await p.click(`#list li:has-text("${title}")`); await p.waitForFunction(t => document.querySelector('#title').value === t, title); };
+  try {
+    await open(page);
+    await page.click('#newBtn');
+    await page.fill('#title', 'Protokoll');
+    await page.fill('#body', 'Zeile eins\nZeile zwei\nZeile drei');
+    await untilStored(page, 'Protokoll', 'Zeile eins\nZeile zwei\nZeile drei');
+    await page.waitForFunction(SAVED);
+    part('Ausgangslage: eine Notiz, gespeichert');
+
+    // ---------- Rettungskopie: der Tab geht zu, bevor gespeichert ist ----------
+    await page.reload();
+    await page.waitForSelector(READY);
+    await page.evaluate(() => { window.__hangMirror = true; }); // die Browser-Kopie kommt nicht mehr an
+    await openNote(page, 'Protokoll');
+    await page.fill('#body', 'Zeile eins\nZeile zwei geändert\nZeile drei');
+    const rescued = await page.evaluate(() => {
+      window.dispatchEvent(new Event('pagehide'));
+      const k = Object.keys(localStorage).find(x => x.startsWith('nonotes.rescue.'));
+      return k ? JSON.parse(localStorage.getItem(k)) : null;
+    });
+    assert.ok(rescued && rescued.area === 'main', JSON.stringify(rescued));
+    assert.deepEqual(rescued.entries.map(e => [e.field, e.base, e.value, e.label]),
+      [['body', 'Zeile eins\nZeile zwei\nZeile drei', 'Zeile eins\nZeile zwei geändert\nZeile drei', 'Protokoll']], 'nur der ungespeicherte Text, mit dem gespeicherten als Grundlage');
+    assert.equal(await bodyOf(page, 'Protokoll'), 'Zeile eins\nZeile zwei\nZeile drei', 'die Browser-Kopie hat ihn nicht');
+    await page.waitForTimeout(300); // localStorage erreicht die neue Seite nicht immer sofort; ein geschlossener Tab hat mehr Zeit
+    await page.reload();
+    await page.waitForSelector(READY);
+    await untilStored(page, 'Protokoll', 'Zeile eins\nZeile zwei geändert\nZeile drei'); // beim nächsten Öffnen übernommen und gespeichert
+    await page.waitForFunction(SAVED);
+    assert.equal(await page.evaluate(() => Object.keys(localStorage).filter(x => x.startsWith('nonotes.rescue.')).length), 0, 'danach aufgeräumt');
+    part('Tab geht zu, bevor die Kopie geschrieben ist: der Text liegt synchron in localStorage und wird beim nächsten Öffnen übernommen, danach aufgeräumt');
+
+    // ---------- inzwischen anderswo geändert: zusammenführen oder Leiste ----------
+    const plant = (entries) => page.evaluate(e => { window.name = 'plant:' + JSON.stringify({ area: 'main', at: new Date().toISOString(), entries: e }); }, entries);
+    await plant([{ note: 1, field: 'body', base: 'Zeile eins\nZeile zwei\nZeile drei', value: 'Zeile eins\nZeile zwei\nZeile drei\nZeile vier', label: 'Protokoll' }]);
+    await page.reload();
+    await page.waitForSelector(READY);
+    await untilStored(page, 'Protokoll', 'Zeile eins\nZeile zwei geändert\nZeile drei\nZeile vier'); // zeilenweise zusammengeführt
+    await page.waitForFunction(SAVED);
+    part('Gerettete Änderung, die Notiz wurde inzwischen an anderer Stelle geändert: zeilenweise zusammengeführt');
+
+    await plant([{ note: 1, field: 'body', base: 'Zeile eins\nZeile zwei\nZeile drei', value: 'Zeile eins\nZeile ZWEI anders\nZeile drei', label: 'Protokoll' }]);
+    await page.reload();
+    await page.waitForSelector(READY);
+    await page.waitForFunction(() => /an „Protokoll“ wurde nicht übernommen/.test(document.querySelector('#banner').textContent));
+    assert.equal(await bodyOf(page, 'Protokoll'), 'Zeile eins\nZeile zwei geändert\nZeile drei\nZeile vier', 'nichts überschrieben');
+    await page.click('#banner button:has-text("Text anzeigen")');
+    await page.waitForSelector('#textDialog[open]');
+    assert.match(await page.inputValue('#textBody'), /^Protokoll\n\nZeile eins\nZeile ZWEI anders\nZeile drei$/);
+    await page.click('#textDialog button:has-text("Schliessen")');
+    await page.click('#banner button:has-text("Verwerfen")');
+    await page.waitForSelector('#banner', { state: 'hidden' });
+    assert.equal(await page.evaluate(() => localStorage.getItem('nonotes.rescue.alt')), null, 'verworfen');
+    await page.reload();
+    await page.waitForSelector(READY);
+    await page.waitForTimeout(300);
+    assert.equal(await page.locator('#banner:not([hidden])').count(), 0, 'kommt nicht wieder');
+    part('Gerettete Änderung an derselben Stelle: nicht übernommen, Leiste mit «Text anzeigen…» (lesen, kopieren) und «Verwerfen»');
+
+    // ---------- Schreiben beim Verlassen, als voraus markiert ----------
+    await page.click('#menuBtn');
+    await page.click('#createFileBtn');
+    await page.waitForFunction(() => /Haengt\.sqlite/.test(document.querySelector('#storageInfo .label').textContent));
+    await page.waitForFunction(SAVED);
+    await page.evaluate(() => { window.__hangFile = true; }); // ab jetzt antwortet die Datei nicht mehr
+    await openNote(page, 'Protokoll');
+    await page.fill('#title', 'Protokoll beim Verlassen');
+    await page.waitForTimeout(800); // das normale Speichern hängt beim Lesen der Datei
+    assert.equal(await bodyOf(page, 'Protokoll beim Verlassen'), null, 'noch nicht in der Browser-Kopie');
+    await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+    await page.waitForFunction(async () => {
+      const SQLp = await initSqlJs();
+      const d = new SQLp.Database(await NoNotesStorage.browserStore.loadDb());
+      try { return d.exec("SELECT count(*) FROM notes WHERE title = 'Protokoll beim Verlassen'")[0].values[0][0] === 1; } finally { d.close(); }
+    }, null, { timeout: 5000 });
+    const rec = await page.evaluate(() => NoNotesStorage.browserStore.loadSync());
+    assert.equal(rec.dirty, true, 'als der Datei voraus markiert');
+    part('Beim Verlassen kommt die Browser-Kopie sofort, ohne zuerst die (hängende) Datei zu lesen, als der Datei voraus markiert');
+
+    // ---------- Tabs ohne Datei, ohne Nachricht voneinander ----------
+    await ctx.addInitScript(() => { window.BroadcastChannel = undefined; }); // ab jetzt Tabs ohne Nachricht voneinander
+    await page.reload();
+    await page.waitForSelector(READY);
+    await page.click('#newBtn');
+    await page.fill('#title', 'Aus Tab eins');
+    await page.waitForFunction(SAVED);
+    const page2 = watch(await ctx.newPage());
+    await open(page2);
+    await page2.waitForFunction(() => document.querySelector('#list').textContent.includes('Aus Tab eins'));
+    await page.click('#newBtn'); // Tab eins: noch eine Notiz
+    await page.fill('#title', 'Noch eine aus Tab eins');
+    await page.waitForFunction(SAVED);
+    await page2.click('#list li:has-text("Protokoll beim Verlassen")'); // Tab zwei weiss davon nichts und ändert etwas anderes
+    await page2.fill('#title', 'Protokoll aus Tab zwei');
+    await page2.waitForFunction(SAVED, null, { timeout: 10000 });
+    await page2.waitForFunction(() => document.querySelector('#list').textContent.includes('Noch eine aus Tab eins'), null, { timeout: 10000 });
+    const stored = await page2.evaluate(async () => {
+      const SQLp = await initSqlJs();
+      const d = new SQLp.Database(await NoNotesStorage.browserStore.loadDb());
+      try { return d.exec('SELECT title FROM notes WHERE deleted_at IS NULL ORDER BY id')[0].values.map(r => r[0]); } finally { d.close(); }
+    });
+    assert.ok(stored.includes('Noch eine aus Tab eins') && stored.includes('Protokoll aus Tab zwei'), 'beides in der Browser-Kopie: ' + stored.join(', '));
+    await page2.close();
+    part('Zwei Tabs ohne Datei und ohne Nachricht voneinander: vor dem Schreiben der Kopie wird der Eintrag geprüft und zusammengeführt, nichts geht verloren');
+
+    assert.deepEqual(errors, []);
+  } finally {
+    await ctx.close();
+  }
+}
+
 suite('App-Test', [
   { name: null, run: runSmoke }, // druckt seine Gruppen selbst
   { name: 'Bereiche: anlegen, wechseln (Statusleiste, Menü, Alt+1 … 9), Adresse #w=… und ?w=…, Weiterleitung eines Webservers, Datei und Hauptfarbe je Bereich, umbenennen, entfernen, Datei als Bereich, zwei Tabs', run: runAreas },
@@ -4269,5 +4449,6 @@ suite('App-Test', [
   { name: 'Versand (v4.3.0): Rechtsklick → Versand → E-Mail-Entwurf mit PDF und Teilen, Banner, Einstellung je Browser, archivierte Notiz, Browser ohne Teilen', run: runSendUi },
   { name: 'Speichern sicher (v4.4.0): Stoppschirm statt leer (zu neu, beschädigt, fremd), Schema im Dateikopf, Halt bei Massenverlust, Sicherungen, Datei vor jedem Schreiben geprüft', run: runSaveSafety },
   { name: 'Unzuverlässige Ablage (v4.6.0): still wiederholen, ruhige Leiste, verständliche Meldungen, Grösse prüfen, Abgleich-Eintrag und Abgleich beim Verbinden, schneller Start mit Fortschritt, Abbrechen', run: runUnreliableStorage },
+  { name: 'Die letzte Änderung beim Schliessen (v4.7.0): Rettungskopie in localStorage, beim nächsten Öffnen übernommen oder zusammengeführt oder angeboten, Browser-Kopie sofort beim Verlassen, Tabs ohne Datei', run: runLastChange },
   { name: 'Backend-Vertrag: Methodenliste, JSON-sichere Rückgaben, Änderungsmeldung, Fehlerkennungen', run: runBackend },
 ], { browser: true });

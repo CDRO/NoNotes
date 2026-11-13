@@ -65,6 +65,8 @@
   const QUIET_TRIES = 5;
   const retryWaits = () => (Array.isArray(global.NONOTES_RETRY_MS) && global.NONOTES_RETRY_MS.length >= 6 ? global.NONOTES_RETRY_MS : RETRY_MS);
   const SYNC_QUICK_MS = 250; // liest sich die Datei so schnell, wird vor dem ersten Zeichnen verglichen (kein Flackern)
+  // Seit 4.7.0: Rettungskopie ungespeicherter Texte je Tab, synchron beim Verlassen der Seite (localStorage)
+  const RESCUE_PREFIX = 'nonotes.rescue.';
 
   /** Ein Fehler beim Zugriff auf die Datei oder den Browser-Speicher in Worten der Person (seit 4.6.0), nach dem Namen der
    *  DOMException; die Meldung des Browsers (meist englisch) steht hinter «Details». where: 'mirror' für den Browser-Speicher. */
@@ -179,7 +181,7 @@
       else if (s.missingArea) showMissingAreaBanner(s.missingArea);
       setStatus(s.openedFromFile ? t('Aus „{name}“ geladen', { name: s.fileHandle.name })
         : s.mirrorAtStart ? t('Aus Browser-Speicher geladen ({label})', { label: Store.browserStore.label() })
-        : t('Neue Datenbank'), 'saved');
+        : t('Neue Datenbank'), isDirty() ? 'dirty' : 'saved'); // etwa eine übernommene Rettungskopie, die gerade gespeichert wird
       if (s.storageKind === null) {
         setStatus(t('Achtung: kein Browser-Speicher verfügbar. Bitte eine Datenbankdatei anlegen oder regelmässig eine Kopie herunterladen.'), 'error');
       }
@@ -266,6 +268,163 @@
       s.syncBaseStored = false;
     }
 
+    /** Ein anderer Tab hat die Browser-Kopie geschrieben und wir übernehmen seinen Stand: sein Eintrag gilt jetzt auch hier. */
+    async function adoptOtherSync() {
+      const rec = await Store.browserStore.loadSync(s.area.id).catch(() => null);
+      if (rec) s.sync = { fileHash: rec.fileHash, mirrorHash: rec.mirrorHash, dirty: rec.dirty };
+    }
+
+    /** Hat seit unserem letzten Lesen oder Schreiben ein anderer Tab die Browser-Kopie geschrieben? (Tabs ohne Datei, seit 4.7.0:
+     *  die Nachricht des anderen Tabs kann fehlen oder zu spät kommen.) */
+    async function otherTabWrote() {
+      if (!s.sync || !s.sync.mirrorHash) return false;
+      const rec = await Store.browserStore.loadSync(s.area.id).catch(() => null);
+      return !!(rec && rec.mirrorHash && rec.mirrorHash !== s.sync.mirrorHash);
+    }
+
+    /** Beim Verlassen der Seite (seit 4.7.0): die Browser-Kopie sofort schreiben, ohne zuerst die Datei zu lesen, als der Datei voraus
+     *  markiert. Der nächste Start schreibt sie in die Datei oder führt zusammen. Das Schreiben ist asynchron; ein Tab, der schnell zugeht,
+     *  kann es abschneiden. Dafür gibt es die Rettungskopie. */
+    function quickMirror() {
+      if (!isDirty() || !s.db || !s.area || s.blocked || s.held || s.external || s.syncing) return;
+      try {
+        const snap = snapshot(s.db);
+        if (!s.allowShrink && massLoss(snap)) return;
+        const bytes = DB.exportBytes(s.db);
+        const rec = syncFor(bytes, false);
+        Store.browserStore.saveDb(bytes, s.area.id, rec).then(() => {
+          s.sync = { fileHash: rec.fileHash, mirrorHash: rec.mirrorHash, dirty: rec.dirty };
+          if (rec.base) s.syncBaseStored = true;
+        }).catch(e => console.warn('Browser-Speicher beim Verlassen', e));
+      } catch (e) { console.warn('Browser-Speicher beim Verlassen', e); }
+    }
+
+    // ---------- Rettungskopie ungespeicherter Texte (seit 4.7.0) ----------
+
+    const rescueKey = () => RESCUE_PREFIX + s.tabId;
+
+    /** Titel und Text, die noch nicht gespeichert sind: was in der Datenbank (oder im Editor) anders ist als beim letzten Speichern. */
+    function unsavedTexts() {
+      const editor = host.unsavedEditor ? host.unsavedEditor() : null; // { id, title, body }: im Editor, noch nicht in der Datenbank
+      if ((!isDirty() && !editor) || !s.db || !s.baseSnap) return [];
+      const now = snapshot(s.db);
+      const out = [];
+      for (const [id, n] of now.notes) {
+        if (n.deleted_at) continue;
+        const title = editor && editor.id === id ? editor.title : n.title;
+        const body = editor && editor.id === id ? editor.body : n.body;
+        const b = s.baseSnap.notes.get(id);
+        if (!b) {
+          if (title || body) out.push({ note: id, created: true, parent: n.parent_id == null ? null : n.parent_id, title, body });
+          continue;
+        }
+        if (title !== b.title) out.push({ note: id, field: 'title', base: b.title, value: title, label: title || b.title });
+        if (body !== b.body) out.push({ note: id, field: 'body', base: b.body, value: body, label: title || b.title });
+      }
+      return out;
+    }
+
+    /** Synchron beim Verlassen der Seite, beim Verstecken des Tabs: die ungespeicherten Texte in localStorage (je Tab ein Schlüssel). */
+    function rescueNow() {
+      try {
+        if (!s.area || s.blocked || s.syncing) return;
+        const entries = unsavedTexts();
+        if (!entries.length) { localStorage.removeItem(rescueKey()); return; }
+        localStorage.setItem(rescueKey(), JSON.stringify({ area: s.area.id, at: new Date().toISOString(), entries }));
+      } catch (e) { /* localStorage voll oder gesperrt: dann ohne Rettungskopie */ }
+    }
+
+    /** Gespeichert, nichts mehr offen: die eigene Rettungskopie wird nicht mehr gebraucht. */
+    function rescueDone() {
+      try { localStorage.removeItem(rescueKey()); } catch (e) { /* egal */ }
+    }
+
+    /** Übernimmt eine gerettete Änderung: der Text in der Datenbank ist noch der von damals → ersetzen; er wurde inzwischen geändert →
+     *  zeilenweise zusammenführen; geht das nicht: false (die Leiste bietet den Text an). Immer als neue Fassung mit Verlauf. */
+    function applyRescue(e) {
+      if (e.created) {
+        const existing = DB.getNote(s.db, e.note);
+        if (existing && !existing.deleted_at && existing.title === e.title && existing.body === e.body) return true; // schon da
+        if (existing && !existing.deleted_at && !existing.title && !existing.body) { DB.updateNote(s.db, e.note, e.title, e.body, { newVersion: true }); return true; }
+        const parent = e.parent != null && DB.getNote(s.db, e.parent) ? e.parent : null;
+        const id = DB.createNote(s.db, parent);
+        DB.updateNote(s.db, id, e.title, e.body, { newVersion: true });
+        return true;
+      }
+      const note = DB.getNote(s.db, e.note);
+      if (!note || note.deleted_at) return false;
+      const current = e.field === 'title' ? note.title : note.body;
+      if (current === e.value) return true; // steht schon so drin (etwa über das Schreiben beim Verlassen)
+      let next = null;
+      if (current === e.base) next = e.value;
+      else {
+        if (e.field === 'title') return false;
+        const m = global.NoNotesMerge.merge3(e.base, e.value, current);
+        if (!m.clean) return false;
+        next = m.text;
+      }
+      DB.updateNote(s.db, e.note, e.field === 'title' ? next : note.title, e.field === 'body' ? next : note.body, { newVersion: true });
+      return true;
+    }
+
+    /** Nach dem Öffnen eines Bereichs, vor dem ersten Zeichnen: gerettete Texte anderer (geschlossener) Tabs übernehmen. Nie auf dem
+     *  Stoppschirm und nie während des Abgleichs; dann warten sie. */
+    async function restoreRescued() {
+      if (s.blocked || s.syncing || !s.db || !s.area) return;
+      let keys = [];
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(RESCUE_PREFIX) && k !== rescueKey()) keys.push(k);
+        }
+      } catch (e) { return; }
+      let applied = 0;
+      const left = [];
+      for (const k of keys) {
+        let rec = null;
+        try { rec = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { rec = null; }
+        if (!rec || !Array.isArray(rec.entries)) { try { localStorage.removeItem(k); } catch (e) { /* egal */ } continue; }
+        if (rec.area !== s.area.id) continue; // gehört zu einem anderen Bereich: wartet, bis er geöffnet wird
+        const rest = [];
+        for (const e of rec.entries) {
+          let ok = false;
+          try { ok = applyRescue(e); } catch (err) { console.warn('Rettungskopie', err); }
+          if (ok) applied++; else rest.push(e);
+        }
+        try {
+          if (rest.length) localStorage.setItem(k, JSON.stringify(Object.assign({}, rec, { entries: rest })));
+          else localStorage.removeItem(k);
+        } catch (e) { /* egal */ }
+        for (const e of rest) left.push({ key: k, entry: e });
+      }
+      if (applied) {
+        s.editSeq++;
+        if (s.backend) await host.renderAll();
+        setStatus(tn('Eine ungespeicherte Änderung vom letzten Mal übernommen', '{n} ungespeicherte Änderungen vom letzten Mal übernommen', applied), 'dirty');
+        persistNow();
+      }
+      if (left.length) showRescueBar(left);
+    }
+
+    /** Gerettete Texte, die sich nicht von selbst übernehmen liessen: eine ruhige Leiste mit «Text anzeigen…» und «Verwerfen». */
+    function showRescueBar(left) {
+      const first = left[0].entry;
+      host.showBanner(
+        tn('Eine ungespeicherte Änderung an „{titel}“ wurde nicht übernommen, weil die Notiz inzwischen anders geändert wurde.',
+          '{n} ungespeicherte Änderungen (zuerst an „{titel}“) wurden nicht übernommen, weil die Notizen inzwischen anders geändert wurden.',
+          left.length, { titel: first.label || first.title || t('Ohne Titel') }),
+        [
+          { label: t('Text anzeigen…'), onClick: () => {
+            const text = left.map(x => `${x.entry.label || t('Ohne Titel')}\n\n${x.entry.value != null ? x.entry.value : x.entry.body}`).join('\n\n――――\n\n');
+            if (host.showText) host.showText(t('Ungespeicherte Änderung vom letzten Mal'), text); else alert(text);
+          } },
+          { label: t('Verwerfen'), onClick: () => {
+            for (const k of new Set(left.map(x => x.key))) { try { localStorage.removeItem(k); } catch (e) { /* egal */ } }
+            host.hideBanner();
+          } },
+        ]);
+    }
+
     /** Die Datei liess sich nicht schreiben: die Grundlage zum späteren Zusammenführen sichern (einmal je Stand der Datei). */
     async function keepSyncBase() {
       if (s.syncBaseStored || !s.syncBase || !s.sync || !s.sync.dirty) return;
@@ -291,6 +450,7 @@
       let foreign = null; // Inhalt der Datei, falls sie inzwischen von jemand anderem geändert wurde
       let held = false;
       let failure = null; // { e, where }: Lesen oder Schreiben gescheitert, wird wiederholt (seit 4.6.0)
+      let otherTab = false; // ein anderer Tab hat die Kopie geschrieben (seit 4.7.0)
       try {
         const snap = snapshot(s.db); // was gleich geschrieben wird; danach die Grundlage für das Zusammenführen
         // Halt bei Massenverlust (seit 4.4.0): fast alle gespeicherten Notizen wären weg
@@ -307,6 +467,8 @@
             failure = { e, where: 'read' };
           }
         }
+        // Tabs ohne Datei (seit 4.7.0): hat ein anderer Tab inzwischen die Kopie geschrieben, nicht überschreiben, sondern zusammenführen
+        if (ok && !linked && !s.overwrite && await otherTabWrote()) { ok = false; otherTab = true; } // «Meine Fassung behalten»: entschieden
         if (ok) {
           await rollingBackup(); // der gespeicherte Stand vor dem ersten Überschreiben nach dem Öffnen, danach alle 30 Minuten
           let mirrored = false;
@@ -351,6 +513,7 @@
           s.baseBytes = bytes;
           s.allowShrink = false; // gilt nur bis zum ersten gelungenen Speichern danach
           saveSucceeded();
+          if (s.editSeq === seq) rescueDone(); // nichts mehr offen: die Rettungskopie dieses Tabs wird nicht mehr gebraucht
           setStatus(t('Gespeichert {zeit}', { zeit: timeFormat().format(new Date()) }), 'saved');
         }
       } catch (e) {
@@ -362,6 +525,7 @@
         if (ok && s.editSeq !== seq) persistNow(); // zwischenzeitlich kam Neues
       }
       if (failure) { saveFailed(failure.e, failure.where); return; }
+      if (otherTab) { setStatus(t('Ungespeicherte Änderungen'), 'dirty'); await onExternalChange('mirror'); return; }
       if (held) { stopRetry(); holdSave(); return; }
       if (foreign) {
         stopRetry();
@@ -543,6 +707,7 @@
         s.baseSnap = snapshot(s.db);
         s.baseBytes = bytes;
         if (kind === 'file') await rememberFile(bytes);
+        else await adoptOtherSync();
         s.external = null;
         s.editedSinceStart = false;
         s.savedSeq = s.editSeq;
@@ -650,10 +815,11 @@
     /** Versucht das Zusammenführen; true, wenn es gelungen ist (dann ist die vereinte Fassung geschrieben oder unterwegs). */
     async function mergeExternal(kind) {
       let bytes = null;
-      try { bytes = kind === 'file' ? (s.pendingFileBytes || await Store.fileAccess.read(s.fileHandle)) : await Store.browserStore.loadDb(); }
+      try { bytes = kind === 'file' ? (s.pendingFileBytes || await Store.fileAccess.read(s.fileHandle)) : await Store.browserStore.loadDb(s.area.id); }
       catch (e) { bytes = null; }
       if (!bytes || !bytes.length) return false;
       const merged = mergeWithExternal(bytes);
+      if (merged && kind === 'mirror') await adoptOtherSync(); // der Stand des anderen Tabs ist jetzt die Grundlage (seit 4.7.0)
       if (!merged) { if (kind === 'file') s.pendingFileBytes = bytes; return false; }
       await backup(DB.exportBytes(s.db), 'merge'); // die eigene Fassung vor dem Zusammenführen (seit 4.4.0)
       s.pendingFileBytes = null;
@@ -899,6 +1065,7 @@
           s.filePermission = 'prompt';
           unlockSync();
           updateStorageInfo();
+          await restoreRescued(); // seit 4.7.0
           showConnectBanner();
           setStatus(isAbort(error) ? t('Abgleich mit „{name}“ abgebrochen; es gilt die Kopie im Browser-Speicher.', { name })
             : t('„{name}“ lässt sich gerade nicht lesen: {grund}', { name, grund: friendlyError(error) }), isAbort(error) ? 'saved' : 'error');
@@ -914,6 +1081,7 @@
         if (s.backend && done !== 'ask' && !isDirty() && !s.retry) {
           setStatus(done === 'loaded' ? t('Aus „{name}“ geladen', { name }) : t('Mit „{name}“ abgeglichen', { name }), 'saved');
         }
+        if (done !== 'ask') await restoreRescued(); // seit 4.7.0
       } finally {
         unlockSync();
       }
@@ -1262,6 +1430,7 @@
         s.editSeq++;
         try { await persistNow(); } catch (e) { console.warn('Speichern nach der Umstellung', e); scheduleSave(); }
       }
+      await restoreRescued(); // seit 4.7.0: gerettete Texte vom letzten Mal (während des Abgleichs wartet es bis finishSync)
     }
 
     // ---------- Stoppschirm (seit 4.4.0) ----------
@@ -1783,11 +1952,12 @@
         });
       }
       // #w=… von Hand in der Adressleiste geändert: der Kern meldet es über routes.enter (Zurück, Vor, Adresse, Links; v2.7.0)
+      // Seit 4.7.0: beim Verlassen zuerst synchron die Rettungskopie, dann sofort die Browser-Kopie (als voraus markiert), dann wie bisher
       global.addEventListener('beforeunload', e => {
-        if (isDirty()) { e.preventDefault(); e.returnValue = ''; }
+        if (isDirty()) { rescueNow(); quickMirror(); e.preventDefault(); e.returnValue = ''; }
       });
-      document.addEventListener('visibilitychange', () => { if (document.hidden) persistNow(); });
-      global.addEventListener('pagehide', () => persistNow());
+      document.addEventListener('visibilitychange', () => { if (document.hidden) { rescueNow(); persistNow(); } });
+      global.addEventListener('pagehide', () => { rescueNow(); quickMirror(); persistNow(); });
       // Änderungen von aussen: beim Zurückkehren in den Tab, beim Fokus und in Abständen nachsehen; andere Tabs melden sich selbst
       document.addEventListener('visibilitychange', () => { if (!document.hidden) checkFile(); });
       global.addEventListener('focus', () => checkFile());

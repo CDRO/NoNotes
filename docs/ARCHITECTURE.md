@@ -147,6 +147,22 @@ daneben (`pendingRead`); `syncOrLock` gleicht ab, wenn sie in 250 ms da ist, son
 und `finishSync` gleicht nach dem ersten Zeichnen ab. Ohne Kopie liest `readLoading` mit Leiste nach 2 s (`NONOTES_LOADING_MS`);
 Abbrechen ergibt den Stopp `cancelled`.
 
+## Die letzte Änderung beim Schliessen (v4.7.0)
+
+Bei `beforeunload`, `pagehide` und `visibilitychange` (versteckt) schreibt `rescueNow` synchron `nonotes.rescue.<tabId>` in den
+`localStorage`: `{ area, at, entries }`, je Eintrag `{ note, field: 'title' | 'body', base, value, label }` (base: der Text beim letzten
+Speichern, aus `baseSnap`) oder `{ note, created, parent, title, body }` für eine neue Notiz. Was noch im Editor steht und nicht in der
+Datenbank, liefert `host.unsavedEditor()`. Die Kennung des Tabs ist bei jedem Laden neu, Tabs überschreiben einander also nicht.
+Nach jedem Speichern, das nichts offen lässt, entfernt `rescueDone` den eigenen Eintrag. `restoreRescued` läuft nach dem Öffnen eines
+Bereichs (in `install`, nach `finishSync`), nie auf dem Stoppschirm oder während des Abgleichs: steht in der Notiz noch `base`, kommt
+`value` als neue Fassung hinein; sonst führt `NoNotesMerge.merge3(base, value, aktuell)` zusammen; was nicht sauber geht, bietet die
+Leiste an (`host.showText` zum Lesen). Einträge anderer Bereiche warten.
+
+`quickMirror` schreibt beim Verlassen die Browser-Kopie ohne Lesen der Datei, mit `dirty: true`, wenn es eine Datei gibt. Ohne
+verbundene Datei liest `persistNow` vor dem Schreiben der Kopie den Abgleich-Eintrag (`otherTabWrote`): hat ein anderer Tab seither
+geschrieben (`mirrorHash` anders), geht es über `onExternalChange('mirror')` (zusammenführen oder fragen); danach gilt dessen Eintrag
+(`adoptOtherSync`).
+
 ## Asynchron arbeiten
 
 Weil jedes Backend im Netz liegen kann, ist jeder Datenzugriff asynchron. Für Code in der Oberfläche gelten
