@@ -941,6 +941,13 @@ body:not(.view-tasks) .tasks-view { display: none; }
 /* ---------- Stoppschirm, Sicherungen, Halt bei Massenverlust (seit 4.4.0) ---------- */
 .stop-screen { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 24px 16px; background: var(--bg); overflow: auto; }
 .stop-screen[hidden] { display: none; }
+/* Abgleich mit der Datei (seit 4.6.0) */
+.sync-bar { position: fixed; left: 50%; bottom: 44px; transform: translateX(-50%); z-index: 95; display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px); padding: 10px 14px; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius); box-shadow: var(--shadow); font-size: 14px; }
+.sync-bar[hidden] { display: none; }
+.sync-bar #syncText { overflow-wrap: anywhere; }
+.sync-spinner { flex: none; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: sync-spin 0.9s linear infinite; }
+@keyframes sync-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .sync-spinner { animation: none; } }
 .stop-card { max-width: 640px; width: 100%; background: var(--panel); border: 1px solid var(--border); border-top: 4px solid var(--danger); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px 22px; }
 .stop-card h2 { margin: 0 0 10px; font-size: 20px; }
 .stop-lines p { margin: 0 0 8px; line-height: 1.5; }

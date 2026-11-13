@@ -126,6 +126,27 @@ an. Anlässe: `opened` (vor dem ersten Überschreiben nach dem Öffnen), `period
 `external`, `overwritten`, `unsaved`, `damaged` (eine beschädigte Browser-Kopie, während die Datei öffnet). Die Hülle bietet sie als `shell.backups` (`list`, `download`, `restore`), die Oberfläche zeigt sie
 im Dialog `#backupsDialog`.
 
+## Unzuverlässige Ablage (v4.6.0)
+
+`persistNow` meldet Lese- und Schreibfehler an `saveFailed(e, where)`: still wiederholen nach `RETRY_MS` (0,5, 1, 2, 4, 8 s; Tests
+setzen `window.NONOTES_RETRY_MS`), danach eine ruhige Leiste und alle 30 s. `scheduleSave` startet keinen eigenen Versuch, solange
+wiederholt wird. `friendlyError` wählt die Meldung nach dem Namen der DOMException; `rawError` steht hinter «Details».
+
+`storage.js`: `fileAccess.read(handle, { onProgress, signal })` liest in Stücken (`NONOTES_READ_CHUNK`, 1 MB), bricht über das Signal
+auch mitten in einem Stück ab und liest neu, wenn sich Grösse oder Zeitstempel während des Lesens ändern (`FileChangedError`).
+`fileAccess.write` prüft danach die Grösse (`SizeMismatchError`). Die Hülle merkt sich den Prüfwert dessen, was sie schreibt
+(`attempted`), und ob das letzte Schreiben scheiterte (`writeFailed`): ein solcher Stand in der Datei gilt nicht als fremd.
+
+Abgleich-Eintrag: `saveDb(bytes, area, sync)` schreibt neben der Kopie `sync:<bereich>` = `{ fileHash, mirrorHash, dirty, at }` in
+derselben Transaktion; `saveSync` nur den Eintrag, `syncbase:<bereich>` die Grundlage (den Inhalt der Datei mit `fileHash`), solange
+die Kopie voraus ist. Beim Lesen eines Bereichs gilt der Eintrag nur, wenn `mirrorHash` zur Kopie passt; ohne Eintrag (Daten von vor
+4.6.0) gilt die Kopie als Stand der Datei. `reconcile(fileBytes)` entscheidet beim Verbinden und beim Öffnen: `write` (nur die Kopie
+voraus), `same`, `loaded` (nur die Datei geändert; die Kopie kommt in die Sicherungen), `merged` (beide, mit der Grundlage
+zusammengeführt) oder `ask` (die Leiste fragt). Beim Öffnen mit freigegebener Datei und brauchbarer Kopie liest `readArea` die Datei
+daneben (`pendingRead`); `syncOrLock` gleicht ab, wenn sie in 250 ms da ist, sonst sperrt `host.showSync` die Seite mit Fortschritt,
+und `finishSync` gleicht nach dem ersten Zeichnen ab. Ohne Kopie liest `readLoading` mit Leiste nach 2 s (`NONOTES_LOADING_MS`);
+Abbrechen ergibt den Stopp `cancelled`.
+
 ## Asynchron arbeiten
 
 Weil jedes Backend im Netz liegen kann, ist jeder Datenzugriff asynchron. Für Code in der Oberfläche gelten

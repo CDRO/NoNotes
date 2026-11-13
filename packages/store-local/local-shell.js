@@ -59,6 +59,36 @@
 
   const FILE_CHECK_MS = 30000; // wie oft nachgesehen wird, ob die Datei von aussen geändert wurde
   const BACKUP_EVERY_MS = 30 * 60 * 1000; // rollende Sicherung des gespeicherten Stands höchstens alle 30 Minuten (seit 4.4.0)
+  // Seit 4.6.0: ein gescheitertes Lesen oder Schreiben erst still wiederholen (nach 0,5, 1, 2, 4 und 8 s), dann mit ruhiger Leiste
+  // alle 30 s. Tests ersetzen die Wartezeiten über window.NONOTES_RETRY_MS (sechs Werte, der letzte gilt danach immer).
+  const RETRY_MS = [500, 1000, 2000, 4000, 8000, 30000];
+  const QUIET_TRIES = 5;
+  const retryWaits = () => (Array.isArray(global.NONOTES_RETRY_MS) && global.NONOTES_RETRY_MS.length >= 6 ? global.NONOTES_RETRY_MS : RETRY_MS);
+  const SYNC_QUICK_MS = 250; // liest sich die Datei so schnell, wird vor dem ersten Zeichnen verglichen (kein Flackern)
+
+  /** Ein Fehler beim Zugriff auf die Datei oder den Browser-Speicher in Worten der Person (seit 4.6.0), nach dem Namen der
+   *  DOMException; die Meldung des Browsers (meist englisch) steht hinter «Details». where: 'mirror' für den Browser-Speicher. */
+  function friendlyError(e, where) {
+    const name = e && e.name;
+    if (where === 'mirror') return name === 'QuotaExceededError' ? t('Der Browser-Speicher ist voll.') : t('Der Browser-Speicher lässt sich gerade nicht beschreiben.');
+    switch (name) {
+      case 'NotFoundError': return t('Die Datei ist gerade nicht erreichbar, etwa weil das Netzlaufwerk fehlt oder die Datei verschoben wurde.');
+      case 'NotAllowedError':
+      case 'SecurityError': return t('Keine Berechtigung für die Datei.');
+      case 'NoModificationAllowedError': return t('Die Datei ist gesperrt, vielleicht hat ein anderes Programm sie offen.');
+      case 'InvalidStateError':
+      case 'InvalidModificationError':
+      case 'FileChangedError': return t('Die Datei hat sich während des Zugriffs verändert.');
+      case 'NotReadableError': return t('Die Datei lässt sich gerade nicht lesen.');
+      case 'QuotaExceededError': return t('Auf dem Laufwerk ist kein Platz mehr.');
+      case 'SizeMismatchError': return t('Die Datei war nach dem Schreiben nicht vollständig.');
+      case 'AbortError': return t('Der Zugriff wurde abgebrochen.');
+      default: return t('Unerwarteter Fehler beim Zugriff auf die Datei.');
+    }
+  }
+
+  /** Die Meldung des Browsers, wie sie ist (für «Details»). */
+  const rawError = e => (e ? [e.name, e.message].filter(Boolean).join(': ') || String(e) : '');
 
   function create(host) {
     const el = host.el;
@@ -94,6 +124,14 @@
       backupAt: 0,            // Zeit der letzten rollenden Sicherung in diesem Bereich (0: seit dem Öffnen noch keine)
       held: false,            // Speichern angehalten: fast alle Notizen wären weg, die Person entscheidet
       allowShrink: false,     // die Person hat entschieden (oder Import, Wiederherstellen): bis zum nächsten gelungenen Speichern nicht anhalten
+      // Seit 4.6.0 (unzuverlässige Ablage)
+      retry: null,            // { n, timer, error, where, bar }: Lesen oder Schreiben gescheitert, es wird wiederholt
+      sync: null,             // Abgleich-Eintrag der Browser-Kopie { fileHash, mirrorHash, dirty }: wovon die Kopie ausgeht, ob sie voraus ist
+      syncBase: null,         // Inhalt der Datei mit sync.fileHash bzw. fileHash (Grundlage zum Zusammenführen, solange die Kopie voraus ist)
+      syncBaseStored: false,  // diese Grundlage liegt schon im Browser-Speicher
+      attempted: null,        // Prüfwert dessen, was gerade in die Datei geschrieben wird
+      writeFailed: false,     // das letzte Schreiben in die Datei ist gescheitert (ein halber Stand darin ist der eigene)
+      syncing: null,          // Abgleich mit der Datei läuft nach dem Öffnen: { done } (Speichern wartet)
     };
 
     const setStatus = (text, state) => host.setStatus(text, state);
@@ -133,6 +171,7 @@
 
     /** Nach dem ersten Zeichnen: Anzeige der Ablage, Hinweis zum Verbinden, Startmeldung. */
     function afterReady() {
+      if (s.syncing) finishSync().catch(e => console.error(e)); // Abgleich mit der Datei, die Kopie ist schon zu sehen (seit 4.6.0)
       s.baseTitle = document.title;
       rememberActive();
       updateStorageInfo();
@@ -150,9 +189,88 @@
 
     function scheduleSave() {
       s.editSeq++;
-      setStatus(t('Ungespeicherte Änderungen'), 'dirty');
       clearTimeout(s.saveTimer);
+      if (s.retry || s.syncing) return; // es wird gerade wiederholt bzw. abgeglichen: der nächste Versuch nimmt die Änderung mit (seit 4.6.0)
+      setStatus(t('Ungespeicherte Änderungen'), 'dirty');
       s.saveTimer = setTimeout(persistNow, SAVE_DELAY_MS);
+    }
+
+    // ---------- Wiederholen (seit 4.6.0) ----------
+
+    /** Lesen oder Schreiben ist gescheitert: still wiederholen, nach fünf Versuchen mit ruhiger Leiste, dann alle 30 Sekunden. */
+    function saveFailed(e, where) {
+      console.warn('Speichern', where, e);
+      const r = s.retry || (s.retry = { n: 0, timer: null, bar: false });
+      r.n++;
+      r.error = e;
+      r.where = where;
+      clearTimeout(r.timer);
+      const waits = retryWaits();
+      if (r.n <= QUIET_TRIES) {
+        setStatus(t('Speichern…'), 'saving');
+        r.timer = setTimeout(retryNow, waits[r.n - 1]);
+        return;
+      }
+      setStatus(t('Noch nicht gespeichert: {grund}', { grund: friendlyError(e, where) }), 'error');
+      if (!r.bar) {
+        r.bar = true;
+        host.showBanner(t('Noch nicht gespeichert – wird weiter versucht. {grund}', { grund: friendlyError(e, where) }), [
+          { label: t('Jetzt erneut versuchen'), primary: true, onClick: retryNow },
+          { label: t('Kopie herunterladen'), onClick: downloadCopy },
+          { label: t('Details'), onClick: () => alert(rawError(s.retry ? s.retry.error : e)) },
+        ]);
+      }
+      r.timer = setTimeout(retryNow, waits[QUIET_TRIES]);
+    }
+
+    function retryNow() {
+      if (!s.retry) return;
+      clearTimeout(s.retry.timer);
+      s.retry.timer = null;
+      persistNow();
+    }
+
+    /** Gespeichert: die Wiederholung endet, ihre Leiste verschwindet. */
+    function saveSucceeded() {
+      if (!s.retry) return;
+      clearTimeout(s.retry.timer);
+      const bar = s.retry.bar;
+      s.retry = null;
+      if (bar) host.hideBanner();
+    }
+
+    /** Eine Entscheidung (Änderung von aussen, Halt, Wechsel) übernimmt: nicht mehr wiederholen, ihre Leiste ersetzt die eigene. */
+    function stopRetry() {
+      if (s.retry) clearTimeout(s.retry.timer);
+      s.retry = null;
+    }
+
+    // ---------- Abgleich-Eintrag (seit 4.6.0) ----------
+
+    /** Der Eintrag zur Browser-Kopie, die gleich geschrieben wird: mit einer Datei (verbunden oder gemerkt) ist die Kopie voraus, bis
+     *  die Datei geschrieben ist. Ist die Datei nicht verbunden, kommt beim ersten Mal die Grundlage mit. */
+    function syncFor(bytes, linked) {
+      const mirrorHash = hashBytes(bytes);
+      if (!s.fileHandle) return { fileHash: null, mirrorHash, dirty: false, base: null };
+      const fileHash = s.fileHash != null ? s.fileHash : (s.sync ? s.sync.fileHash : null);
+      const rec = { fileHash, mirrorHash, dirty: true };
+      if (!linked && !s.syncBaseStored && s.syncBase) rec.base = s.syncBase;
+      return rec;
+    }
+
+    /** Die Datei hat jetzt den Stand bytes; mirrored: die Browser-Kopie auch. */
+    async function markInSync(bytes, mirrored) {
+      const rec = { fileHash: s.fileHash, mirrorHash: mirrored ? hashBytes(bytes) : (s.sync ? s.sync.mirrorHash : null), dirty: false, base: null };
+      try { await Store.browserStore.saveSync(s.area.id, rec); } catch (e) { console.warn('Abgleich-Eintrag', e); return; }
+      s.sync = { fileHash: rec.fileHash, mirrorHash: rec.mirrorHash, dirty: false };
+      s.syncBaseStored = false;
+    }
+
+    /** Die Datei liess sich nicht schreiben: die Grundlage zum späteren Zusammenführen sichern (einmal je Stand der Datei). */
+    async function keepSyncBase() {
+      if (s.syncBaseStored || !s.syncBase || !s.sync || !s.sync.dirty) return;
+      try { await Store.browserStore.saveSync(s.area.id, Object.assign({}, s.sync, { base: s.syncBase })); s.syncBaseStored = true; }
+      catch (e) { console.warn('Grundlage', e); }
     }
 
     function isDirty() { return s.editSeq !== s.savedSeq; }
@@ -164,13 +282,15 @@
       if (s.external) return; // die Datei oder der Browser-Speicher wurde von aussen geändert: erst entscheiden lassen
       if (s.held && s.allowShrink) { s.held = false; host.hideBanner(); } // inzwischen entschieden (Import, Wiederherstellen …)
       if (s.blocked || s.held) return; // Stoppschirm oder Halt bei Massenverlust: nichts schreiben, bis entschieden ist (seit 4.4.0)
+      if (s.syncing) return; // erst der Abgleich mit der Datei nach dem Öffnen (seit 4.6.0)
 
       s.saving = true;
       const seq = s.editSeq;
-      setStatus(t('Speichern…'), 'saving');
+      if (!s.retry || s.retry.n < QUIET_TRIES) setStatus(t('Speichern…'), 'saving');
       let ok = true;
       let foreign = null; // Inhalt der Datei, falls sie inzwischen von jemand anderem geändert wurde
       let held = false;
+      let failure = null; // { e, where }: Lesen oder Schreiben gescheitert, wird wiederholt (seit 4.6.0)
       try {
         const snap = snapshot(s.db); // was gleich geschrieben wird; danach die Grundlage für das Zusammenführen
         // Halt bei Massenverlust (seit 4.4.0): fast alle gespeicherten Notizen wären weg
@@ -183,35 +303,45 @@
             foreign = await foreignFileBytes(bytes);
             if (foreign) ok = false;
           } catch (e) {
-            ok = false;
-            console.warn('Datei vor dem Schreiben', e);
-            setStatus(t('Die Datei „{name}“ ist gerade nicht lesbar; es wurde nichts gespeichert. Beim nächsten Speichern wird es wieder versucht. ({fehler})', { name: s.fileHandle.name, fehler: errorText(e) }), 'error');
+            ok = false; // nicht lesbar: nichts schreiben, weder Datei noch Browser-Kopie (seit 4.4.0), und wiederholen (seit 4.6.0)
+            failure = { e, where: 'read' };
           }
         }
         if (ok) {
           await rollingBackup(); // der gespeicherte Stand vor dem ersten Überschreiben nach dem Öffnen, danach alle 30 Minuten
+          let mirrored = false;
           try {
-            await Store.browserStore.saveDb(bytes, s.area.id);
+            const rec = syncFor(bytes, linked);
+            await Store.browserStore.saveDb(bytes, s.area.id, rec);
+            mirrored = true;
+            s.sync = { fileHash: rec.fileHash, mirrorHash: rec.mirrorHash, dirty: rec.dirty };
+            if (rec.base) s.syncBaseStored = true;
             if (s.channel) { try { s.channel.postMessage({ tab: s.tabId, area: s.area.id }); } catch (e) { /* egal */ } }
           } catch (e) {
             ok = false;
-            console.warn('Browser-Speicher', e);
-            setStatus(t('Browser-Speicher nicht beschreibbar: {fehler}', { fehler: errorText(e) }), 'error');
+            failure = { e, where: 'mirror' };
           }
           if (linked) {
+            let checked = false;
             try {
               // Kurz vor dem Schreiben noch einmal nachsehen: Wurde die Datei inzwischen von aussen geändert, nicht blind überschreiben.
               foreign = s.overwrite ? null : await foreignFileBytes(bytes);
+              checked = true;
               if (foreign) {
                 ok = false;
               } else {
-                await Store.fileAccess.write(s.fileHandle, bytes);
+                s.attempted = hashBytes(bytes);
+                await Store.fileAccess.write(s.fileHandle, bytes, { verify: true });
+                s.writeFailed = false;
+                s.attempted = null;
                 await rememberFile(bytes);
+                await markInSync(bytes, mirrored);
               }
             } catch (e) {
               ok = false;
-              console.warn('Dateischreiben', e);
-              setStatus(t('Datei konnte nicht geschrieben werden: {fehler}', { fehler: errorText(e) }), 'error');
+              if (!failure) failure = { e, where: checked ? 'write' : 'read' };
+              if (checked) s.writeFailed = true; // was jetzt in der Datei steht, kann ein halber eigener Stand sein
+              await keepSyncBase();
             }
           }
         }
@@ -220,6 +350,7 @@
           s.baseSnap = snap;
           s.baseBytes = bytes;
           s.allowShrink = false; // gilt nur bis zum ersten gelungenen Speichern danach
+          saveSucceeded();
           setStatus(t('Gespeichert {zeit}', { zeit: timeFormat().format(new Date()) }), 'saved');
         }
       } catch (e) {
@@ -230,8 +361,10 @@
         s.saving = false;
         if (ok && s.editSeq !== seq) persistNow(); // zwischenzeitlich kam Neues
       }
-      if (held) { holdSave(); return; }
+      if (failure) { saveFailed(failure.e, failure.where); return; }
+      if (held) { stopRetry(); holdSave(); return; }
       if (foreign) {
+        stopRetry();
         s.pendingFileBytes = foreign;
         setStatus(t('Ungespeicherte Änderungen'), 'dirty');
         await onExternalChange('file');
@@ -318,6 +451,8 @@
     async function rememberFile(bytes) {
       s.fileHash = hashBytes(bytes);
       s.fileStamp = null;
+      s.syncBase = bytes; // der bekannte Stand der Datei: Grundlage, falls die Browser-Kopie ihr vorausläuft (seit 4.6.0)
+      s.syncBaseStored = false;
       try {
         const f = await s.fileHandle.getFile();
         s.fileStamp = { size: f.size, modified: f.lastModified };
@@ -331,8 +466,12 @@
       if (!s.fileHandle || s.filePermission !== 'granted') return null;
       const f = await s.fileHandle.getFile();
       if (s.fileHash != null && s.fileStamp && f.size === s.fileStamp.size && f.lastModified === s.fileStamp.modified) return null;
-      const bytes = new Uint8Array(await f.arrayBuffer());
+      const bytes = await Store.fileAccess.read(s.fileHandle);
       if (mine && Store.bytesEqual(bytes, mine)) return null; // steht schon so drin (etwa ein Schreiben, das trotz Fehler ankam)
+      // Seit 4.6.0: den eigenen Stand nicht für einen fremden halten. Ein Schreiben, das als gescheitert gemeldet wurde, kam doch an
+      // (gleicher Prüfwert), oder es hinterliess einen halben Stand (lässt sich nicht öffnen): beides wird überschrieben.
+      if (s.attempted && hashBytes(bytes) === s.attempted) return null;
+      if (s.writeFailed && DB.check(s.SQL, bytes)) return null;
       if (s.fileHash == null) return bytes.length ? bytes : null; // nie gesehen: gilt als geändert, ausser leer oder gleich
       if (hashBytes(bytes) === s.fileHash) { s.fileStamp = { size: f.size, modified: f.lastModified }; return null; } // nur der Zeitstempel, nicht der Inhalt
       return bytes;
@@ -344,7 +483,7 @@
     }
 
     async function checkFile() {
-      if (s.external || s.saving || s.blocked || s.held || s.fileHash == null) return;
+      if (s.external || s.saving || s.blocked || s.held || s.syncing || s.fileHash == null) return;
       const bytes = await foreignQuiet();
       if (!bytes || s.saving || s.external) return;
       s.pendingFileBytes = bytes;
@@ -360,6 +499,7 @@
 
     async function onExternalChange(kind) {
       if (s.external || s.blocked) return;
+      stopRetry(); // die Entscheidung übernimmt (seit 4.6.0)
       // Seit 4.4.0: Was von aussen kam, zuerst prüfen. Eine neuere, fremde oder beschädigte Fassung wird weder geladen noch überschrieben.
       let outside = null;
       try { outside = kind === 'file' ? (s.pendingFileBytes || await Store.fileAccess.read(s.fileHandle)) : await Store.browserStore.loadDb(s.area.id); }
@@ -371,6 +511,11 @@
       }
       if (!isDirty()) { await loadExternal(kind, true); return; } // nichts Ungesichertes zu verlieren: still übernehmen (die Statuszeile meldet es)
       if (await mergeExternal(kind)) return; // eigene Änderungen und fremde vertragen sich: vereint, ohne Rückfrage
+      askExternal(kind);
+    }
+
+    /** Beide Seiten haben sich verändert und vertragen sich nicht: die Leiste fragt, gespeichert wird erst danach. */
+    function askExternal(kind) {
       s.external = kind;
       clearTimeout(s.saveTimer);
       const name = s.fileHandle ? s.fileHandle.name : '';
@@ -577,40 +722,200 @@
       try {
         s.filePermission = await Store.fileAccess.permission(handle, true);
         if (s.filePermission !== 'granted') { showConnectBanner(); updateStorageInfo(); return; }
-
-        const fileBytes = await Store.fileAccess.read(handle);
-        const problem = DB.check(s.SQL, fileBytes); // seit 4.4.0: eine neuere, fremde oder beschädigte Datei weder laden noch überschreiben
-        if (problem) { host.hideBanner(); await stopNow(stopOf(problem, 'file', fileBytes)); return; }
-        const fileUnchanged = s.mirrorAtStart && Store.bytesEqual(fileBytes, s.mirrorAtStart);
-        await rememberFile(fileBytes);
-
-        if (!fileBytes.length) {
-          // Leere Datei: aktueller Stand wird hineingeschrieben.
-          s.editSeq++;
-        } else if (!s.editedSinceStart || fileUnchanged) {
-          // Nichts Eigenes verloren: Datei ist massgebend bzw. identisch, aktueller Stand gewinnt bei Änderungen.
-          if (!s.editedSinceStart) { await beforeMigration(fileBytes); replaceDb(DB.open(s.SQL, fileBytes)); s.baseSnap = snapshot(s.db); s.baseBytes = fileBytes; }
-          s.editSeq++;
-        } else {
-          const loadFile = confirm(
-            t('Die Datei „{name}“ wurde ausserhalb dieser Sitzung geändert.', { name: handle.name }) + '\n\n' +
-            t('OK: Datei laden und die Änderungen dieser Sitzung verwerfen.') + '\n' +
-            t('Abbrechen: Datei mit dem aktuellen Stand überschreiben.')
-          );
-          await backup(loadFile ? DB.exportBytes(s.db) : fileBytes, loadFile ? 'unsaved' : 'overwritten');
-          if (loadFile) { await beforeMigration(fileBytes); replaceDb(DB.open(s.SQL, fileBytes)); s.baseSnap = snapshot(s.db); s.baseBytes = fileBytes; }
-          else s.allowShrink = true; // die Person hat entschieden, die Datei zu überschreiben
-          s.editSeq++;
-        }
-        s.editedSinceStart = false;
         host.hideBanner();
+        let fileBytes;
+        try { fileBytes = await readWithProgress(handle); }
+        catch (e) {
+          // nicht lesbar (seit 4.6.0): nicht verbunden lassen, mit der Browser-Kopie weiterarbeiten, die Leiste bietet es wieder an
+          console.warn('Datei nicht lesbar', e);
+          s.filePermission = 'prompt';
+          updateStorageInfo();
+          showConnectBanner();
+          setStatus(t('„{name}“ lässt sich gerade nicht lesen: {grund}', { name: handle.name, grund: friendlyError(e) }), 'error');
+          return;
+        }
+        const problem = DB.check(s.SQL, fileBytes); // seit 4.4.0: eine neuere, fremde oder beschädigte Datei weder laden noch überschreiben
+        if (problem) { await stopNow(stopOf(problem, 'file', fileBytes)); return; }
         updateStorageInfo();
+        const done = await reconcile(fileBytes);
+        s.editedSinceStart = false;
         await host.renderAll();
-        await persistNow();
-        setStatus(t('Mit „{name}“ verbunden', { name: handle.name }), 'saved');
+        if (done === 'ask') return; // die Leiste fragt
+        if (isDirty()) await persistNow();
+        if (!isDirty() && !s.retry) setStatus(done === 'loaded' ? t('Mit „{name}“ verbunden; der neuere Stand der Datei wurde geladen', { name: handle.name }) : t('Mit „{name}“ verbunden', { name: handle.name }), 'saved');
       } catch (e) {
         console.error(e);
         setStatus(t('Verbinden fehlgeschlagen: {fehler}', { fehler: errorText(e) }), 'error');
+      }
+    }
+
+    // ---------- Abgleich mit der Datei (seit 4.6.0) ----------
+
+    /** Gleicht die Datei mit dem eigenen Stand ab: dem Inhalt der Browser-Kopie samt den Änderungen dieser Sitzung. Der
+     *  Abgleich-Eintrag sagt, von welchem Stand der Datei die Kopie ausging und ob sie ihm voraus ist. Ergebnis:
+     *  'write' – der eigene Stand gilt und kommt gleich in die Datei; 'same' – nichts zu tun; 'loaded' – die Datei ist neuer und wurde
+     *  geladen (der bisherige Stand liegt in den Sicherungen); 'merged' – beide hatten Änderungen, sie vertragen sich; 'ask' – beide
+     *  hatten Änderungen, die sich nicht von selbst vereinen lassen: die Leiste fragt. */
+    async function reconcile(fileBytes) {
+      const rec = s.sync;
+      const base = s.syncBase; // der Stand der Datei, von dem die Kopie ausging (rememberFile ersetzt ihn gleich)
+      const ahead = !!(rec && rec.dirty) || s.editedSinceStart;
+      const fileChanged = !rec || rec.fileHash == null || hashBytes(fileBytes) !== rec.fileHash;
+      await rememberFile(fileBytes);
+      if (!fileBytes.length) { s.editSeq++; return 'write'; } // eine leere Datei: der eigene Stand kommt hinein
+      if (!fileChanged) {
+        if (ahead) { s.editSeq++; return 'write'; } // die Datei ist, wie die Kopie sie kannte: die Kopie ist voraus und gilt
+        s.baseSnap = snapshot(s.db);
+        s.baseBytes = fileBytes;
+        return 'same';
+      }
+      if (!ahead) {
+        // die Datei wurde anderswo geändert, hier gibt es nichts Eigenes: sie gilt, die Kopie kommt in die Sicherungen
+        await beforeMigration(fileBytes);
+        await backup(DB.exportBytes(s.db), 'external');
+        replaceDb(DB.open(s.SQL, fileBytes));
+        s.baseSnap = snapshot(s.db);
+        s.baseBytes = fileBytes;
+        await mirrorInSync(fileBytes);
+        return 'loaded';
+      }
+      // beide haben sich verändert: Notiz für Notiz zusammenführen, mit dem alten Stand der Datei als Grundlage
+      if (base && base.length) {
+        let baseDb = null;
+        try { baseDb = DB.open(s.SQL, base); s.baseSnap = snapshot(baseDb); } catch (e) { s.baseSnap = null; } finally { if (baseDb) baseDb.close(); }
+        const merged = s.baseSnap ? mergeWithExternal(fileBytes) : null;
+        if (merged) {
+          await backup(DB.exportBytes(s.db), 'merge');
+          if (s.db) { try { s.db.close(); } catch (e) { /* egal */ } }
+          s.db = merged.db;
+          s.baseSnap = merged.base;
+          s.baseBytes = fileBytes;
+          s.editSeq++;
+          setStatus(t('Änderungen aus „{name}“ mit deinen zusammengeführt', { name: s.fileHandle.name }), 'dirty');
+          return 'merged';
+        }
+      }
+      s.pendingFileBytes = fileBytes;
+      askExternal('file');
+      return 'ask';
+    }
+
+    /** Die Browser-Kopie auf den Stand der Datei bringen, ohne die Datei noch einmal zu schreiben. */
+    async function mirrorInSync(bytes) {
+      const h = hashBytes(bytes);
+      try {
+        await Store.browserStore.saveDb(bytes, s.area.id, { fileHash: h, mirrorHash: h, dirty: false, base: null });
+        s.sync = { fileHash: h, mirrorHash: h, dirty: false };
+        s.syncBaseStored = false;
+        s.savedSeq = s.editSeq;
+      } catch (e) {
+        console.warn('Browser-Speicher', e);
+        s.editSeq++; // beim nächsten Speichern
+      }
+    }
+
+    const megabytes = n => t('{n} MB', { n: (n / 1048576).toLocaleString(I18n.locale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 }) });
+    const kilobytes = n => t('{n} KB', { n: Math.round(n / 1024).toLocaleString(I18n.locale()) });
+    /** Gelesen und gesamt in derselben Einheit: unter 1 MB in KB, sonst in MB. */
+    const amounts = (done, total) => {
+      const f = total < 1048576 ? kilobytes : megabytes;
+      return { gelesen: f(done), gesamt: f(total) };
+    };
+
+    /** Liest die Datei in Stücken; dauert es mehr als einen Moment, zeigt die Statuszeile den Fortschritt. */
+    function readWithProgress(handle, signal) {
+      const started = Date.now();
+      return Store.fileAccess.read(handle, {
+        signal,
+        onProgress: (done, total) => {
+          if (Date.now() - started > SYNC_QUICK_MS && total > 0) {
+            setStatus(t('„{name}“ wird gelesen … {gelesen} von {gesamt}', Object.assign({ name: handle.name }, amounts(done, total))), 'saving');
+          }
+        },
+      });
+    }
+
+    /** Text der Leiste während des Abgleichs oder Ladens. */
+    function syncText(name, progress, loading) {
+      const [done, total] = progress || [0, 0];
+      if (loading) return total ? t('„{name}“ wird gelesen … {gelesen} von {gesamt}', Object.assign({ name }, amounts(done, total))) : t('„{name}“ wird gelesen …', { name });
+      return total ? t('Abgleich mit der Datei „{name}“ … {gelesen} von {gesamt}', Object.assign({ name }, amounts(done, total))) : t('Abgleich mit der Datei „{name}“ …', { name });
+    }
+
+    /** Liest eine Datei, zu der es keine Browser-Kopie gibt; nach 2 Sekunden zeigt eine Leiste den Fortschritt mit «Abbrechen». */
+    async function readLoading(handle) {
+      const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+      let progress = null;
+      let shown = false;
+      const show = () => { shown = true; if (host.showSync) host.showSync(syncText(handle.name, progress, true), ctrl ? () => ctrl.abort() : null); };
+      const timer = setTimeout(show, Number(global.NONOTES_LOADING_MS) || 2000);
+      try {
+        return await Store.fileAccess.read(handle, { signal: ctrl && ctrl.signal, onProgress: (d, n) => { progress = [d, n]; if (shown) show(); } });
+      } finally {
+        clearTimeout(timer);
+        if (shown && host.hideSync) host.hideSync();
+      }
+    }
+
+    /** Nach dem Öffnen mit Browser-Kopie: die Datei liest sich daneben (s.pendingRead). Sofort fertig: vor dem ersten Zeichnen
+     *  abgleichen; sonst die Kopie gesperrt zeigen, mit Leiste und Fortschritt, und danach abgleichen (finishSync). */
+    async function syncOrLock() {
+      const p = s.pendingRead;
+      if (!p) return null;
+      const quick = await Promise.race([p.promise.then(() => true, () => true), sleep(Number(global.NONOTES_SYNC_QUICK_MS) || SYNC_QUICK_MS).then(() => false)]);
+      if (quick) {
+        // eine neuere, fremde oder beschädigte Datei: der Stoppschirm wie beim Öffnen, bevor etwas gezeichnet ist
+        const bytes = await p.promise.catch(() => null);
+        const problem = bytes ? DB.check(s.SQL, bytes) : null;
+        if (problem) { s.pendingRead = null; return { stop: stopOf(problem, 'file', bytes) }; }
+        await finishSync();
+        return null;
+      }
+      s.syncing = { name: p.handle.name };
+      if (host.showSync) host.showSync(syncText(p.handle.name, p.progress, false), p.ctrl ? () => p.ctrl.abort() : null);
+      return null;
+    }
+
+    function unlockSync() {
+      if (!s.syncing) return;
+      s.syncing = null;
+      if (host.hideSync) host.hideSync();
+    }
+
+    /** Die Datei ist gelesen (oder nicht lesbar): abgleichen, entsperren, nötigenfalls schreiben. */
+    async function finishSync() {
+      const p = s.pendingRead;
+      if (!p) return;
+      let fileBytes = null;
+      let error = null;
+      try { fileBytes = await p.promise; } catch (e) { error = e; }
+      if (s.pendingRead !== p) return; // inzwischen ein anderer Bereich
+      s.pendingRead = null;
+      const name = p.handle.name;
+      try {
+        if (error) {
+          // nicht lesbar oder abgebrochen: mit der Browser-Kopie weiterarbeiten; sie bleibt der Datei voraus, nichts geht verloren
+          console.warn('Abgleich mit der Datei', error);
+          s.filePermission = 'prompt';
+          unlockSync();
+          updateStorageInfo();
+          showConnectBanner();
+          setStatus(isAbort(error) ? t('Abgleich mit „{name}“ abgebrochen; es gilt die Kopie im Browser-Speicher.', { name })
+            : t('„{name}“ lässt sich gerade nicht lesen: {grund}', { name, grund: friendlyError(error) }), isAbort(error) ? 'saved' : 'error');
+          return;
+        }
+        const problem = DB.check(s.SQL, fileBytes);
+        if (problem) { unlockSync(); await stopNow(stopOf(problem, 'file', fileBytes)); return; }
+        s.openedFromFile = true;
+        const done = await reconcile(fileBytes);
+        unlockSync();
+        if (s.backend && (done === 'loaded' || done === 'merged')) await host.renderAll(); // vor dem ersten Zeichnen zeichnet der Start selbst
+        if (done !== 'ask' && isDirty()) await persistNow();
+        if (s.backend && done !== 'ask' && !isDirty() && !s.retry) {
+          setStatus(done === 'loaded' ? t('Aus „{name}“ geladen', { name }) : t('Mit „{name}“ abgeglichen', { name }), 'saved');
+        }
+      } finally {
+        unlockSync();
       }
     }
 
@@ -700,7 +1005,11 @@
       s.fileHandle = null;
       s.filePermission = null;
       s.handleRemembered = false;
+      // ohne Datei ist die Kopie niemandem voraus (seit 4.6.0); eine laufende Wiederholung schreibt jetzt nur noch die Kopie
+      try { await Store.browserStore.saveSync(s.area.id, { fileHash: null, mirrorHash: s.sync ? s.sync.mirrorHash : null, dirty: false, base: null }); } catch (e) { /* beim nächsten Speichern */ }
+      if (s.sync) s.sync = Object.assign({}, s.sync, { fileHash: null, dirty: false });
       host.hideBanner();
+      if (s.retry) { s.retry.bar = false; retryNow(); }
       updateStorageInfo();
       setStatus(t('Dateiverbindung getrennt. Daten bleiben im Browser-Speicher.'), 'saved');
     }
@@ -817,13 +1126,32 @@
      *  gestartet, wenn es Daten gibt, die sich nicht öffnen lassen: Datei, wenn sie freigegeben ist (interactive: bei Bedarf
      *  nachfragen, braucht einen Klick), sonst die Browser-Kopie; leer nur, wenn es wirklich keine Daten gibt. */
     async function readArea(area, interactive) {
+      stopRetry();
+      unlockSync();
+      if (s.pendingRead && s.pendingRead.ctrl) s.pendingRead.ctrl.abort();
       Object.assign(s, { area: { id: area.id, name: area.name }, fileHandle: null, filePermission: null, handleRemembered: false,
-        openedFromFile: false, fileHash: null, fileStamp: null, external: null, pendingFileBytes: null, editedSinceStart: false, held: false });
+        openedFromFile: false, fileHash: null, fileStamp: null, external: null, pendingFileBytes: null, editedSinceStart: false, held: false,
+        sync: null, syncBase: null, syncBaseStored: false, attempted: null, writeFailed: false, pendingRead: null });
       let mirror = null;
       let mirrorFailed = null;
       try { mirror = await Store.browserStore.loadDb(area.id); }
-      catch (e) { console.warn('Browser-Speicher nicht lesbar', e); mirrorFailed = { kind: 'read', source: 'mirror', error: errorText(e) }; }
+      catch (e) { console.warn('Browser-Speicher nicht lesbar', e); mirrorFailed = { kind: 'read', source: 'mirror', error: rawError(e) }; }
       s.mirrorAtStart = mirror;
+      // Abgleich-Eintrag (seit 4.6.0): gehört er zu dieser Kopie? Ist sie der Datei voraus, liegt die Grundlage daneben.
+      if (mirror && mirror.length) {
+        const mh = hashBytes(mirror);
+        s.sync = await Store.browserStore.loadSync(area.id);
+        if (s.sync && s.sync.mirrorHash !== mh) s.sync = null; // etwa von einer älteren Version überschrieben
+        if (s.sync && s.sync.dirty) {
+          const b = await Store.browserStore.loadSyncBase(area.id);
+          s.syncBase = b && hashBytes(b) === s.sync.fileHash ? b : null;
+          s.syncBaseStored = !!s.syncBase;
+        } else {
+          // nicht voraus (oder Daten von vor 4.6.0): die Kopie entspricht dem letzten bekannten Stand der Datei
+          s.syncBase = mirror;
+          if (!s.sync) s.sync = { fileHash: mh, mirrorHash: mh, dirty: false };
+        }
+      }
       let migrated = false; // auf ein neues Schema angeglichen: gleich wieder sichern, damit die Umstellung nur einmal läuft
       const opened = async (bytes, source) => {
         const problem = DB.check(s.SQL, bytes);
@@ -848,12 +1176,27 @@
           s.fileHandle = handle;
           try { s.filePermission = await Store.fileAccess.permission(handle, interactive); }
           catch (e) { s.filePermission = 'prompt'; }
-          if (s.filePermission === 'granted') {
+          const mirrorUsable = !mirrorFailed && mirror && mirror.length && !DB.check(s.SQL, mirror);
+          if (s.filePermission === 'granted' && mirrorUsable) {
+            // seit 4.6.0: die Browser-Kopie gilt zuerst, die Datei liest sich daneben; danach gleicht syncOrLock ab
+            const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+            const pending = { handle, ctrl, progress: null, promise: null };
+            pending.promise = Store.fileAccess.read(handle, {
+              signal: ctrl && ctrl.signal,
+              onProgress: (d, n) => {
+                pending.progress = [d, n];
+                if (s.syncing && s.pendingRead === pending && host.showSync) host.showSync(syncText(handle.name, pending.progress, false), ctrl ? () => ctrl.abort() : null);
+              },
+            });
+            pending.promise.catch(() => { /* finishSync wertet aus */ });
+            s.pendingRead = pending;
+          } else if (s.filePermission === 'granted') {
             let fileBytes;
-            try { fileBytes = await Store.fileAccess.read(handle); }
+            try { fileBytes = await readLoading(handle); }
             catch (e) {
               console.warn('Datei nicht lesbar', e);
-              return { stop: { kind: 'read', source: 'file', name: handle.name, error: errorText(e) } };
+              if (isAbort(e)) return { stop: { kind: 'cancelled', source: 'file', name: handle.name } };
+              return { stop: { kind: 'read', source: 'file', name: handle.name, error: rawError(e), reason: friendlyError(e) } };
             }
             if (fileBytes.length) {
               const r = await opened(fileBytes, 'file');
@@ -898,8 +1241,9 @@
       let ask = interactive;
       for (;;) {
         const r = await readArea(target, ask);
-        if (!r.stop) { await install(r); return; }
-        const choice = await stopScreen(r.stop);
+        const stop = r.stop || await install(r);
+        if (!stop) return;
+        const choice = await stopScreen(stop);
         ask = true; // «Erneut versuchen» und die Wahl eines Bereichs sind Klicks: die Freigabe darf gefragt werden
         if (choice.area) target = choice.area;
       }
@@ -912,6 +1256,8 @@
       s.baseBytes = r.bytes && r.bytes.length ? r.bytes : null;
       s.backupAt = 0;
       s.savedSeq = s.editSeq;
+      const synced = await syncOrLock(); // seit 4.6.0: mit der Datei abgleichen, falls sie neben der Browser-Kopie gelesen wird
+      if (synced && synced.stop) return synced.stop;
       if (r.migrated) { // die umgestellte Fassung gleich sichern, damit die Umstellung (und die Frage davor) nur einmal kommt
         s.editSeq++;
         try { await persistNow(); } catch (e) { console.warn('Speichern nach der Umstellung', e); scheduleSave(); }
@@ -931,6 +1277,9 @@
         lines.push(t('Diese Daten lassen sich nicht öffnen: sie sind beschädigt oder unvollständig. Es wurde nichts verändert. Bitte erneut versuchen; hilft das nicht, eine Sicherung verwenden.'));
       } else if (stop.kind === 'read') {
         lines.push(t('Diese Daten konnten nicht gelesen werden, zum Beispiel weil das Netzlaufwerk gerade nicht erreichbar ist. Es wurde nichts verändert. Bitte erneut versuchen.'));
+        if (stop.reason) lines.push(stop.reason);
+      } else if (stop.kind === 'cancelled') {
+        lines.push(t('Das Lesen wurde abgebrochen. Es wurde nichts verändert.'));
       } else if (stop.kind === 'permission') {
         lines.push(stop.denied ? t('Der Zugriff auf die Datei „{name}“ wurde verweigert. Ohne Zugriff wird nichts angezeigt und nichts gespeichert.', { name: stop.name })
           : t('Die Daten liegen in der Datei „{name}“. Zum Öffnen einmal mit der Datei verbinden; bis dahin wird nichts angezeigt und nichts gespeichert.', { name: stop.name }));
@@ -942,6 +1291,7 @@
       if (stop.error && stop.kind !== 'tooNew') lines.push(t('Meldung: {fehler}', { fehler: stop.error }));
       const title = stop.kind === 'tooNew' ? t('Neuere Daten: bitte die neuere NoNotes-Version verwenden')
         : stop.kind === 'read' ? t('Daten konnten nicht gelesen werden')
+        : stop.kind === 'cancelled' ? t('Laden abgebrochen')
           : stop.kind === 'permission' ? t('Mit der Datei verbinden')
             : t('Daten lassen sich nicht öffnen');
       return { title, lines };
@@ -1043,6 +1393,7 @@
       if (s.fileHandle && s.filePermission !== 'granted') showConnectBanner();
       setStatus(s.openedFromFile ? t('Bereich „{name}“: aus „{datei}“ geladen', { name: s.area.name, datei: s.fileHandle.name })
         : t('Bereich „{name}“', { name: s.area.name }), isDirty() ? 'dirty' : 'saved');
+      if (s.syncing) await finishSync(); // die Kopie ist zu sehen, jetzt mit der Datei abgleichen (seit 4.6.0)
     }
 
     async function switchArea(id) {

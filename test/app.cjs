@@ -227,7 +227,7 @@ async function runSmoke(browser, part, step) {
         name: 'Test.sqlite',
         queryPermission: async () => 'granted',
         requestPermission: async () => 'granted',
-        getFile: async () => new File([window.__writes.at(-1) || new Uint8Array()], 'Test.sqlite'),
+        getFile: async () => new File([window.__writes.at(-1) || new Uint8Array()], 'Test.sqlite', { lastModified: 1000 + window.__writes.length }),
         createWritable: async () => {
           const chunks = [];
           return {
@@ -3714,6 +3714,7 @@ async function runSaveSafety(browser, part, step) {
   await ctx.addInitScript(() => {
     // eine nachgebaute Datei: window.__file.readFail lässt das Lesen scheitern (etwa ein Netzlaufwerk, das gerade fehlt)
     window.__file = { bytes: new Uint8Array(), writes: 0, mtime: 1, readFail: false };
+    window.NONOTES_RETRY_MS = [40, 40, 40, 40, 40, 150]; // die Wiederholungen (seit 4.6.0) kurz halten
     const handle = {
       kind: 'file', name: 'Sicher.sqlite',
       queryPermission: async () => 'granted', requestPermission: async () => 'granted',
@@ -3923,16 +3924,23 @@ async function runSaveSafety(browser, part, step) {
     const writes = await page.evaluate(() => window.__file.writes);
     await page.evaluate(() => { window.__file.readFail = true; });
     await page.fill('#title', 'Während des Ausfalls');
+    // seit 4.6.0: erst still wiederholen, dann eine ruhige Leiste
     await page.waitForFunction(() => document.querySelector('#status').dataset.state === 'error', null, { timeout: 5000 });
-    assert.match(await page.textContent('#status'), /„Sicher\.sqlite“ ist gerade nicht lesbar; es wurde nichts gespeichert/);
+    assert.match(await page.textContent('#status'), /Noch nicht gespeichert: Die Datei ist gerade nicht erreichbar/);
+    assert.match(await page.textContent('#banner'), /Noch nicht gespeichert – wird weiter versucht/);
     assert.equal(await page.evaluate(() => window.__file.writes), writes, 'nicht in die Datei geschrieben');
     assert.ok(!notesIn(await mirror()).includes('Während des Ausfalls'), 'auch nicht in die Browser-Kopie');
     await page.evaluate(() => { window.__file.readFail = false; });
+    await page.waitForFunction(n => window.__file.writes > n, writes); // die nächste Wiederholung schreibt, ohne neue Eingabe
+    await page.waitForFunction(SAVED);
+    await page.waitForSelector('#banner', { state: 'hidden' });
+    assert.ok(notesIn(await page.evaluate(() => Array.from(window.__file.bytes))).includes('Während des Ausfalls'));
+    const writes1 = await page.evaluate(() => window.__file.writes);
     await page.fill('#title', 'Nach dem Ausfall');
-    await page.waitForFunction(n => window.__file.writes > n, writes);
+    await page.waitForFunction(n => window.__file.writes > n, writes1);
     await page.waitForFunction(SAVED);
     assert.ok(notesIn(await page.evaluate(() => Array.from(window.__file.bytes))).includes('Nach dem Ausfall'));
-    part('Datei vor dem Schreiben nicht lesbar: nichts geschrieben (weder Datei noch Browser-Kopie), klare Meldung, beim nächsten Speichern wieder');
+    part('Datei vor dem Schreiben nicht lesbar: nichts geschrieben (weder Datei noch Browser-Kopie), ruhige Leiste, die Wiederholung schreibt, sobald sie lesbar ist');
 
     // Die Datei wird von aussen mit einer neueren Version gespeichert: Stopp, die Datei bleibt, die eigene Änderung ist gesichert
     const fileNow = await page.evaluate(() => Array.from(window.__file.bytes));
@@ -3964,6 +3972,292 @@ async function runSaveSafety(browser, part, step) {
   }
 }
 
+// ============================================================
+/* Unzuverlässige Ablage (v4.6.0): still wiederholen, dann ruhige Leiste mit «Jetzt erneut versuchen», «Kopie herunterladen» und
+   «Details»; Meldungen nach der Art des Fehlers; Grösse nach dem Schreiben prüfen, den eigenen halben Stand nicht für fremd halten;
+   Abgleich-Eintrag neben der Browser-Kopie und Abgleich beim Verbinden (Kopie voraus, Datei geändert, beides: zusammenführen oder
+   fragen); die Kopie beim Öffnen gleich zeigen, gesperrt, mit Fortschritt und «Abbrechen»; ohne Kopie Laden mit «Abbrechen». */
+async function runUnreliableStorage(browser, part, step) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'de-CH', acceptDownloads: true });
+  await ctx.addInitScript(() => {
+    // Eine nachgebaute Datei, die ein Neuladen übersteht (Inhalt in localStorage), mit Schaltern für Ausfälle
+    const LS = 'mock.file';
+    const st = { bytes: new Uint8Array(), mtime: 1 };
+    try {
+      const v = JSON.parse(localStorage.getItem(LS) || 'null');
+      if (v) { st.bytes = Uint8Array.from(atob(v.b64), c => c.charCodeAt(0)); st.mtime = v.mtime; }
+    } catch (e) { /* leer */ }
+    const persist = () => {
+      let s = '';
+      for (let i = 0; i < st.bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, st.bytes.subarray(i, i + 0x8000));
+      localStorage.setItem(LS, JSON.stringify({ b64: btoa(s), mtime: st.mtime }));
+    };
+    const F = window.__file = {
+      get bytes() { return st.bytes; },
+      set(bytes) { st.bytes = bytes; st.mtime++; persist(); },
+      writes: 0, failRead: false, failWrite: false, truncate: false, throwAfterWrite: false,
+      delay: Number(localStorage.getItem('mock.delay') || 0),
+    };
+    window.NONOTES_RETRY_MS = [30, 30, 30, 30, 30, 120];
+    window.NONOTES_READ_CHUNK = 8192;
+    window.NONOTES_LOADING_MS = 150;
+    const fileObj = () => {
+      const f = new File([st.bytes], 'Plan.sqlite', { lastModified: st.mtime });
+      if (!F.delay) return f;
+      return { size: f.size, lastModified: f.lastModified, arrayBuffer: () => f.arrayBuffer(),
+        slice: (a, b) => ({ arrayBuffer: async () => { await new Promise(r => setTimeout(r, F.delay)); return f.slice(a, b).arrayBuffer(); } }) };
+    };
+    const handle = {
+      kind: 'file', name: 'Plan.sqlite', __mock: true,
+      queryPermission: async () => localStorage.getItem('mock.perm') || 'prompt',
+      requestPermission: async () => 'granted',
+      isSameEntry: async o => !!(o && o.__mock),
+      getFile: async () => {
+        if (F.failRead) throw new DOMException('A requested file or directory could not be found at the time an operation was processed.', 'NotFoundError');
+        return fileObj();
+      },
+      createWritable: async () => {
+        if (F.failWrite) throw new DOMException('The request is not allowed by the user agent or the platform in the current context.', 'NoModificationAllowedError');
+        const chunks = [];
+        return {
+          write: async d => { chunks.push(new Uint8Array(d)); },
+          close: async () => {
+            let out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+            let o = 0;
+            for (const c of chunks) { out.set(c, o); o += c.length; }
+            if (F.truncate) out = out.slice(0, out.length >> 1);
+            F.set(out);
+            F.writes++;
+            if (F.throwAfterWrite) { F.throwAfterWrite = false; throw new DOMException('The operation failed for an unknown transient reason.', 'InvalidStateError'); }
+          },
+          abort: async () => {},
+        };
+      },
+    };
+    window.showSaveFilePicker = async () => handle;
+    window.showOpenFilePicker = async () => [handle];
+    // Ein nachgebautes Handle lässt sich nicht in IndexedDB legen: Merken über localStorage
+    let ns;
+    Object.defineProperty(window, 'NoNotesStorage', { configurable: true, get: () => ns, set: v => {
+      ns = v;
+      const key = area => 'mock.handle.' + (area || 'main');
+      v.browserStore.saveHandle = async (h, area) => { localStorage.setItem(key(area), '1'); };
+      v.browserStore.loadHandle = async area => (localStorage.getItem(key(area)) ? handle : null);
+      v.browserStore.clearHandle = async area => { localStorage.removeItem(key(area)); };
+    } });
+  });
+  const page = await ctx.newPage();
+  const errors = [];
+  const alerts = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  page.on('dialog', d => { alerts.push(d.message()); d.accept(); });
+  const SQL = await initSqlJs();
+  const titles = bytes => { if (!bytes || !bytes.length) return []; const d = new SQL.Database(new Uint8Array(bytes)); try { return (d.exec('SELECT title FROM notes WHERE deleted_at IS NULL ORDER BY id')[0] || { values: [] }).values.map(r => r[0]); } finally { d.close(); } };
+  const fileTitles = async () => titles(await page.evaluate(() => Array.from(window.__file.bytes)));
+  const mirrorTitles = async () => titles(await page.evaluate(async () => Array.from(await NoNotesStorage.browserStore.loadDb() || [])));
+  // warten, bis die Browser-Kopie einen Titel hat (die Wiederholung nimmt Eingaben mit, ohne eigenen Versuch)
+  const untilMirror = async title => {
+    for (let i = 0; i < 100; i++) { if ((await mirrorTitles()).includes(title)) return; await page.waitForTimeout(50); }
+    throw new Error('nicht in der Browser-Kopie: ' + title + ' – ' + (await mirrorTitles()).join(', '));
+  };
+  const inList = t => page.waitForFunction(x => document.querySelector('#list').textContent.includes(x), t, { timeout: 10000 });
+  const status = () => page.evaluate(() => [document.querySelector('#status').dataset.state, document.querySelector('#status').textContent]);
+  // eine Änderung an der Datei «von aussen», während dieser Tab sie nicht verbunden hat
+  const changeFile = fn => page.evaluate(async src => {
+    const SQLp = await initSqlJs();
+    const d = NoNotesDB.open(SQLp, window.__file.bytes);
+    // eslint-disable-next-line no-new-func
+    new Function('DB', 'd', src)(NoNotesDB, d);
+    window.__file.set(NoNotesDB.exportBytes(d));
+    d.close();
+  }, fn);
+  const rename = async (from, to) => {
+    await page.click(`#list li:has-text("${from}")`);
+    await page.fill('#title', to);
+  };
+  const addNote = async title => {
+    await page.click('#newBtn');
+    await page.fill('#title', title);
+  };
+  const reopen = async () => {
+    await page.reload();
+    await page.waitForFunction(() => document.body.dataset.ready === 'true' || !document.querySelector('#stopScreen').hidden, null, { timeout: 30000 });
+  };
+  const connect = async () => {
+    await page.click('#banner button:has-text("Mit Datei verbinden")');
+  };
+  try {
+    await page.goto(APP_URL + '#');
+    await page.evaluate(() => { try { localStorage.setItem('nonotes.view', 'list'); } catch (e) { /* egal */ } });
+    await page.reload();
+    await page.waitForSelector(READY, { timeout: 30000 });
+    await page.click('[data-view="list"]');
+    await addNote('Eins');
+    await addNote('Zwei');
+    await page.waitForFunction(SAVED);
+    await page.click('#menuBtn');
+    await page.click('#createFileBtn');
+    await page.waitForFunction(() => window.__file.writes >= 1);
+    await page.waitForFunction(SAVED);
+    assert.deepEqual(await fileTitles(), ['Eins', 'Zwei']);
+    part('Ausgangslage: zwei Notizen, Datenbankdatei angelegt und geschrieben');
+
+    // ---------- still wiederholen, dann ruhige Leiste ----------
+    await page.evaluate(() => { window.__file.failWrite = true; });
+    await addNote('Drei');
+    await page.waitForFunction(() => document.querySelector('#status').dataset.state === 'saving');
+    await page.waitForFunction(() => document.querySelector('#status').dataset.state === 'error', null, { timeout: 5000 });
+    assert.equal((await status())[1], 'Noch nicht gespeichert: Die Datei ist gesperrt, vielleicht hat ein anderes Programm sie offen.');
+    assert.match(await page.textContent('#banner'), /Noch nicht gespeichert – wird weiter versucht\. Die Datei ist gesperrt/);
+    assert.deepEqual(await page.$$eval('#banner button', l => l.map(b => b.textContent)), ['Jetzt erneut versuchen', 'Kopie herunterladen', 'Details']);
+    await page.click('#banner button:text("Details")');
+    assert.ok(alerts.some(a => /^NoModificationAllowedError: /.test(a)), 'Details: die Meldung des Browsers ' + JSON.stringify(alerts));
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#banner button:text("Kopie herunterladen")')]);
+    assert.deepEqual(titles(fs.readFileSync(await dl.path())), ['Eins', 'Zwei', 'Drei'], 'die Kopie hat den neuen Stand');
+    assert.deepEqual(await mirrorTitles(), ['Eins', 'Zwei', 'Drei'], 'die Browser-Kopie hat ihn auch');
+    assert.deepEqual(await fileTitles(), ['Eins', 'Zwei'], 'die Datei nicht');
+    await addNote('Vier'); // eine neue Eingabe braucht keinen eigenen Versuch, die nächste Wiederholung nimmt sie mit
+    await untilMirror('Vier');
+    assert.ok((await status())[1].startsWith('Noch nicht gespeichert'));
+    part('Datei gesperrt: still wiederholt, dann ruhige Leiste mit verständlicher Meldung, Details, Kopie herunterladen; die Browser-Kopie ist voraus');
+
+    // ---------- die Kopie ist voraus, der Tab geht zu: beim Verbinden gilt die Kopie ----------
+    await reopen();
+    assert.equal(await page.evaluate(() => window.__file.failWrite), false);
+    await inList('Vier');
+    assert.match(await page.textContent('#banner'), /Plan\.sqlite.*gemerkt/);
+    await connect();
+    await page.waitForFunction(() => window.__file.writes >= 1);
+    await page.waitForFunction(SAVED);
+    assert.deepEqual(await fileTitles(), ['Eins', 'Zwei', 'Drei', 'Vier'], 'die Kopie kam in die Datei');
+    assert.equal(await page.locator('#banner:not([hidden])').count(), 0, 'ohne Rückfrage');
+    assert.match((await status())[1], /Mit „Plan\.sqlite“ verbunden/);
+    part('Kopie voraus, Datei unverändert: beim Verbinden gilt die Kopie und kommt in die Datei (bisher lud die App die ältere Datei)');
+
+    // ---------- die Datei wurde anderswo geändert, hier nichts: sie gilt ----------
+    await reopen();
+    await changeFile("const id = DB.createNote(d, null); DB.updateNote(d, id, 'Von aussen', '');");
+    await connect();
+    await inList('Von aussen');
+    await page.waitForFunction(SAVED);
+    assert.match((await status())[1], /der neuere Stand der Datei wurde geladen/);
+    assert.deepEqual(await mirrorTitles(), ['Eins', 'Zwei', 'Drei', 'Vier', 'Von aussen'], 'die Browser-Kopie folgt');
+    const reasons = await page.evaluate(async () => (await NoNotesStorage.browserStore.listBackups()).map(b => b.reason));
+    assert.ok(reasons.includes('external'), 'der bisherige Stand liegt in den Sicherungen: ' + reasons);
+    part('Datei anderswo geändert, die Kopie nicht voraus: die Datei gilt, die Kopie folgt, der bisherige Stand liegt in den Sicherungen');
+
+    // ---------- beide verändert, an verschiedenen Notizen: zusammengeführt ----------
+    await page.evaluate(() => { window.__file.failWrite = true; });
+    await rename('Eins', 'Eins hier geändert');
+    await page.waitForFunction(() => document.querySelector('#status').dataset.state === 'error', null, { timeout: 5000 });
+    await untilMirror('Eins hier geändert');
+    await reopen();
+    await changeFile("const n = DB.listNotes(d, '').find(x => x.title === 'Zwei'); DB.updateNote(d, n.id, 'Zwei von aussen', n.body);");
+    await connect();
+    await inList('Zwei von aussen');
+    await inList('Eins hier geändert');
+    await page.waitForFunction(SAVED);
+    assert.equal(await page.locator('#banner:not([hidden])').count(), 0, 'ohne Rückfrage');
+    assert.deepEqual(await fileTitles(), ['Eins hier geändert', 'Zwei von aussen', 'Drei', 'Vier', 'Von aussen']);
+    part('Kopie voraus und Datei geändert, an verschiedenen Notizen: mit dem alten Stand der Datei als Grundlage zusammengeführt, ohne Rückfrage');
+
+    // ---------- beide verändert, nicht vereinbar: die Leiste fragt ----------
+    await page.evaluate(() => { window.__file.failWrite = true; });
+    await addNote('Neu hier');
+    await page.waitForFunction(() => document.querySelector('#status').dataset.state === 'error', null, { timeout: 5000 });
+    await untilMirror('Neu hier');
+    await reopen();
+    await changeFile("const n = DB.listNotes(d, '').find(x => x.title === 'Zwei von aussen'); DB.updateNote(d, n.id, 'Zwei nochmals', n.body);");
+    await connect();
+    await page.waitForFunction(() => /ausserhalb dieser Sitzung geändert/.test(document.querySelector('#banner').textContent));
+    await page.waitForTimeout(300);
+    assert.ok(!(await fileTitles()).includes('Neu hier'), 'bis zur Entscheidung nichts geschrieben');
+    await page.click('#banner button:has-text("Meine Fassung behalten")');
+    await page.waitForSelector('#banner', { state: 'hidden' });
+    await page.waitForFunction(SAVED);
+    const kept = await fileTitles();
+    assert.ok(kept.includes('Neu hier') && !kept.includes('Zwei nochmals'), kept.join(', '));
+    const overwritten = await page.evaluate(async () => {
+      const S = NoNotesStorage.browserStore;
+      const b = (await S.listBackups()).find(x => x.reason === 'overwritten');
+      return b ? Array.from(await S.loadBackup(undefined, b.id)) : null;
+    });
+    assert.ok(overwritten && titles(overwritten).includes('Zwei nochmals'), 'die Fassung der Datei liegt in den Sicherungen');
+    part('Kopie voraus und Datei geändert, nicht vereinbar: die Leiste fragt, bis dahin wird nichts geschrieben; «Meine Fassung behalten» sichert die andere');
+
+    // ---------- Grösse prüfen: ein halber eigener Stand ist nicht fremd ----------
+    const w0 = await page.evaluate(() => { window.__file.truncate = true; return window.__file.writes; });
+    await rename('Drei', 'Drei gekürzt');
+    await page.waitForFunction(n => window.__file.writes >= n + 2, w0, { timeout: 5000 }); // gekürzt geschrieben und wiederholt
+    assert.equal((await status())[0], 'saving', 'still wiederholt');
+    assert.deepEqual(await page.evaluate(() => { const b = window.__file.bytes; return [b.length > 0, String.fromCharCode(...b.subarray(0, 15))]; }), [true, 'SQLite format 3']);
+    assert.equal(await page.evaluate(async () => !!NoNotesDB.check(await initSqlJs(), window.__file.bytes)), true, 'in der Datei steht ein halber Stand');
+    await page.evaluate(() => { window.__file.truncate = false; });
+    await page.waitForFunction(SAVED, null, { timeout: 5000 });
+    assert.equal(await page.locator('#banner:not([hidden])').count(), 0, 'keine Rückfrage wegen des eigenen halben Stands');
+    assert.equal(await page.evaluate(() => document.querySelector('#stopScreen').hidden), true, 'kein Stoppschirm');
+    assert.ok((await fileTitles()).includes('Drei gekürzt'), 'die Datei ist vollständig');
+    const w1 = await page.evaluate(() => { window.__file.throwAfterWrite = true; return window.__file.writes; });
+    await rename('Vier', 'Vier trotz Fehler');
+    await page.waitForFunction(n => window.__file.writes >= n + 1 && !window.__file.throwAfterWrite, w1, { timeout: 5000 }); // kam an, meldete aber einen Fehler
+    await page.waitForFunction(SAVED, null, { timeout: 5000 });
+    assert.equal(await page.locator('#banner:not([hidden])').count(), 0, 'ein Schreiben, das trotz Fehler ankam, ist der eigene Stand');
+    assert.ok((await fileTitles()).includes('Vier trotz Fehler'));
+    part('Nach dem Schreiben die Grösse prüfen: ein halber eigener Stand wird überschrieben, ein trotz Fehler angekommener erkannt, keine Rückfrage');
+
+    // ---------- schneller Start: die Kopie gleich, gesperrt, Abgleich mit Fortschritt ----------
+    await changeFile("const id = DB.createNote(d, null); DB.updateNote(d, id, 'Schnellstart von aussen', '');");
+    await page.evaluate(() => { localStorage.setItem('mock.perm', 'granted'); localStorage.setItem('mock.delay', '60'); });
+    await page.reload();
+    await page.waitForSelector(READY, { timeout: 30000 });
+    await page.waitForSelector('#syncBar:not([hidden])', { timeout: 5000 });
+    assert.match(await page.textContent('#syncText'), /^Abgleich mit der Datei „Plan\.sqlite“ …/);
+    assert.equal(await page.evaluate(() => document.querySelector('#app').inert), true, 'gesperrt, solange abgeglichen wird');
+    assert.ok(!(await page.textContent('#list')).includes('Schnellstart von aussen'), 'zuerst die Kopie');
+    await page.waitForFunction(() => /\d+ KB von \d+ KB$/.test(document.querySelector('#syncText').textContent), null, { timeout: 5000 }); // unter 1 MB in KB
+    await page.waitForSelector('#syncBar', { state: 'hidden', timeout: 15000 });
+    await inList('Schnellstart von aussen');
+    assert.equal(await page.evaluate(() => document.querySelector('#app').inert), false);
+    part('Öffnen mit freigegebener Datei: die Kopie sofort, gesperrt, Leiste mit Fortschritt (unter 1 MB in KB); danach gilt die neuere Datei');
+
+    await page.evaluate(() => localStorage.setItem('mock.delay', '400'));
+    await page.reload();
+    await page.waitForSelector('#syncBar:not([hidden])', { timeout: 10000 });
+    await page.click('#syncCancelBtn');
+    await page.waitForSelector('#syncBar', { state: 'hidden' });
+    assert.match((await status())[1], /Abgleich mit „Plan\.sqlite“ abgebrochen/);
+    assert.match(await page.textContent('#banner'), /Mit Datei verbinden/);
+    await addNote('Nach dem Abbruch');
+    await page.waitForFunction(SAVED);
+    assert.ok((await mirrorTitles()).includes('Nach dem Abbruch') && !(await fileTitles()).includes('Nach dem Abbruch'), 'weiter mit der Kopie, die Datei bleibt');
+    part('«Abbrechen» beim Abgleich: weiter mit der Kopie, die Datei wird nicht angefasst, die Leiste bietet das Verbinden an');
+
+    // ---------- ohne Kopie: Laden mit Leiste und «Abbrechen» ----------
+    await page.evaluate(async () => {
+      const req = indexedDB.open('nonotes', 1);
+      const db = await new Promise(r => { req.onsuccess = () => r(req.result); });
+      await new Promise(r => { const tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').delete('db'); tx.objectStore('kv').delete('sync:main'); tx.oncomplete = r; });
+      db.close();
+    });
+    await page.reload();
+    await page.waitForSelector('#syncBar:not([hidden])', { timeout: 10000 });
+    assert.match(await page.textContent('#syncText'), /„Plan\.sqlite“ wird gelesen/);
+    await page.click('#syncCancelBtn');
+    await page.waitForSelector('#stopScreen:not([hidden])');
+    assert.equal(await page.textContent('#stopTitle'), 'Laden abgebrochen');
+    await page.evaluate(() => { window.__file.delay = 0; });
+    await page.click('#stopActions button:has-text("Erneut versuchen")');
+    await page.waitForSelector('#stopScreen', { state: 'hidden' });
+    await inList('Schnellstart von aussen');
+    part('Ohne Kopie: die Datei lädt mit Leiste; «Abbrechen» führt zum Stoppschirm «Laden abgebrochen», «Erneut versuchen» lädt');
+
+    assert.deepEqual(errors, []);
+  } finally {
+    await ctx.close();
+  }
+}
+
 suite('App-Test', [
   { name: null, run: runSmoke }, // druckt seine Gruppen selbst
   { name: 'Bereiche: anlegen, wechseln (Statusleiste, Menü, Alt+1 … 9), Adresse #w=… und ?w=…, Weiterleitung eines Webservers, Datei und Hauptfarbe je Bereich, umbenennen, entfernen, Datei als Bereich, zwei Tabs', run: runAreas },
@@ -3974,5 +4268,6 @@ suite('App-Test', [
   { name: 'In Unterknoten auslagern (v4.2.0): Schaltfläche an der Auswahl, Dialog, Rückgängig, Vorschau mit ganzen Blöcken, Titel aus dem ersten Satz, Verweis folgt dem Umbenennen, Bilder, Liste, Archiv', run: runExtractUi },
   { name: 'Versand (v4.3.0): Rechtsklick → Versand → E-Mail-Entwurf mit PDF und Teilen, Banner, Einstellung je Browser, archivierte Notiz, Browser ohne Teilen', run: runSendUi },
   { name: 'Speichern sicher (v4.4.0): Stoppschirm statt leer (zu neu, beschädigt, fremd), Schema im Dateikopf, Halt bei Massenverlust, Sicherungen, Datei vor jedem Schreiben geprüft', run: runSaveSafety },
+  { name: 'Unzuverlässige Ablage (v4.6.0): still wiederholen, ruhige Leiste, verständliche Meldungen, Grösse prüfen, Abgleich-Eintrag und Abgleich beim Verbinden, schneller Start mit Fortschritt, Abbrechen', run: runUnreliableStorage },
   { name: 'Backend-Vertrag: Methodenliste, JSON-sichere Rückgaben, Änderungsmeldung, Fehlerkennungen', run: runBackend },
 ], { browser: true });

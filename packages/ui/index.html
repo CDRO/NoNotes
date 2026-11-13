@@ -671,6 +671,13 @@ Firmenname wie im Handelsregister, **ohne** Rechtsform.
     </div>
   </div>
 
+  <!-- Abgleich mit der Datei oder Laden einer grossen Datei (seit 4.6.0): die Seite dahinter ist gesperrt -->
+  <div id="syncBar" class="sync-bar" role="status" aria-live="polite" hidden>
+    <span class="sync-spinner" aria-hidden="true"></span>
+    <span id="syncText"></span>
+    <button type="button" id="syncCancelBtn">Abbrechen</button>
+  </div>
+
   <dialog id="backupsDialog" class="dialog" aria-labelledby="backupsTitle">
     <form method="dialog">
       <h2 id="backupsTitle">Sicherungen</h2>

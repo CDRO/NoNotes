@@ -76,6 +76,7 @@
   const el = {
     app: $('#app'), boot: $('#boot'), version: $('#version'), status: $('#status'),
     stopScreen: $('#stopScreen'), stopTitle: $('#stopTitle'), stopLines: $('#stopLines'), stopActions: $('#stopActions'),
+    syncBar: $('#syncBar'), syncText: $('#syncText'), syncCancelBtn: $('#syncCancelBtn'),
     backupsBtn: $('#backupsBtn'), backupsDialog: $('#backupsDialog'), backupsList: $('#backupsList'), backupsHint: $('#backupsHint'),
     storageInfo: $('#storageInfo'), banner: $('#banner'),
     menuBtn: $('#menuBtn'), menu: $('#menu'), menuHint: $('#menuHint'), noteMenuBtn: $('#noteMenuBtn'), noteMenu: $('#noteMenu'),
@@ -391,7 +392,7 @@
       renderAll: () => renderAll(),
       onDatabaseReplaced,
       confirmMigration,
-      showStop, hideStop,
+      showStop, hideStop, showSync, hideSync,
       openBackups: opts => openBackups(opts),
       // Adresse nachführen (v2.7.0); false, solange die Navigation noch nicht läuft (dann setzt die Hülle die Adresse selbst)
       replaceNav: () => { if (!state.navReady) return false; replaceNav(); return true; },
@@ -423,8 +424,25 @@
 
   function hideStop() {
     el.stopScreen.hidden = true;
-    el.app.inert = false;
+    el.app.inert = !el.syncBar.hidden;
   }
+
+  // Abgleich mit der Datei (seit 4.6.0): die Leiste unten nennt den Fortschritt, die Seite dahinter ist so lange gesperrt
+  let syncCancel = null;
+  function showSync(text, onCancel) {
+    el.syncText.textContent = text;
+    syncCancel = onCancel || null;
+    el.syncCancelBtn.hidden = !onCancel;
+    el.syncBar.hidden = false;
+    el.app.inert = true;
+  }
+
+  function hideSync() {
+    el.syncBar.hidden = true;
+    syncCancel = null;
+    el.app.inert = !el.stopScreen.hidden;
+  }
+  el.syncCancelBtn.addEventListener('click', () => { if (syncCancel) syncCancel(); });
 
   const BACKUP_REASONS = {
     opened: N_('vom ersten Speichern nach dem Öffnen'),

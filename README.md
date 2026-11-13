@@ -88,6 +88,28 @@ die eigenen Änderungen, **Meine Fassung behalten** überschreibt die Datei. Bis
   sowie die ungespeicherten Änderungen vor einem Stopp. `Datenbank → Sicherungen…` listet sie mit Zeit, Anlass und Zahl der Notizen;
   jede lässt sich herunterladen oder (nach Rückfrage) wiederherstellen. Wiederherstellen sichert vorher den aktuellen Stand.
 
+**Unzuverlässige Ablage** (seit 4.6.0), etwa ein Netzlaufwerk, das kurz fehlt:
+
+- **Still wiederholen:** Scheitert das Lesen oder Schreiben der Datei, versucht die App es nach 0,5, 1, 2, 4 und 8 Sekunden wieder;
+  die Statuszeile zeigt so lange nur «Speichern…». Erst danach erscheint eine ruhige Leiste «Noch nicht gespeichert – wird weiter
+  versucht» mit **Jetzt erneut versuchen**, **Kopie herunterladen** und **Details** (die Meldung des Browsers), und die App versucht es
+  alle 30 Sekunden. Neue Eingaben verbrauchen keinen Versuch; der nächste nimmt sie mit. Klappt es, verschwindet die Leiste.
+- **Verständliche Meldungen:** nach der Art des Fehlers, etwa «Die Datei ist gerade nicht erreichbar …», «Die Datei ist gesperrt,
+  vielleicht hat ein anderes Programm sie offen» oder «Keine Berechtigung für die Datei».
+- **Nach dem Schreiben prüfen:** Stimmt die Grösse der Datei danach nicht, gilt das Schreiben als gescheitert und wird wiederholt. Einen
+  halben eigenen Stand oder ein Schreiben, das trotz Fehlermeldung ankam, hält die App nicht für eine fremde Änderung.
+- **Die Kopie weiss, ob sie voraus ist:** Neben der Browser-Kopie steht, von welchem Stand der Datei sie ausging und ob sie ihm
+  voraus ist (weil die Datei nicht erreichbar oder nicht verbunden war). Beim Verbinden gilt dann: Ist nur die Kopie voraus, kommt
+  sie in die Datei. Hat sich nur die Datei geändert, wird sie geladen und die Kopie gesichert. Haben sich beide geändert, führt die App
+  Notiz für Notiz zusammen; geht das nicht, fragt die Leiste wie bei Änderungen von aussen. Bis 4.5 lud die App beim Verbinden ohne
+  neue Eingaben einfach die Datei, auch wenn die Kopie neuer war.
+- **Lesen in Stücken mit Fortschritt:** Grosse Dateien liest die App in Stücken zu 1 MB; dauert es, zeigt die Statuszeile «… wird
+  gelesen … 3,2 von 12,0 MB». Ändert sich die Datei während des Lesens, liest sie neu.
+- **Schneller Öffnen:** Ist die Datei beim Öffnen eines Bereichs schon freigegeben, zeigt die App sofort die Browser-Kopie, gesperrt,
+  mit der Leiste «Abgleich mit der Datei „…“» samt Fortschritt, und gleicht danach ab. Liest sich die Datei in einer Viertelsekunde,
+  geschieht das, bevor etwas zu sehen ist. **Abbrechen** arbeitet mit der Kopie weiter; die Datei bleibt, wie sie ist. Ohne Kopie
+  erscheint die Leiste nach 2 Sekunden; Abbrechen führt dann zum Stoppschirm «Laden abgebrochen».
+
 **Mehrere Bereiche** (seit 2.3.0). Für getrennte Themen, etwa Arbeit und Privat, legst du Bereiche an: jeder ist eine eigene
 Datenbank mit eigener Browser-Kopie, eigener Datei und eigener Hauptfarbe. Bearbeitet wird immer der aktive Bereich; Listen, Fragen,
 Entscheide, Aufgaben und Suche zeigen nur ihn.

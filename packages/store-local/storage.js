@@ -7,7 +7,11 @@
 
    Bereiche (ab v2.3.0): mehrere Datenbanken nebeneinander, je mit eigener Browser-Kopie und eigener gemerkter Datei.
    Der erste Bereich «main» behält die bisherigen Schlüssel (db, fileHandle), weitere liegen unter area:<id>:db und
-   area:<id>:handle. Das Verzeichnis der Bereiche steht unter «areas». */
+   area:<id>:handle. Das Verzeichnis der Bereiche steht unter «areas».
+
+   Abgleich-Eintrag (seit 4.6.0): neben jeder Browser-Kopie unter sync:<bereich> { fileHash, mirrorHash, dirty, at }, in derselben
+   Transaktion geschrieben wie die Kopie. dirty: die Kopie ist der Datei voraus (die Datei hat den Stand fileHash). Solange das so ist,
+   liegt unter syncbase:<bereich> der Inhalt der Datei mit fileHash, die Grundlage zum Zusammenführen. */
 (function (global) {
   'use strict';
 
@@ -27,6 +31,11 @@
   const BACKUPS_MAX = 5; // rollende Sicherungen je Bereich (seit 4.4.0)
   const backupsKey = area => `backups:${area || MAIN}`;
   const backupKey = (area, id) => `backup:${area || MAIN}:${id}`;
+  const syncKey = area => `sync:${area || MAIN}`;          // Abgleich-Eintrag (seit 4.6.0)
+  const syncBaseKey = area => `syncbase:${area || MAIN}`;  // Grundlage, solange die Kopie voraus ist
+  const LS_SYNC = area => `nonotes.sync.${area || MAIN}`;
+  const READ_CHUNK = () => Number(global.NONOTES_READ_CHUNK) || 1024 * 1024; // Lesen in Stücken (seit 4.6.0); Tests setzen kleinere
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
   let backupChain = Promise.resolve(); // Sicherungen nacheinander anlegen
 
   // ---------- IndexedDB als einfacher Key-Value-Speicher ----------
@@ -84,6 +93,16 @@
     return out;
   }
 
+  // ---------- Abgleich-Eintrag (seit 4.6.0) ----------
+
+  const recordOf = sync => ({ fileHash: sync.fileHash == null ? null : sync.fileHash, mirrorHash: sync.mirrorHash || null, dirty: !!sync.dirty, at: sync.at || new Date().toISOString() });
+
+  function putSync(store, area, sync) {
+    store.put(recordOf(sync), syncKey(area));
+    if (sync.base === null) store.delete(syncBaseKey(area));
+    else if (sync.base) store.put(sync.base, syncBaseKey(area));
+  }
+
   // ---------- Browser-Speicher mit Rückfallebene ----------
 
   const browserStore = {
@@ -124,10 +143,42 @@
       return null;
     },
 
-    async saveDb(bytes, area) {
-      if (this.backend === 'indexeddb') { await idbSet(dbKey(area), bytes); return; }
-      if (this.backend === 'localstorage') { localStorage.setItem(lsDbKey(area), bytesToB64(bytes)); return; }
+    /** Schreibt die Browser-Kopie; sync (seit 4.6.0): der Abgleich-Eintrag { fileHash, mirrorHash, dirty, at, base? }, in derselben
+     *  Transaktion. base: Bytes der Grundlage (speichern), null (löschen), fehlt (bleibt, wie sie ist). */
+    async saveDb(bytes, area, sync) {
+      if (this.backend === 'indexeddb') {
+        await idbRun('readwrite', store => {
+          store.put(bytes, dbKey(area));
+          if (sync) putSync(store, area, sync);
+        });
+        return;
+      }
+      if (this.backend === 'localstorage') {
+        localStorage.setItem(lsDbKey(area), bytesToB64(bytes));
+        if (sync) localStorage.setItem(LS_SYNC(area), JSON.stringify(recordOf(sync))); // ohne Grundlage: dafür ist localStorage zu klein
+        return;
+      }
       throw new Error(t('Kein Browser-Speicher verfügbar'));
+    },
+
+    /** Nur den Abgleich-Eintrag schreiben (etwa nach dem Schreiben der Datei: nicht mehr voraus). */
+    async saveSync(area, sync) {
+      if (this.backend === 'indexeddb') { await idbRun('readwrite', store => { putSync(store, area, sync); }); return; }
+      if (this.backend === 'localstorage') localStorage.setItem(LS_SYNC(area), JSON.stringify(recordOf(sync)));
+    },
+
+    /** Der Abgleich-Eintrag eines Bereichs oder null (Daten von vor 4.6.0, oder nie gespeichert). */
+    async loadSync(area) {
+      try {
+        if (this.backend === 'indexeddb') { const v = await idbGet(syncKey(area)); return v && typeof v === 'object' ? v : null; }
+        if (this.backend === 'localstorage') { const v = localStorage.getItem(LS_SYNC(area)); return v ? JSON.parse(v) : null; }
+      } catch (e) { /* ohne Eintrag */ }
+      return null;
+    },
+
+    async loadSyncBase(area) {
+      if (this.backend !== 'indexeddb') return null;
+      try { const v = await idbGet(syncBaseKey(area)); return v ? new Uint8Array(v) : null; } catch (e) { return null; }
     },
 
     /** Browser-Kopie und gemerkte Datei eines Bereichs löschen (die Datei auf der Platte bleibt). */
@@ -135,9 +186,10 @@
       if (this.backend === 'indexeddb') {
         try { await idbDel(dbKey(area)); } catch (e) { /* nichts zu tun */ }
         try { await idbDel(handleKeyOf(area)); } catch (e) { /* nichts zu tun */ }
+        try { await idbDel(syncKey(area)); await idbDel(syncBaseKey(area)); } catch (e) { /* nichts zu tun */ }
         try { for (const b of await this.listBackups(area)) await idbDel(backupKey(area, b.id)); await idbDel(backupsKey(area)); } catch (e) { /* nichts zu tun */ }
       } else if (this.backend === 'localstorage') {
-        try { localStorage.removeItem(lsDbKey(area)); } catch (e) { /* nichts zu tun */ }
+        try { localStorage.removeItem(lsDbKey(area)); localStorage.removeItem(LS_SYNC(area)); } catch (e) { /* nichts zu tun */ }
       }
     },
 
@@ -265,6 +317,38 @@
     accept: { 'text/calendar': ['.ics'] },
   }];
 
+  const named = (name, message) => Object.assign(new Error(message), { name });
+
+  /** Wartet auf promise, bricht aber sofort ab, wenn signal abbricht (ein hängendes Netzlaufwerk soll «Abbrechen» nicht aufhalten). */
+  function abortable(promise, signal) {
+    if (!signal) return promise;
+    return new Promise((resolve, reject) => {
+      if (signal.aborted) { reject(named('AbortError', 'aborted')); return; }
+      const onAbort = () => reject(named('AbortError', 'aborted'));
+      signal.addEventListener('abort', onAbort, { once: true });
+      promise.then(v => { signal.removeEventListener('abort', onAbort); resolve(v); }, e => { signal.removeEventListener('abort', onAbort); reject(e); });
+    });
+  }
+
+  async function readOnce(handle, o) {
+    const file = await abortable(handle.getFile(), o.signal);
+    const size = file.size;
+    const out = new Uint8Array(size);
+    const chunk = READ_CHUNK();
+    let at = 0;
+    while (at < size) {
+      if (o.signal && o.signal.aborted) throw named('AbortError', 'aborted');
+      const part = new Uint8Array(await abortable(file.slice(at, Math.min(size, at + chunk)).arrayBuffer(), o.signal));
+      if (!part.length) throw named('FileChangedError', 'file shrank while reading');
+      out.set(part, at);
+      at += part.length;
+      if (o.onProgress) o.onProgress(at, size);
+    }
+    const again = await abortable(handle.getFile(), o.signal); // hat sich die Datei inzwischen geändert? Dann ist das Gelesene nicht verlässlich
+    if (again.size !== size || again.lastModified !== file.lastModified) throw named('FileChangedError', 'file changed while reading');
+    return out;
+  }
+
   const fileAccess = {
     supported: typeof global.showSaveFilePicker === 'function'
       && typeof global.showOpenFilePicker === 'function',
@@ -290,13 +374,22 @@
       return p;
     },
 
-    async read(handle) {
-      const file = await handle.getFile();
-      return new Uint8Array(await file.arrayBuffer());
+    /** Liest die Datei in Stücken zu 1 MB (seit 4.6.0). opts: onProgress(gelesen, gesamt) nach jedem Stück, signal (AbortSignal:
+     *  zwischen den Stücken abbrechen). Ändert sich die Datei während des Lesens (Grösse oder Zeitstempel) oder liefert der Browser
+     *  NotReadableError, wird bis zu dreimal neu gelesen; danach kommt der Fehler. */
+    async read(handle, opts) {
+      for (let attempt = 1; ; attempt++) {
+        try { return await readOnce(handle, opts || {}); }
+        catch (e) {
+          if (attempt >= 3 || !e || (e.name !== 'NotReadableError' && e.name !== 'FileChangedError')) throw e;
+          await sleep(200 * attempt);
+        }
+      }
     },
 
-    /** Schreibt atomar: der Browser schreibt in eine Zwischendatei und tauscht bei close() aus. */
-    async write(handle, bytes) {
+    /** Schreibt atomar: der Browser schreibt in eine Zwischendatei und tauscht bei close() aus. opts.verify (seit 4.6.0): danach die
+     *  Grösse prüfen; stimmt sie nicht, ist das Schreiben gescheitert (SizeMismatchError). */
+    async write(handle, bytes, opts) {
       const writable = await handle.createWritable();
       try {
         await writable.write(bytes);
@@ -305,6 +398,9 @@
         try { await writable.abort(); } catch (e2) { /* bereits geschlossen */ }
         throw e;
       }
+      if (!(opts && opts.verify)) return;
+      const after = await handle.getFile();
+      if (after.size !== bytes.length) throw named('SizeMismatchError', `size ${after.size} instead of ${bytes.length}`);
     },
   };
 
