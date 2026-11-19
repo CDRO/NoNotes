@@ -13,6 +13,13 @@ const { suite } = require('./lib.cjs');
 const ROOT = path.resolve(__dirname, '..');
 const DIST = path.join(ROOT, 'dist', 'NoNotes');
 const APP_URL = 'file://' + path.join(DIST, 'index.html');
+
+/** Kontextmenü eines Knotens (seit 4.8.0 gruppiert): öffnet das Untermenü group und klickt darin den Eintrag label (genau). */
+async function pickSub(page, group, label) {
+  await page.hover(`#contextMenu > button:has(> span:first-child:text-is("${group}"))`);
+  await page.waitForSelector('.context-sub');
+  if (label) await page.click(`.context-sub button:has(> span:first-child:text-is("${label}"))`);
+}
 const initSqlJs = require(path.join(ROOT, 'vendor/sql.js/sql-asm.js'));
 const READY = 'body[data-ready="true"]';
 const SCHEMA_VERSION = '18'; // muss zu packages/data/db.js passen
@@ -1815,7 +1822,7 @@ async function runTemplatesUi(browser, part, step) {
   assert.match(await page.locator('.template-row').innerText(), /Woche\n1 Notiz · nur in diesem Browser/);
   await page.locator('#templatesDialog button[value="close"]').click();
   await page.locator('#mindmap .mm-node', { hasText: 'Sitzung' }).first().click({ button: 'right' });
-  await page.locator('#contextMenu button', { hasText: 'Als Vorlage speichern' }).click();
+  await pickSub(page, 'Vorlage', 'Als Vorlage speichern…');
   await page.waitForSelector('#templateSaveDialog[open]');
   assert.match(await page.locator('#templateSaveWhere').innerText(), /heruntergeladen und in diesem Browser/);
   const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#templateSaveGoBtn')]);
@@ -2257,7 +2264,7 @@ async function runI18n(browser, part, step) {
     await page.keyboard.press('Escape');
     await page.click('.mm-node:not(.mm-root)', { button: 'right' });
     await check('Kontextmenü Knoten');
-    await page.click(`#contextMenu button:has-text("${L('Archivieren…', 'Archive…')}")`).catch(() => {});
+    await pickSub(page, L('Ordnen', 'Arrange'), L('Archivieren…', 'Archive…')).catch(() => {});
     await page.waitForTimeout(200);
     await page.click('.mm-node:not(.mm-root)', { button: 'right' }).catch(() => {});
     await page.click(`#contextMenu button:has-text("${L('Löschen', 'Delete')}")`).catch(() => {});
@@ -3437,7 +3444,7 @@ async function runDatesUi(browser, part, step) {
   // Rechtsklick: auf die andere Seite
   const other = first.B === 'left' ? 'right' : 'left';
   await page.click(`.mm-node[data-id="${ids.B}"] rect`, { button: 'right' });
-  await page.locator('#contextMenu button', { hasText: other === 'left' ? 'Auf die linke Seite' : 'Auf die rechte Seite' }).click();
+  await pickSub(page, 'Ordnen', other === 'left' ? 'Auf die linke Seite' : 'Auf die rechte Seite');
   await page.waitForFunction(([id, s]) => __ctx.backend.getTree({}).then(rows => rows.find(r => r.id === id).side === s), [ids.B, other]);
   assert.equal((await shown()).B, other);
   // Auf die andere Hälfte der Wurzel ziehen
@@ -3623,7 +3630,7 @@ async function runCopyNodeUi(browser, part, step) {
 
   // Kontextmenü: Knoten ab dem Knoten, Wurzel die ganze Mindmap; Wurzel gewählt: Ctrl+C alles ohne Überschrift
   await node(ids.Team).click({ button: 'right' });
-  svg = await copy(() => page.locator('#contextMenu button', { hasText: 'Als Bild kopieren' }).click());
+  svg = await copy(() => pickSub(page, 'Ausgabe', 'Als Bild kopieren'));
   assert.deepEqual(titles(svg), ['Karte Süd', 'Team']);
   await page.locator('.mm-node[data-id="root"] rect').click({ button: 'right' });
   svg = await copy(() => page.locator('#contextMenu button', { hasText: 'Als Bild kopieren' }).click());

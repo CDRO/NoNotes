@@ -54,7 +54,7 @@
     for (const r of rows) {
       byId.set(r.id, {
         id: r.id, title: r.title, parentId: r.parent_id, order: r.sort_order,
-        collapsed: !!r.collapsed, badge: r.badge || 0, dbadge: r.dbadge || 0, tbadge: r.tbadge || 0, archived: !!r.archived_at, children: [],
+        collapsed: !!(r.collapsed & 1), hidden: !!(r.collapsed & 2), badge: r.badge || 0, dbadge: r.dbadge || 0, tbadge: r.tbadge || 0, archived: !!r.archived_at, children: [],
         side: r.side === 'left' || r.side === 'right' ? r.side : null,
         link: typeof r.link === 'string' && r.link ? r.link : null,
       });
@@ -79,20 +79,23 @@
       n.label = fit.label;
       n.w = Math.max(MIN_W, Math.ceil(fit.width) + 2 * PAD_X + (n.isRoot ? 14 : 0) + (n.link ? LINK_W : 0));
       n.h = n.isRoot ? ROOT_H : NODE_H;
-      n.visibleChildren = (!n.isRoot && n.collapsed) ? [] : n.children;
+      n.hiddenKids = n.children.filter(c => c.hidden); // einzeln ausgeblendete Unternotizen (Bit 2 von collapsed, v4.8.0)
+      n.hiddenKidCount = n.hiddenKids.length;
+      n.visibleChildren = (!n.isRoot && n.collapsed) ? [] : n.children.filter(c => !c.hidden);
       n.hiddenCount = n.visibleChildren.length ? 0 : countDescendants(n);
       n.visibleChildren.forEach(sizeNode);
     };
-    const countDescendants = n => n.children.reduce((s, c) => s + 1 + countDescendants(c), 0);
+    const countDescendants = n => n.children.reduce((s, c) => s + (c.hidden ? 0 : 1 + countDescendants(c)), 0);
     const totalBadge = n => n.badge + n.children.reduce((s, c) => s + totalBadge(c), 0);
     const totalDBadge = n => n.dbadge + n.children.reduce((s, c) => s + totalDBadge(c), 0);
     const totalTBadge = n => n.tbadge + n.children.reduce((s, c) => s + totalTBadge(c), 0);
     sizeNode(root);
     // Eingeklappte Äste zeigen die offenen Fragen, Entscheide und Aufgaben des ganzen Teilbaums.
     const setBadges = n => {
-      n.shownBadge = n.isRoot ? 0 : (n.collapsed ? totalBadge(n) : n.badge);
-      n.shownDBadge = n.isRoot ? 0 : (n.collapsed ? totalDBadge(n) : n.dbadge);
-      n.shownTBadge = n.isRoot ? 0 : (n.collapsed ? totalTBadge(n) : n.tbadge);
+      // Auch ausgeblendete Unternotizen tragen ihre offenen Punkte zum Elternknoten
+      n.shownBadge = n.isRoot ? 0 : (n.collapsed ? totalBadge(n) : n.badge + n.hiddenKids.reduce((s, c) => s + totalBadge(c), 0));
+      n.shownDBadge = n.isRoot ? 0 : (n.collapsed ? totalDBadge(n) : n.dbadge + n.hiddenKids.reduce((s, c) => s + totalDBadge(c), 0));
+      n.shownTBadge = n.isRoot ? 0 : (n.collapsed ? totalTBadge(n) : n.tbadge + n.hiddenKids.reduce((s, c) => s + totalTBadge(c), 0));
       n.visibleChildren.forEach(setBadges);
     };
     setBadges(root);
@@ -119,18 +122,18 @@
       const side = ignore ? null : (c.side || given[c.id]);
       return side === 'left' || side === 'right' ? side : null;
     };
-    for (const c of root.children) {
+    for (const c of root.visibleChildren) {
       if (fixed(c) === 'right') hr += subtreeH(c) + GAP_Y;
       else if (fixed(c) === 'left') hl += subtreeH(c) + GAP_Y;
     }
     const auto = new Map();
-    const free = root.children.filter(c => !fixed(c)).sort((a, b) => subtreeH(b) - subtreeH(a) || (a.order - b.order) || (a.id - b.id));
+    const free = root.visibleChildren.filter(c => !fixed(c)).sort((a, b) => subtreeH(b) - subtreeH(a) || (a.order - b.order) || (a.id - b.id));
     for (const c of free) {
       const side = hr <= hl ? 'right' : 'left';
       auto.set(c.id, side);
       if (side === 'right') hr += subtreeH(c) + GAP_Y; else hl += subtreeH(c) + GAP_Y;
     }
-    for (const c of root.children) ((fixed(c) || auto.get(c.id)) === 'left' ? left : right).push(c);
+    for (const c of root.visibleChildren) ((fixed(c) || auto.get(c.id)) === 'left' ? left : right).push(c);
 
     root.x = -root.w / 2;
     root.y = -root.h / 2;
@@ -177,7 +180,7 @@
 
   /** Rechteck eines Knotens; bei eingeklappten Ästen samt Kreis mit der Zahl am äusseren Ende. */
   function boxOf(n) {
-    const bubble = !n.isRoot && n.collapsed && n.children.length ? 22 : 0;
+    const bubble = !n.isRoot && ((n.collapsed && n.children.length ? 22 : 0) + (n.hiddenKidCount ? 22 + 12 : 0));
     return { x1: n.x - (n.dir < 0 ? bubble : 0), y1: n.y, x2: n.x + n.w + (n.dir > 0 ? bubble : 0), y2: n.y + n.h };
   }
 
@@ -380,6 +383,17 @@
         tt.textContent = n.collapsed ? String(n.hiddenCount) : '–';
         svgEl('title', null, toggle).textContent = n.collapsed ? t('Ausklappen') : t('Einklappen');
       }
+      if (n.hiddenKidCount) {
+        // Ausgeblendete Unternotizen (v4.8.0): «+N» neben dem Knoten; ein Klick zeigt sie wieder
+        const label = '+' + n.hiddenKidCount;
+        const pw = Math.max(24, 8 * label.length + 10);
+        const hx = n.dir < 0 ? -(34 + pw / 2 - 12) : n.w + 34 + pw / 2 - 12;
+        const hb = svgEl('g', { class: 'mm-hiddenbadge', transform: `translate(${hx} ${n.h / 2})` }, g);
+        svgEl('rect', { x: -pw / 2, y: -9, width: pw, height: 18, rx: 9, ry: 9 }, hb);
+        const ht = svgEl('text', { 'text-anchor': 'middle', 'dominant-baseline': 'central' }, hb);
+        ht.textContent = label;
+        svgEl('title', null, hb).textContent = tn('{n} ausgeblendete Notiz – Klick zeigt sie wieder', '{n} ausgeblendete Notizen – Klick zeigt sie wieder', n.hiddenKidCount);
+      }
       if (n.shownBadge > 0) {
         const bx = n.dir < 0 ? 0 : n.w;
         const b = svgEl('g', { class: 'mm-badge', transform: `translate(${bx} 0)` }, g);
@@ -438,7 +452,7 @@
         const inside = n => n.children.some(c => matches.has(c.id) || inside(c));
         for (const n of byId.values()) {
           n.match = matches.has(n.id);
-          n.matchInside = n.collapsed && inside(n);
+          n.matchInside = (n.collapsed && inside(n)) || n.children.some(c => c.hidden && (matches.has(c.id) || inside(c)));
         }
       } else {
         for (const n of byId.values()) { n.match = false; n.matchInside = false; }
@@ -777,7 +791,7 @@
 
     svg.addEventListener('pointerdown', e => {
       if (e.button !== 0) return;
-      if (e.target.closest('.mm-toggle, .mm-linkicon')) return;
+      if (e.target.closest('.mm-toggle, .mm-linkicon, .mm-hiddenbadge')) return;
       const nodeEl = e.target.closest('.mm-node');
       if (nodeEl) {
         drag = { type: 'node', id: nodeEl.dataset.id, el: nodeEl, startX: e.clientX, startY: e.clientY, moved: false, targetId: null, where: null, valid: false };
@@ -796,6 +810,13 @@
         if (handlers.onOpenLink) handlers.onOpenLink(Number(linkIcon.closest('.mm-node').dataset.id));
         return;
       }
+      const showHidden = e.target.closest('.mm-hiddenbadge');
+      if (showHidden) {
+        e.stopPropagation();
+        const hid = showHidden.closest('.mm-node').dataset.id;
+        if (handlers.onShowHidden) handlers.onShowHidden(hid === 'root' ? null : Number(hid));
+        return;
+      }
       const toggle = e.target.closest('.mm-toggle');
       if (toggle) {
         e.stopPropagation();
@@ -811,7 +832,7 @@
 
     svg.addEventListener('dblclick', e => {
       const nodeEl = e.target.closest('.mm-node');
-      if (!nodeEl || e.target.closest('.mm-toggle, .mm-linkicon')) return;
+      if (!nodeEl || e.target.closest('.mm-toggle, .mm-linkicon, .mm-hiddenbadge')) return;
       e.preventDefault();
       if (nodeEl.dataset.id === 'root') { if (handlers.onOpenRoot) handlers.onOpenRoot(); }
       else if (handlers.onOpen) handlers.onOpen(Number(nodeEl.dataset.id));
@@ -848,7 +869,7 @@
       getSelected: () => inst.selectedId,
       nodeInfo: id => {
         const n = nodeOf(id);
-        return n ? { id: n.id, isRoot: !!n.isRoot, title: n.title, parentId: n.isRoot ? undefined : n.parentId, childCount: n.children.length, collapsed: !!n.collapsed, archived: !!n.archived, link: n.link || null, dir: n.dir, side: n.isRoot || n.parentId != null ? null : (n.dir < 0 ? 'left' : 'right') } : null;
+        return n ? { id: n.id, isRoot: !!n.isRoot, title: n.title, parentId: n.isRoot ? undefined : n.parentId, childCount: n.children.length, collapsed: !!n.collapsed, hidden: !!n.hidden, hiddenKids: n.hiddenKidCount || 0, siblingIds: n.isRoot ? [] : (n.parentId == null ? inst.root : inst.byId.get(n.parentId)).children.map(c => c.id), archived: !!n.archived, link: n.link || null, dir: n.dir, side: n.isRoot || n.parentId != null ? null : (n.dir < 0 ? 'left' : 'right') } : null;
       },
       nodeCount: () => inst.byId.size,
     };
@@ -972,6 +993,12 @@
       if (n.shownTBadge > 0) {
         const bx = n.dir < 0 ? 0 : n.w;
         parts.push(`<g transform="translate(${bx} ${n.h})"><circle r="9" fill="${c.accent}"/><text text-anchor="middle" dominant-baseline="central" fill="${c.accentContrast}" style="font: 700 11px ${esc(FONT_FAMILY.replace(/"/g, "'"))}">${n.shownTBadge > 99 ? '99+' : n.shownTBadge}</text></g>`);
+      }
+      if (n.hiddenKidCount) {
+        const label = '+' + n.hiddenKidCount;
+        const pw = Math.max(24, 8 * label.length + 10);
+        const hx = n.dir < 0 ? -(34 + pw / 2 - 12) : n.w + 34 + pw / 2 - 12;
+        parts.push(`<g transform="translate(${hx} ${n.h / 2})"><rect x="${-pw / 2}" y="-9" width="${pw}" height="18" rx="9" fill="${c.tint}" stroke="${c.accent}" stroke-width="1.2"/><text text-anchor="middle" dominant-baseline="central" fill="${c.text}" style="font: 600 11px ${esc(FONT_FAMILY.replace(/"/g, "'"))}">${label}</text></g>`);
       }
       parts.push('</g>');
     }

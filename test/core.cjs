@@ -3412,6 +3412,79 @@ async function runSaveCheck(browser, part, step) {
 }
 
 // ============================================================
+/* Teilweise einklappen (v4.8.0): Bit 2 von notes.collapsed = unter dem Elternknoten ausgeblendet, Bit 1 = Unternotizen eingeklappt. */
+async function runHiddenBits(browser, part, step) {
+  const sandbox = { console };
+  sandbox.window = sandbox;
+  const context = vm.createContext(sandbox);
+  for (const f of ['packages/core/i18n.js', ED('labels.js'), 'packages/core/history.js', ED('dates.js'), ED('questions.js'), ED('tasks.js'),
+    'packages/core/links.js', 'packages/core/backend.js', 'packages/core/merge.js', 'packages/core/move.js', 'packages/data/db.js']) {
+    vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), context, { filename: f });
+  }
+  const SQL = await require(path.join(ROOT, 'vendor', 'sql.js', 'sql-asm.js'))();
+  const DB = sandbox.NoNotesDB;
+  const B = sandbox.NoNotesBackend;
+  const db = DB.open(SQL, null);
+  const mk = (title, parent) => { const id = DB.createNote(db, parent); DB.updateNote(db, id, title, ''); return id; };
+  const p = mk('P', null), a = mk('A', p), b = mk('B', p), c = mk('C', p), top = mk('Top', null), top2 = mk('Top2', null);
+  const col = id => DB.getNote(db, id).collapsed;
+
+  assert.ok(B.METHODS.includes('setHidden') && B.METHODS.includes('showHiddenChildren'), 'im Vertrag');
+  assert.ok(B.MUTATING.has('setHidden') && B.MUTATING.has('showHiddenChildren'), 'ändernd');
+
+  DB.setHidden(db, [a, b], true);
+  assert.deepEqual([col(a), col(b), col(c)], [2, 2, 0], 'Bit 2 gesetzt');
+  DB.setCollapsed(db, a, true);
+  assert.equal(col(a), 3, 'Einklappen lässt Bit 2 stehen');
+  DB.setCollapsed(db, a, false);
+  assert.equal(col(a), 2, 'Ausklappen auch');
+  DB.setCollapsed(db, p, true);
+  DB.setHidden(db, p, true); // eine einzelne Nummer geht auch
+  assert.equal(col(p), 3);
+  DB.setHidden(db, [p], false);
+  assert.equal(col(p), 1, 'Zeigen lässt das Einklappen stehen');
+  DB.setCollapsed(db, p, false);
+
+  assert.equal(DB.showHiddenChildren(db, p), 2, 'zwei wieder gezeigt');
+  assert.deepEqual([col(a), col(b), col(c)], [0, 0, 0]);
+  assert.equal(DB.showHiddenChildren(db, p), 0, 'nichts mehr zu zeigen');
+
+  // Hauptäste: parentId null, andere Eltern bleiben unberührt
+  DB.setHidden(db, [top, top2, a], true);
+  DB.setCollapsed(db, top, true);
+  assert.equal(DB.showHiddenChildren(db, null), 2);
+  assert.deepEqual([col(top), col(top2), col(a)], [1, 0, 2], 'Hauptäste gezeigt, eingeklappt bleibt, Unternotiz bleibt ausgeblendet');
+  DB.setHidden(db, [top2], true);
+
+  // Rohwert (für das Zusammenführen) und Ränder
+  DB.setCollapsedRaw(db, c, 3);
+  assert.equal(col(c), 3);
+  DB.setCollapsedRaw(db, c, 7);
+  assert.equal(col(c), 3, 'nur zwei Bits');
+  DB.setHidden(db, ['x', null, 99999], true); // ungültig oder fremd: keine Wirkung, kein Fehler
+
+  // Alles ein-/ausklappen setzt Bit 2 zurück
+  DB.setAllCollapsed(db, false);
+  assert.deepEqual([a, b, c, p, top, top2].map(col), [0, 0, 0, 0, 0, 0], 'Alles ausklappen zeigt auch alles Ausgeblendete');
+  DB.setHidden(db, [a, b], true);
+  DB.setAllCollapsed(db, true);
+  assert.deepEqual([a, b, c, p].map(col), [1, 1, 1, 1], 'Alles einklappen: Bit 1, Bit 2 weg');
+
+  // getTree liefert den rohen Wert; Auslösen und Einfügen eines Pakets behalten beide Bits
+  DB.setAllCollapsed(db, false);
+  DB.setHidden(db, [b], true);
+  DB.setCollapsed(db, b, true);
+  assert.equal(DB.getTree(db).find(r => r.id === b).collapsed, 3);
+  const pkg = DB.exportSubtree(db, p);
+  const db2 = DB.open(SQL, null);
+  DB.importSubtree(db2, pkg, (kind, v) => v);
+  assert.deepEqual(JSON.parse(JSON.stringify(DB.getTree(db2).map(r => [r.title, r.collapsed]).sort())), [['A', 0], ['B', 3], ['C', 0]]);
+  db.close();
+  db2.close();
+  part('Teilweise einklappen: setCollapsed lässt Bit 2 stehen, setHidden und showHiddenChildren, Hauptäste, Rohwert, Alles ein-/ausklappen setzt Bit 2 zurück, Paket behält beide Bits');
+}
+
+// ============================================================
 /* Mail-Entwurf als Datei (v4.3.0, packages/core/mail.js): Kopfzeilen nach RFC 2047, MIME mit Text und PDF, Entwurfsmarke, Dateinamen. */
 async function runMail(browser, part, step) {
   const ctx = vm.createContext({ TextEncoder, Buffer });
@@ -3482,6 +3555,7 @@ suite('Kern-Test', [
   { name: 'Link am Knoten und Auslösen in einen neuen Bereich (v3.2.0): Schema 18, Prüfung der Links, Umschreiben, Umzug zwischen zwei Datenbanken', run: runNodeLinks },
   { name: 'Frist der Hauptaufgabe (v4.5.0): Unteraufgaben ohne eigenes Datum, beliebig tief, Sortierung, überfällig, Kalender nur eigene, Export, Agenten', run: runInheritedDue },
   { name: 'Speichern sicher (v4.4.0): Schema im Dateikopf, Prüfung auf zu neu, fremd und beschädigt, Zahl der Notizen', run: runSaveCheck },
+  { name: 'Teilweise einklappen (v4.8.0): Bit 2 von collapsed, ausblenden und zeigen, Hauptäste, Alles ein-/ausklappen, Paket', run: runHiddenBits },
   { name: 'Mail-Entwurf als Datei (v4.3.0): Kopfzeilen nach RFC 2047, MIME mit Text und PDF, Entwurfsmarke, Dateinamen', run: runMail },
   { name: 'In Unterknoten auslagern (v4.2.0): Abschnitte nach Überschriften, Wahl, erster Satz, Inline und Zeilen, Listen, Bilder, Rückgängig, Agenten', run: runExtract },
   { name: 'PDF-Schreiber (v4.1.0): Aufbau, Text in WinAnsi mit Breite, Formen, Bilder mit Maske und JPEG, Links, Lesezeichen, ohne Kompression', run: runPdf },

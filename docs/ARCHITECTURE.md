@@ -34,7 +34,7 @@ vendor/         Fremdbestandteile (sql.js), siehe NOTICE
 
 Die Markdown-Engine und der Editor sind ein eigenes Paket, damit SteeringBoard, NoNotes-SaaS und NoNotes denselben Editor benutzen:
 [CDRO/NoNotes-editor](https://github.com/CDRO/NoNotes-editor), MIT-Lizenz, in `package.json` eine **devDependency** auf einen Tag
-(`github:CDRO/NoNotes-editor#v1.0.0`), keine Abhängigkeit zur Laufzeit. Es ist kein Bündler im Spiel: `tools/build.cjs` liest die
+(`github:CDRO/NoNotes-editor#v1.4.0`), keine Abhängigkeit zur Laufzeit. Es ist kein Bündler im Spiel: `tools/build.cjs` liest die
 Dateiliste des Pakets (`files.cjs`) und kopiert dessen Skripte und Stylesheet wie die eigenen flach nach `js/` und `css/`, dazu die
 Lizenz nach `js/nonotes-editor-LICENSE.txt` (siehe NOTICE).
 
@@ -52,6 +52,12 @@ Die globalen Namen und die Dateinamen in `js/` sind dieselben wie bis v3.3.0. Di
 die festen Kennungen (`#body`, `#preview`, `#mdToolbar`, `#modeSwitch`, `#attachBtn` …) bleiben wie zuvor, die Klasse der Darstellung
 (`mode-edit`, `mode-split`, `mode-preview`) steht wie bisher auch an `#editorPane`. Was der App gehört, bleibt in der App: Speichern mit
 Zusammenführen und Konfliktdialog, Bilder in der Datenbank, Verweisziele (`links.js`), Kontextmenü, Statuszeile, Hilfe, Vorlagen, Verlauf.
+
+**`notes.collapsed` ist seit 4.8.0 ein Bitfeld** (kein neues Schema): Bit 1 (Wert 1) = Unternotizen eingeklappt, Bit 2 (Wert 2) = die Notiz ist in der
+Mindmap unter ihrem Elternknoten ausgeblendet («teilweise einklappen»), 3 = beides. `setCollapsed` ändert nur Bit 1, `setHidden` und
+`showHiddenChildren` nur Bit 2, `setAllCollapsed` setzt beide neu (Bit 2 weg). `getTree` liefert den rohen Wert, `mindmap.js` zerlegt ihn
+(`collapsed & 1`, `hidden`: `& 2`); die lokale Hülle übernimmt beim Zusammenführen den rohen Wert (`DB.setCollapsedRaw`), damit kein Bit verloren geht.
+Ältere Programmfassungen lesen den Wert als wahr/falsch und klappen ausgeblendete Notizen dann ein; das ist hingenommen.
 Die Schnittstelle der Erweiterungen (`ctx.editor`, `ctx.ui.addToolbarButton`, `ctx.tables.*`, `ctx.ui.addTableMenuItem`) ist unverändert;
 die App setzt sie über den Editor und `NoNotesEditor.extend` um. Texte: `labels.js` nimmt `NoNotesI18n` als Übersetzer, die neun
 Sprachpakete in `lang/` übersetzen die Texte des Editors mit (`tools/i18n.cjs` liest dafür auch die Quelltexte des Pakets).

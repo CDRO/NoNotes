@@ -688,8 +688,32 @@
     return true;
   }
 
+  /** notes.collapsed ist ein Bitfeld (v4.8.0): Bit 1 = Unternotizen eingeklappt, Bit 2 = in der Mindmap unter dem Elternknoten ausgeblendet.
+   *  Alte Programmfassungen lesen den Wert als wahr/falsch; dieser Rückschritt ist gewollt. */
   function setCollapsed(db, id, collapsed) {
-    db.run('UPDATE notes SET collapsed = ? WHERE id = ?', [collapsed ? 1 : 0, id]);
+    db.run('UPDATE notes SET collapsed = (collapsed & 2) | ? WHERE id = ?', [collapsed ? 1 : 0, id]);
+  }
+
+  /** Setzt den rohen Wert (alle Bits), etwa beim Abgleich mit einer fremden Fassung der Datei. */
+  function setCollapsedRaw(db, id, value) {
+    db.run('UPDATE notes SET collapsed = ? WHERE id = ?', [Number(value) & 3, id]);
+  }
+
+  /** Blendet Notizen unter ihrem Elternknoten aus (Bit 2) oder zeigt sie wieder; das Einklappen (Bit 1) bleibt. */
+  function setHidden(db, ids, hidden) {
+    for (const id of [].concat(ids)) {
+      const n = Number(id);
+      if (Number.isInteger(n)) db.run(hidden ? 'UPDATE notes SET collapsed = collapsed | 2 WHERE id = ?' : 'UPDATE notes SET collapsed = collapsed & 1 WHERE id = ?', [n]);
+    }
+  }
+
+  /** Zeigt alle ausgeblendeten Unternotizen eines Elternknotens wieder (parentId null: die Hauptäste); Ergebnis: wie viele. */
+  function showHiddenChildren(db, parentId) {
+    const where = parentId == null ? 'parent_id IS NULL' : 'parent_id = ?';
+    const args = parentId == null ? [] : [Number(parentId)];
+    const n = scalar(db, `SELECT COUNT(*) FROM notes WHERE ${where} AND (collapsed & 2) != 0 AND deleted_at IS NULL`, args);
+    if (n) db.run(`UPDATE notes SET collapsed = collapsed & 1 WHERE ${where} AND (collapsed & 2) != 0 AND deleted_at IS NULL`, args);
+    return n;
   }
 
   /** Seiten der Hauptäste in der Mindmap (v3.0.0): sides { id: 'left' | 'right' | null }. Die Mindmap setzt sie, sobald ein Ast an der
@@ -702,6 +726,7 @@
   }
 
   function setAllCollapsed(db, collapsed) {
+    // «Alles ausklappen» / «Alles einklappen» zeigt auch alles Ausgeblendete wieder (Bit 2 wird gelöscht)
     db.run('UPDATE notes SET collapsed = ? WHERE deleted_at IS NULL', [collapsed ? 1 : 0]);
   }
 
@@ -853,7 +878,7 @@
       db.run(`INSERT INTO notes (title, body, created_at, updated_at, parent_id, sort_order, collapsed, archived_at, updated_by, link)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [n.title || '', n.body || '', n.created_at || nowIso(), n.updated_at || nowIso(), parent, parent == null ? nextSortOrder(db, null) : n.sort_order,
-          n.collapsed ? 1 : 0, n.archived_at || null, n.updated_by || null, n.link || null]);
+          Number(n.collapsed) & 3 || 0, n.archived_at || null, n.updated_by || null, n.link || null]);
       const id = scalar(db, 'SELECT last_insert_rowid()');
       notes.set(n.id, id);
       for (const name of n.tags || []) {
@@ -1456,6 +1481,9 @@
     moveNote,
     moveAmongSiblings,
     setCollapsed,
+    setCollapsedRaw,
+    setHidden,
+    showHiddenChildren,
     setAllCollapsed,
     setSides,
     deleteNote,

@@ -799,7 +799,7 @@
             if (title !== th.title || body !== th.body) DB.updateNote(theirsDb, id, title, body);
             if (tags.join('\n') !== th.tags.join('\n')) DB.setTags(theirsDb, id, tags);
           }
-          if (m.collapsed !== b.collapsed) DB.setCollapsed(theirsDb, id, !!m.collapsed);
+          if (m.collapsed !== b.collapsed) DB.setCollapsedRaw(theirsDb, id, m.collapsed); // alle Bits: auch «ausgeblendet» geht nicht verloren
         }
         for (const k of metaChanged) {
           if (theirs.meta.get(k) !== base.meta.get(k) && theirs.meta.get(k) !== mine.meta.get(k)) throw new Error('Konflikt'); // i18n-ignore: nur intern

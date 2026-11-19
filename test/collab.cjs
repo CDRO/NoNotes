@@ -657,6 +657,34 @@ async function runExternal(browser, part, step) {
   assert.ok(merged2.includes('Von aussen zwei') && merged2.includes('Eigene Notiz geändert'), 'die Datei hat beides: ' + merged2.join(', '));
   part('Datei von aussen geändert, eigene Änderung an einer anderen Notiz ungesichert: zusammengeführt ohne Rückfrage, die Datei hat beides');
 
+  // Ausgeblendet (v4.8.0, Bit 2 von collapsed) geht beim Zusammenführen nicht verloren
+  const extHidden = await withExtra(await fileBytes(), 'Von aussen drei');
+  await page.click('#viewMapBtn');
+  const eigene = page.locator('g.mm-node:has(> text:text-is("Eigene Notiz geändert"))');
+  await eigene.waitFor();
+  await stage(extHidden, 9);
+  await eigene.click({ button: 'right' });
+  await page.hover('#contextMenu > button:has(> span:first-child:text-is("Ansicht"))');
+  await page.click('.context-sub button:has(> span:first-child:text-is("Einklappen"))'); // ungesicherte eigene Änderung: ausgeblendet
+  await commitStaged();
+  await page.waitForFunction(() => document.querySelector('.mm-root .mm-hiddenbadge'), null, { timeout: 5000 });
+  await page.waitForFunction(() => [...document.querySelectorAll('.mm-node text')].some(x => x.textContent === 'Von aussen drei'), null, { timeout: 5000 });
+  await page.waitForFunction(SAVED);
+  assert.equal(await page.locator('#banner:not([hidden])').count(), 0, 'keine Rückfrage');
+  assert.equal(await eigene.count(), 0, 'die Notiz bleibt ausgeblendet');
+  const afterMerge = DB.open(SQL, await fileBytes());
+  const hiddenRow = afterMerge.exec("SELECT collapsed FROM notes WHERE title = 'Eigene Notiz geändert'")[0].values[0][0];
+  assert.equal(hiddenRow, 2, 'das Bit «ausgeblendet» steht in der vereinten Datei');
+  assert.ok(DB.listNotes(afterMerge, '').some(n => n.title === 'Von aussen drei'), 'und das Fremde auch');
+  afterMerge.close();
+  await page.click('.mm-root .mm-hiddenbadge');
+  await eigene.waitFor();
+  await page.waitForFunction(SAVED);
+  await page.click('#viewListBtn');
+  await page.click('#list li >> text=Eigene Notiz geändert');
+  await page.waitForFunction(() => document.querySelector('#title').value === 'Eigene Notiz geändert');
+  part('Zusammenführen: eine eigene, ungesicherte Änderung «ausgeblendet» (Bit 2 von collapsed) bleibt in der vereinten Datei erhalten');
+
   // Beide ändern dieselbe Notiz: Rückfrage, Speichern ruht
   const renamed = async (bytes, oldTitle, newTitle) => {
     const db = DB.open(SQL, bytes);
@@ -933,9 +961,21 @@ async function runReadonly(browser, part, step) {
   await page.click('.mm-node:has(> text:text-is("Plan"))', { button: 'right' });
   await page.waitForSelector('#contextMenu:not([hidden])');
   const items = await page.locator('#contextMenu button span:first-child').allInnerTexts();
-  assert.ok(items.includes('Öffnen') && items.some(t => t.startsWith('Drucken')), 'Lesen bleibt im Menü: ' + items);
-  for (const forbidden of ['Umbenennen', 'Unternotiz anlegen', 'Löschen', 'Nach oben']) assert.ok(!items.includes(forbidden), forbidden + ' fehlt im Menü: ' + items);
+  assert.ok(items.includes('Öffnen') && items.includes('Ansicht') && items.includes('Ausgabe'), 'Lesen bleibt im Menü: ' + items);
+  await page.hover('#contextMenu > button:has(> span:first-child:text-is("Ausgabe"))');
+  await page.waitForSelector('.context-sub');
+  assert.ok((await page.locator('.context-sub button span:first-child').allInnerTexts()).some(t => t.startsWith('Drucken')), 'Drucken im Untermenü Ausgabe');
+  for (const forbidden of ['Umbenennen', 'Unternotiz anlegen', 'Löschen', 'Nach oben', 'Ordnen']) assert.ok(!items.includes(forbidden), forbidden + ' fehlt im Menü: ' + items);
   await page.keyboard.press('Escape');
+  // «Einklappen» (Ansicht) ist persönliche Ansicht und geht auch im Lesemodus
+  await page.click('.mm-node:has(> text:text-is("Plan"))', { button: 'right' });
+  await page.waitForSelector('#contextMenu:not([hidden])');
+  await page.hover('#contextMenu > button:has(> span:first-child:text-is("Ansicht"))');
+  await page.waitForSelector('.context-sub');
+  await page.click('.context-sub button:has(> span:first-child:text-is("Einklappen"))');
+  await page.waitForFunction(() => !document.querySelector('.mm-node:not(.mm-root) text') || ![...document.querySelectorAll('.mm-node text')].some(x => x.textContent === 'Plan'));
+  assert.equal(await page.evaluate(id => __ctx.backend.getNote(id).then(n => n.collapsed & 2), ids.a), 2, 'Lesemodus: ausblenden erlaubt');
+  await page.evaluate(() => __ctx.backend.showHiddenChildren(null));
   part('Mindmap: Tab und Entf tun nichts und nennen den Grund, das Kontextmenü enthält nur Lesendes');
 
   // Fragen und Aufgaben

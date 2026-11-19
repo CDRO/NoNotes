@@ -326,7 +326,7 @@
   // Schreibwege aus (Attribut data-write), jede Funktion, die schreiben würde, bricht mit einem Hinweis ab, und das Backend lehnt
   // schreibende Aufrufe selbst ab (readOnlyBackend) – auch für Erweiterungen. Ausgenommen ist die persönliche Ansicht (Auf-/Zuklappen).
   const readOnly = () => !!(shell && shell.readOnly);
-  const VIEW_STATE_CALLS = new Set(['setCollapsed', 'setAllCollapsed']);
+  const VIEW_STATE_CALLS = new Set(['setCollapsed', 'setHidden', 'showHiddenChildren', 'setAllCollapsed']);
   function denyWrite() {
     if (!readOnly()) return false;
     hint(t('Nur lesen: In diesem Arbeitsbereich sind Änderungen nicht erlaubt.'));
@@ -560,6 +560,7 @@
       onReparent: (id, parentId, where, side) => moveNoteTo(id, parentId, where, side),
       onSides: sides => keepSides(sides),
       onToggleCollapse: id => toggleCollapse(id),
+      onShowHidden: id => showHiddenChildrenOf(id),
       onContextMenu: (id, x, y) => showNodeMenu(id, x, y),
       onOpenLink: id => openNodeLink(id),
       linkTitle: url => nodeLinkTitle(url),
@@ -1923,11 +1924,12 @@
     state.mapMatchIndex = (state.mapMatchIndex + step + state.mapMatches.length) % state.mapMatches.length;
     const id = state.mapMatches[state.mapMatchIndex];
     // Eingeklappte Vorfahren aufklappen, damit der Treffer sichtbar wird.
+    await revealHidden(id);
     let p = await B.getNote(id);
     let changed = false;
     while (p && p.parent_id != null) {
       p = await B.getNote(p.parent_id);
-      if (p && p.collapsed) { await B.setCollapsed(p.id, false); changed = true; }
+      if (p && (p.collapsed & 1)) { await B.setCollapsed(p.id, false); changed = true; }
     }
     if (changed) markEdited();
     state.mapSelection = id;
@@ -2425,6 +2427,7 @@
 
   async function selectNote(id, focusEditor) {
     if (state.currentId !== id && !(await ensureSaved())) return;
+    await revealHidden(id);
     state.currentId = id;
     setActiveItem(id);
     await renderEditor();
@@ -2437,6 +2440,7 @@
   async function openNote(id, opts) {
     hideContextMenu();
     if (state.currentId !== id && !(await ensureSaved())) return;
+    await revealHidden(id);
     state.currentId = id;
     if (state.view !== 'list') {
       if (state.view === 'map') state.mapSelection = id;
@@ -4505,6 +4509,7 @@
           if (info && info.collapsed) await B.setCollapsed(targetId, false);
         }
       }
+      await B.setHidden([id], false); // wer neu eingehängt wird, soll sichtbar bleiben
       state.mapSelection = id;
       markEdited();
       await renderMap();
@@ -4586,6 +4591,65 @@
     markEdited();
     await renderMap();
     state.map.fit();
+  }
+
+  // ---------- Teilweise einklappen: Notizen unter ihrem Elternknoten ausblenden (v4.8.0, Bit 2 von notes.collapsed) ----------
+
+  /** Blendet die Notizen ids (nur Zahlen, ohne Wurzel) samt Unternotizen unter ihrem Elternknoten aus. */
+  async function hideNotes(ids) {
+    const list = [...new Set(ids)].filter(i => typeof i === 'number' && state.map.nodeInfo(i));
+    if (!list.length) return;
+    await B.setHidden(list, true);
+    // Auswahl, die jetzt unsichtbar ist, rückt zum Elternknoten des ersten ausgeblendeten auf
+    const sel = state.mapSelection;
+    if (typeof sel === 'number' && list.some(h => isInSubtree(sel, h))) {
+      const first = state.map.nodeInfo(list.find(h => isInSubtree(sel, h)));
+      state.mapSelection = first && first.parentId != null ? first.parentId : 'root';
+    }
+    clearMulti();
+    markEdited();
+    await renderMap();
+  }
+
+  /** Blendet alle Geschwister der Notizen ids aus, die nicht selbst in ids stehen (je Elternknoten). */
+  async function hideOthers(ids) {
+    const keep = new Set(ids);
+    const others = new Set();
+    for (const i of keep) {
+      const info = typeof i === 'number' ? state.map.nodeInfo(i) : null;
+      if (info) for (const sib of info.siblingIds) if (!keep.has(sib)) others.add(sib);
+    }
+    await hideNotes([...others]);
+  }
+
+  /** «Alle wieder zeigen» an einem Knoten: seine ausgeblendeten Unternotizen und die seiner Geschwister (Kinder seines Elternknotens). */
+  async function showHiddenAround(id) {
+    const info = state.map.nodeInfo(id);
+    if (!info) return;
+    await B.showHiddenChildren(info.parentId == null ? null : info.parentId);
+    if (info.hiddenKids) await B.showHiddenChildren(id);
+    markEdited();
+    await renderMap();
+  }
+
+  /** Klick auf «+N» (parentId null: die Hauptäste an der Wurzel). */
+  async function showHiddenChildrenOf(parentId) {
+    await B.showHiddenChildren(parentId);
+    markEdited();
+    await renderMap();
+  }
+
+  /** Eine Notiz, die jemand von ausserhalb der Mindmap öffnet (Liste, Link, Suche, Verlauf), wird sichtbar: sie und ihre
+   *  ausgeblendeten Vorfahren werden wieder gezeigt. */
+  async function revealHidden(id) {
+    if (typeof id !== 'number') return;
+    let changed = false;
+    const seen = new Set();
+    for (let n = await B.getNote(id); n && !seen.has(n.id); n = n.parent_id != null ? await B.getNote(n.parent_id) : null) {
+      seen.add(n.id);
+      if (n.collapsed & 2) { await B.setHidden([n.id], false); changed = true; }
+    }
+    if (changed) markEdited();
   }
 
   async function toggleCollapse(id) {
@@ -4701,51 +4765,73 @@
         .filter((i, k, a) => i !== 'sep' || (k > 0 && k < a.length - 1 && a[k - 1] !== 'sep'));
       if (!items.length) return;
     }
-    for (const item of items) {
-      if (item === 'sep') {
-        const s = document.createElement('div');
-        s.className = 'sep';
-        menu.appendChild(s);
-        continue;
-      }
-      const b = document.createElement('button');
-      b.type = 'button';
-      const label = document.createElement('span');
-      label.textContent = item.label;
-      b.appendChild(label);
-      if (item.key) {
-        const k = document.createElement('span');
-        k.className = 'key';
-        k.textContent = item.key;
-        b.appendChild(k);
-      }
-      if (item.danger) b.classList.add('danger');
-      if (item.checked) { b.classList.add('checked'); b.setAttribute('aria-current', 'true'); }
-      if (item.title) b.title = item.title;
-      if (item.plugin) b.dataset.plugin = item.plugin;
-      if (item.panel) { // Untermenü (Erweiterungen, seit 2.8.0): Klick, Zeigen oder Pfeil rechts öffnet es daneben
-        const k = document.createElement('span');
-        k.className = 'key';
-        k.textContent = '▸';
-        b.appendChild(k);
-        b.classList.add('has-sub');
-        b.setAttribute('aria-haspopup', 'menu');
-        b.setAttribute('aria-expanded', 'false');
-        b.addEventListener('click', () => openContextSub(b, item, true));
-        b.addEventListener('mouseenter', () => openContextSub(b, item, false));
-        b.addEventListener('keydown', e => { if (e.key === 'ArrowRight') { e.preventDefault(); openContextSub(b, item, true); } });
-      } else {
-        b.addEventListener('click', () => { hideContextMenu(); item.action(); });
-        b.addEventListener('mouseenter', closeContextSub);
-      }
-      menu.appendChild(b);
-    }
+    for (const item of items) menu.appendChild(contextEntry(item));
     menu.hidden = false;
     const w = menu.offsetWidth, h = menu.offsetHeight;
     menu.style.left = `${Math.min(x, window.innerWidth - w - 8)}px`;
     menu.style.top = opts && opts.above ? `${Math.max(8, y - h - 6)}px` : `${Math.min(y, window.innerHeight - h - 8)}px`;
     const first = menu.querySelector('button');
     if (opts && opts.above && first) first.focus(); // per Tastatur geöffnet: gleich bedienbar
+  }
+
+  /** Ein Eintrag des Kontextmenüs (oder eines Untermenüs) als Element: Trennlinie oder Knopf. */
+  function contextEntry(item) {
+    if (item === 'sep') {
+      const s = document.createElement('div');
+      s.className = 'sep';
+      return s;
+    }
+    const b = document.createElement('button');
+    b.type = 'button';
+    const label = document.createElement('span');
+    label.textContent = item.label;
+    b.appendChild(label);
+    if (item.key) {
+      const k = document.createElement('span');
+      k.className = 'key';
+      k.textContent = item.key;
+      b.appendChild(k);
+    }
+    if (item.danger) b.classList.add('danger');
+    if (item.checked) { b.classList.add('checked'); b.setAttribute('aria-current', 'true'); }
+    if (item.title) b.title = item.title;
+    if (item.plugin) b.dataset.plugin = item.plugin;
+    if (item.panel) { // Untermenü (Erweiterungen, seit 2.8.0): Klick, Zeigen oder Pfeil rechts öffnet es daneben
+      const k = document.createElement('span');
+      k.className = 'key';
+      k.textContent = '▸';
+      b.appendChild(k);
+      b.classList.add('has-sub');
+      b.setAttribute('aria-haspopup', 'menu');
+      b.setAttribute('aria-expanded', 'false');
+      b.addEventListener('click', () => openContextSub(b, item, true));
+      b.addEventListener('mouseenter', () => openContextSub(b, item, false));
+      b.addEventListener('keydown', e => { if (e.key === 'ArrowRight') { e.preventDefault(); openContextSub(b, item, true); } });
+    } else {
+      b.addEventListener('click', () => { hideContextMenu(); item.action(); });
+      b.addEventListener('mouseenter', () => { if (b.parentNode === el.contextMenu) closeContextSub(); });
+    }
+    return b;
+  }
+
+  /** Untermenü mit festen Einträgen (v4.8.0): Eintrag { label, panel } für showContextMenu. Im Lesemodus fallen die Einträge mit write
+   *  weg; bleibt nichts übrig, gibt es das Untermenü nicht (null). extra: Elemente, die hinter den Einträgen eingefügt werden. */
+  function submenuItem(label, entries, extra) {
+    const list = entries.filter(Boolean).filter(i => i === 'sep' || !(readOnly() && i.write))
+      .filter((i, k, a) => i !== 'sep' || (k > 0 && k < a.length - 1 && a[k - 1] !== 'sep'));
+    const more = extra && extra.length ? extra : [];
+    if (!list.length && !more.length) return null;
+    return {
+      label,
+      panel: () => {
+        const box = document.createElement('div');
+        box.className = 'context-list';
+        for (const i of list) box.appendChild(contextEntry(i));
+        if (more.length && list.length) box.appendChild(contextEntry('sep'));
+        for (const m of more) box.appendChild(m);
+        return box;
+      },
+    };
   }
 
   function hideContextMenu() {
@@ -4837,48 +4923,66 @@
       return;
     }
     const info = state.map.nodeInfo(id);
+    // Ziele von «Einklappen» und «Andere einklappen»: die Mehrfachauswahl, wenn der Knoten dazugehört, sonst er allein
+    const targets = () => (state.multi.has(id) ? [...state.multi] : [id]);
+    const viewMenu = () => submenuItem(t('Ansicht'), [
+      ...(info && info.childCount ? [{ label: info.collapsed ? t('Unternotizen ausklappen') : t('Unternotizen einklappen'), action: () => toggleCollapse(id) }] : []),
+      { label: t('Einklappen'), title: t('Die Notiz (bei einer Mehrfachauswahl alle markierten) unter dem übergeordneten Knoten ausblenden'), action: () => hideNotes(targets()) },
+      { label: t('Andere einklappen'), title: t('Alle anderen Notizen unter demselben übergeordneten Knoten ausblenden'), action: () => hideOthers(targets()) },
+      { label: t('Alle wieder zeigen'), title: t('Die ausgeblendeten Notizen dieses Knotens und seiner Nachbarn wieder zeigen'), action: () => showHiddenAround(id) },
+    ]);
+    const imageItem = { label: t('Als Bild kopieren'), key: 'Ctrl+C', title: t('Den Weg von der Wurzel und diesen Ast als Bild in die Zwischenablage kopieren'), action: () => copyMapImage(state.multi.has(id) ? [...state.multi] : [id]) };
     if (info && info.archived) {
       // Archivierte Notizen: nur ansehen, zurückholen, ein-/ausklappen, löschen
-      const archivedItems = [
+      showContextMenu([
         { label: t('Öffnen'), key: 'Enter', action: () => openNote(id) },
         { write: true, label: t('Zurückholen'), action: () => unarchiveById(id) },
-      ];
-      if (info.childCount) archivedItems.push({ label: info.collapsed ? t('Ausklappen') : t('Einklappen'), action: () => toggleCollapse(id) });
-      archivedItems.push({ label: t('Als Bild kopieren'), key: 'Ctrl+C', action: () => copyMapImage([id]) }, sendItem(id));
-      archivedItems.push('sep', { write: true, label: t('Löschen'), key: t('Entf'), danger: true, action: () => deleteNoteById(id) });
-      showContextMenu(archivedItems, x, y);
+        viewMenu(),
+        { label: t('Als Bild kopieren'), key: 'Ctrl+C', action: () => copyMapImage([id]) },
+        sendItem(id),
+        'sep',
+        { write: true, label: t('Löschen'), key: t('Entf'), danger: true, action: () => deleteNoteById(id) },
+      ].filter(Boolean), x, y);
       return;
     }
+    const sendPanel = sender.panel(id, hideContextMenu);
+    const sendBox = sendPanel.children.length ? [sendPanel] : []; // «Versand»: E-Mail und Teilen stehen im Untermenü «Ausgabe»
+    const link = info && info.link;
     const items = [
       { label: t('Öffnen'), key: 'Enter', action: () => openNote(id) },
       { write: true, label: t('Unternotiz anlegen'), key: 'Tab', action: () => newNoteInMap(id) },
-      ...fromTemplate(id),
       { write: true, label: t('Umbenennen'), key: 'F2', action: () => beginRename(id) },
-    ];
-    if (info && info.childCount) {
-      items.push({ label: info.collapsed ? t('Ausklappen') : t('Einklappen'), action: () => toggleCollapse(id) });
-    }
-    if (templateStore() && canSaveTemplates()) items.push({ label: t('Als Vorlage speichern…'), action: () => openTemplateSave(id) });
-    items.push(
-      ...(info && info.link
-        ? [{ label: t('Link öffnen'), title: nodeLinkTitle(info.link), action: () => { hideContextMenu(); openNodeLink(id); } },
-          { write: true, label: t('Link ändern…'), action: () => openNodeLinkDialog(id) },
-          { write: true, label: t('Link entfernen'), action: () => removeNodeLink(id) }]
-        : [{ write: true, label: t('Link hinterlegen…'), title: t('Am Knoten einen Link auf eine Webseite, eine Datei, eine Notiz oder einen Bereich hinterlegen'), action: () => openNodeLinkDialog(id) }]),
-      ...(canDetach() ? [{ write: true, label: t('In neuen Bereich auslösen…'), title: t('Diese Notiz wird die Wurzel eines neuen Bereichs, ihre Unternotizen ziehen mit'), action: () => openDetachDialog(id) }] : []),
-      { label: t('Link kopieren'), action: () => copyNoteLink(id) },
-      { label: t('Als Bild kopieren'), key: 'Ctrl+C', title: t('Den Weg von der Wurzel und diesen Ast als Bild in die Zwischenablage kopieren'), action: () => copyMapImage(state.multi.has(id) ? [...state.multi] : [id]) },
-      { label: t('Drucken…'), action: () => openPrintDialog({ noteId: id, scope: 'subtree' }) },
-      sendItem(id),
-      { write: true, label: t('Archivieren…'), action: () => archiveNotes([id]) },
-      { write: true, label: t('Nach oben'), key: 'Alt+↑', action: async () => { state.mapSelection = id; await moveSelected(-1); } },
-      { write: true, label: t('Nach unten'), key: 'Alt+↓', action: async () => { state.mapSelection = id; await moveSelected(1); } },
-    );
-    if (info && info.side) { // Hauptast: auf die andere Seite der Mindmap
-      items.push(info.side === 'left'
-        ? { write: true, label: t('Auf die rechte Seite'), action: () => switchSide(id, 'right') }
-        : { write: true, label: t('Auf die linke Seite'), action: () => switchSide(id, 'left') });
-    }
+      'sep',
+      viewMenu(),
+      submenuItem(t('Ausgabe'), [
+        imageItem,
+        { label: t('Drucken…'), action: () => openPrintDialog({ noteId: id, scope: 'subtree' }) },
+      ], sendBox),
+      submenuItem(t('Link'), [
+        { label: t('Link kopieren'), action: () => copyNoteLink(id) },
+        ...(link
+          ? [{ label: t('Link öffnen'), title: nodeLinkTitle(link), action: () => { hideContextMenu(); openNodeLink(id); } },
+            { write: true, label: t('Link ändern…'), action: () => openNodeLinkDialog(id) },
+            { write: true, label: t('Link entfernen'), action: () => removeNodeLink(id) }]
+          : [{ write: true, label: t('Link hinterlegen…'), title: t('Am Knoten einen Link auf eine Webseite, eine Datei, eine Notiz oder einen Bereich hinterlegen'), action: () => openNodeLinkDialog(id) }]),
+      ]),
+      submenuItem(t('Vorlage'), [
+        ...fromTemplate(id),
+        ...(templateStore() && canSaveTemplates() ? [{ label: t('Als Vorlage speichern…'), action: () => openTemplateSave(id) }] : []),
+      ]),
+      submenuItem(t('Ordnen'), [
+        { write: true, label: t('Nach oben'), key: 'Alt+↑', action: async () => { state.mapSelection = id; await moveSelected(-1); } },
+        { write: true, label: t('Nach unten'), key: 'Alt+↓', action: async () => { state.mapSelection = id; await moveSelected(1); } },
+        // Hauptast: auf die andere Seite der Mindmap
+        ...(info && info.side
+          ? [info.side === 'left'
+            ? { write: true, label: t('Auf die rechte Seite'), action: () => switchSide(id, 'right') }
+            : { write: true, label: t('Auf die linke Seite'), action: () => switchSide(id, 'left') }]
+          : []),
+        ...(canDetach() ? [{ write: true, label: t('In neuen Bereich auslösen…'), title: t('Diese Notiz wird die Wurzel eines neuen Bereichs, ihre Unternotizen ziehen mit'), action: () => openDetachDialog(id) }] : []),
+        { write: true, label: t('Archivieren…'), action: () => archiveNotes([id]) },
+      ]),
+    ].filter(Boolean);
     // Einträge der Erweiterungen (seit 2.8.0): für die Mehrfachauswahl, wenn der Knoten dazugehört, sonst für ihn allein
     finishContextUse(); // ein noch offenes Menü (Rechtsklick auf einen anderen Knoten) zuerst abschliessen
     const multi = state.multi.has(id);

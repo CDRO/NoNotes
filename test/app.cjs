@@ -18,6 +18,14 @@ const READY = 'body[data-ready="true"]';
 const SCHEMA_VERSION = '18'; // muss zu packages/data/db.js passen
 const SAVED = () => document.querySelector('#status').dataset.state === 'saved';
 
+/** Kontextmenü eines Knotens (seit 4.8.0 gruppiert): öffnet das Untermenü group (Ansicht, Ausgabe, Link, Vorlage, Ordnen) und klickt
+ *  darin den Eintrag label (genau, ohne Tastenkürzel). Ohne label bleibt es offen. */
+async function pickSub(page, group, label) {
+  await page.hover(`#contextMenu > button:has(> span:first-child:text-is("${group}"))`);
+  await page.waitForSelector('.context-sub');
+  if (label) await page.click(`.context-sub button:has(> span:first-child:text-is("${label}"))`);
+}
+
 // ============================================================
 /* Smoke-Test: öffnet die App wie der Benutzer per file:// in Chromium und prüft den Kernablauf. */
 async function runSmoke(browser, part, step) {
@@ -321,7 +329,7 @@ async function runSmoke(browser, part, step) {
     // Einklappen über das Kontextmenü, Ausklappen über den Knopf am Knoten
     await page5.click(`.mm-node[data-id="${projektId}"]`, { button: 'right' });
     await page5.waitForSelector('#contextMenu:not([hidden])');
-    await page5.click('#contextMenu button:has-text("Einklappen")');
+    await pickSub(page5, 'Ansicht', 'Unternotizen einklappen');
     await page5.waitForFunction(id => !document.querySelector(`.mm-node[data-id="${id}"]`), budgetId);
     assert.equal(await page5.locator(`.mm-node[data-id="${projektId}"] .mm-toggle text`).textContent(), '2');
     await page5.click(`.mm-node[data-id="${projektId}"] .mm-toggle`);
@@ -822,7 +830,7 @@ async function runSmoke(browser, part, step) {
 
     // Teilbaum über das Kontextmenü
     await page12.click(`.mm-node[data-id="${idP}"]`, { button: 'right' });
-    await page12.click('#contextMenu button:has-text("Drucken…")');
+    await pickSub(page12, 'Ausgabe', 'Drucken…');
     await page12.waitForSelector('#printDialog[open]');
     assert.equal(await page12.locator('#printForm input[name="printScope"]:checked').inputValue(), 'subtree');
     assert.match(await page12.locator('#printScopeSubtree').innerText(), /„Projekt“ mit Unternotizen \(2\)/);
@@ -1558,6 +1566,57 @@ async function runSmoke(browser, part, step) {
     assert.ok(tDoc19.includes('<strong>Anhang</strong>'));
     part('Druck: Markdown in Fragen und Antworten und in der Checkliste');
 
+    // Nummerierte Listen mit Startnummer und Hervorheben (nonotes-editor v1.4.0)
+    await page19.click('#viewListBtn');
+    await page19.waitForSelector('body.view-list');
+    await page19.click('#newBtn');
+    await page19.fill('#title', 'Hervorheben');
+    await page19.fill('#body', '# Schritte\n\n4. Vierter\n5. Fünfter\n\nText ==gelb== und ==rot=={rot} hier\n\nwort');
+    await waitSaved(page19);
+    await page19.click('#modeSwitch button[data-mode="preview"]');
+    await page19.waitForSelector('#preview ol[start="4"]');
+    assert.equal(await page19.locator('#preview ol').first().getAttribute('start'), '4', 'Liste nach der Überschrift beginnt bei 4');
+    assert.equal(await page19.locator('#preview ol[start="4"] li').count(), 2);
+    assert.equal(await page19.locator('#preview mark.md-hl.md-hl-rot').innerText(), 'rot', '==x=={rot} wird zur Markierung');
+    assert.equal(await page19.locator('#preview mark.md-hl.md-hl-gelb.md-hl-default').innerText(), 'gelb', 'schlichtes ==x== ist gelb');
+    assert.equal(await page19.locator('#preview mark.md-hl.md-hl-rot').evaluate(m => getComputedStyle(m).backgroundColor), 'rgb(250, 214, 214)', 'helle Füllung in Rot');
+    await page19.click('#modeSwitch button[data-mode="edit"]');
+    part('Vorschau: nummerierte Liste mit Startnummer 4, Hervorhebung gelb und mit Farbe');
+
+    const hlButton = page19.locator('.toolbar button[data-cmd="highlight"]');
+    assert.equal(await hlButton.count(), 1, 'Knopf «Hervorheben» in der Toolleiste');
+    assert.equal(await hlButton.getAttribute('aria-label'), 'Hervorheben');
+    await page19.evaluate(() => { const ta = document.querySelector('#body'); const i = ta.value.lastIndexOf('wort'); ta.focus(); ta.setSelectionRange(i, i + 4); });
+    await hlButton.click();
+    await page19.waitForSelector('.hl-picker:not([hidden])');
+    assert.equal(await page19.locator('.hl-picker button[data-color]').count(), 16, 'Farbfenster mit 16 Farben');
+    await page19.click('.hl-picker button[data-color="blau"]');
+    await page19.waitForFunction(() => document.querySelector('#body').value.endsWith('==wort=={blau}'));
+    await page19.evaluate(() => { const ta = document.querySelector('#body'); const i = ta.value.indexOf('hier'); ta.focus(); ta.setSelectionRange(i, i + 4); });
+    await page19.keyboard.press('Control+Shift+H');
+    await page19.waitForFunction(() => document.querySelector('#body').value.includes('==hier=='));
+    await waitSaved(page19);
+    part('Editor: Knopf «Hervorheben» mit Farbfenster setzt ==Text=={farbe}, Ctrl+Shift+H setzt gelb');
+
+    await page19.evaluate(() => { document.querySelector('#printBtn').click(); });
+    await page19.waitForSelector('#printDialog[open]');
+    await page19.click('#printGoBtn');
+    await page19.waitForFunction(() => window.__printed.length === 3);
+    const hlDoc19 = await page19.evaluate(() => window.__printed[2]);
+    assert.ok(hlDoc19.includes('<ol start="4">') && /<mark class="md-hl md-hl-rot">rot<\/mark>/.test(hlDoc19), 'Druck: Startnummer und Markierung');
+    const hlPaint = await page19.evaluate(html => {
+      const area = document.getElementById('printArea');
+      const keep = area.innerHTML;
+      area.innerHTML = html;
+      const cs = getComputedStyle(area.querySelector('mark.md-hl-rot'));
+      const out = [cs.backgroundColor, cs.printColorAdjust || cs.webkitPrintColorAdjust];
+      area.innerHTML = keep;
+      return out;
+    }, hlDoc19);
+    assert.deepEqual(hlPaint, ['rgb(250, 214, 214)', 'exact'], 'Druck behält die Farbe der Hervorhebung');
+    await page19.waitForFunction(() => !document.body.classList.contains('printing'));
+    part('Druck: Startnummer und Hervorhebung mit Farbe (print-color-adjust: exact)');
+
     await page19.click('#menuBtn');
     await page19.click('#exportBtn');
     await page19.waitForSelector('#exportDialog[open]');
@@ -1569,6 +1628,8 @@ async function runSmoke(browser, part, step) {
     assert.ok(quelle19.includes('> **Frage (beantwortet):** Was steht in [Ziel]('), 'Verweis im Export verlinkt');
     assert.ok(quelle19.includes('> **Antwort:**\n> 1. eins\n> 2. zwei'), 'mehrzeilige Antwort bleibt Liste');
     assert.ok(quelle19.includes('> **Antwort:** Ja'), 'einzeilige Antwort bleibt in der Zeile');
+    const hl19 = new TextDecoder().decode(files19[Object.keys(files19).find(n => /notes\/.*hervorheben.*\.md$/i.test(n))]);
+    assert.ok(hl19.includes('==rot=={rot}') && hl19.includes('==wort=={blau}') && hl19.includes('4. Vierter'), 'Markdown-Export: Hervorhebung und Startnummer wie geschrieben');
     assert.deepEqual(errors19, [], 'keine Konsolenfehler bei Listen und Links');
     await ctx19.close();
     part('Export: Listen in Antworten bleiben Listen');
@@ -1913,7 +1974,7 @@ async function runSmoke(browser, part, step) {
 
     // Beta archivieren: Rückfrage mit Anzahl, Unternotiz geht mit
     await node22('Beta').click({ button: 'right' });
-    await p22.click('#contextMenu button:has-text("Archivieren…")');
+    await pickSub(p22, 'Ordnen', 'Archivieren…');
     await p22.waitForFunction(() => document.querySelectorAll('.mm-node').length === 4); // Wurzel, Alpha, Delta, Epsilon
     assert.ok(dialogs22[0].startsWith('„Beta“ und 1 Unternotiz archivieren?'), dialogs22[0]);
     assert.deepEqual(await visible22(), ['Alpha', 'Delta', 'Epsilon']);
@@ -1949,7 +2010,7 @@ async function runSmoke(browser, part, step) {
 
     // Alpha archivieren: nur noch noch nicht archivierte werden gezählt
     await node22('Alpha').click({ button: 'right' });
-    await p22.click('#contextMenu button:has-text("Archivieren…")');
+    await pickSub(p22, 'Ordnen', 'Archivieren…');
     await p22.waitForFunction(() => document.querySelectorAll('.mm-node').length === 2); // Wurzel, Epsilon
     assert.ok(dialogs22[1].startsWith('„Alpha“ und 1 Unternotiz archivieren?'), dialogs22[1]);
     assert.deepEqual(await visible22(), ['Epsilon']);
@@ -2163,7 +2224,7 @@ async function runBackend(browser, part, step) {
     // Jede Funktion in db.js, die mit db als erstem Argument arbeitet, ist Teil des Vertrags oder bewusst intern.
     const INTERNAL = new Set(['open', 'exportBytes', 'configure', 'normalizeTag', 'syncQuestions', 'syncTasks', 'syncLinks', 'subtreeNoteIds', 'inspect',
       'normalizeLink', 'exportSubtree', 'importSubtree', 'finishDetach', // die drei davor arbeiten über zwei Datenbanken (Auslösen, v3.2.0)
-      'check', 'countRecords']); // Prüfen ohne Öffnen und Zählen für die Hülle (Stoppschirm, Halt bei Massenverlust, v4.4.0)
+      'check', 'countRecords', 'setCollapsedRaw']); // Prüfen ohne Öffnen und Zählen für die Hülle (Stoppschirm, Halt bei Massenverlust, v4.4.0)
     for (const [name, fn] of Object.entries(DB)) {
       if (typeof fn !== 'function' || INTERNAL.has(name)) continue;
       if (!C.METHODS.includes(name)) fail(`db.js-Funktion ${name} ist weder im Vertrag noch als intern vermerkt`);
@@ -2237,6 +2298,8 @@ async function runBackend(browser, part, step) {
     const qs = await B.listQuestions({ status: 'all' });
     if (qs.length) { await call('getQuestion', qs[0].id); await call('answerQuestion', qs[0].id, 'Antwort'); }
     await call('setCollapsed', a, true);
+    await call('setHidden', [b], true);
+    await call('showHiddenChildren', null);
     await call('setSides', { [a]: 'left' });
     await call('setAllCollapsed', false);
     await call('moveNote', b, a, 'after').catch(() => {});
@@ -2829,7 +2892,7 @@ async function runNavigation(browser, part, step) {
     await page.click('#backBtn');
     await editor(null);
     await page.click('.mm-node:has(> text:text-is("Ferien"))', { button: 'right' });
-    await page.click('#contextMenu button:has-text("Link kopieren")');
+    await pickSub(page, 'Link', 'Link kopieren');
     await page.waitForFunction(u => window.__clip === u, `${APP_URL}#n=${id.Ferien}-ferien`);
     part('Link kopieren: volle Adresse mit Nummer und Titel, aus dem Menü «Notiz» und der Mindmap');
 
@@ -3104,10 +3167,10 @@ async function runNodeLinkUi(browser, part, step) {
     await page.keyboard.press('Enter');
     await node(title).waitFor();
   };
-  const menu = async (title, label) => {
+  const menu = async (title, group, label) => {
     await node(title).click({ button: 'right' });
     await page.waitForSelector('#contextMenu:not([hidden])');
-    await page.click(`#contextMenu button:has-text("${label}")`);
+    await pickSub(page, group, label);
   };
   try {
     await add('Projekt');
@@ -3116,7 +3179,7 @@ async function runNodeLinkUi(browser, part, step) {
     await add('Budget');
 
     // Link hinterlegen, prüfen, öffnen
-    await menu('Budget', 'Link hinterlegen…');
+    await menu('Budget', 'Link', 'Link hinterlegen…');
     await page.waitForSelector('#nodeLinkDialog[open]');
     await page.fill('#nodeLinkInput', 'javascript:alert(1)');
     await page.click('#nodeLinkSaveBtn');
@@ -3145,7 +3208,7 @@ async function runNodeLinkUi(browser, part, step) {
     part('Link am Knoten: hinterlegen per Rechtsklick, ungültige Ziele abgewiesen, Symbol im Knoten öffnet das Ziel (nicht den Editor), Streifen im Editor, ändern');
 
     // Auslösen
-    await menu('Projekt', 'In neuen Bereich auslösen…');
+    await menu('Projekt', 'Ordnen', 'In neuen Bereich auslösen…');
     await page.waitForSelector('#detachDialog[open]');
     assert.equal(await page.inputValue('#detachName'), 'Projekt');
     assert.match(await page.textContent('#detachLead'), /2 Unternotizen/);
@@ -3227,7 +3290,7 @@ async function runPdfExport(browser, part, step) {
     await page.fill('#body', [
       '+---------+----------------------------+-------+', '| Bereich | Aufgaben                   | Stand |', '+=========+============================+=======+',
       '| Heizung | [ ] Offerte einholen @anna | offen |', '|         | [x] Termin                 |       |', '+---------+----------------------------+-------+',
-      '', '- [ ] Förderung prüfen >13.11.2026', '', '? Wärmepumpe oder Pellets?', '! Wärmepumpe', '', 'Foto:', '', ''].join('\n'));
+      '', '- [ ] Förderung prüfen >13.11.2026', '', '? Wärmepumpe oder Pellets?', '! Wärmepumpe', '', '# Schritte', '', '4. Vierter Schritt', '5. Fünfter Schritt', '', 'Das ist ==wichtig=={rot} und ==dringend==.', '', 'Foto:', '', ''].join('\n'));
     const png = path.join(tmp, 'skizze.png');
     fs.writeFileSync(png, await page.screenshot({ clip: { x: 0, y: 0, width: 300, height: 200 } }));
     await page.setInputFiles('#attachInput', png);
@@ -3296,6 +3359,10 @@ async function runPdfExport(browser, part, step) {
     assert.ok([...pdf.objects.values()].some(o => /\/DCTDecode/.test(o.dict) && /\/Width 320 \/Height 240/.test(o.dict)), 'das JPEG unverändert aus dem Backend');
     const color = /([\d.]+) ([\d.]+) ([\d.]+) rg [\d.]+ Tz 1 0 0 1 [\d.]+ [\d.]+ Tm \(F\\366rderung\) Tj/.exec(heizung.content);
     assert.ok(color && Number(color[1]) + Number(color[2]) + Number(color[3]) < 1, 'dunkle Einstellung: Text trotzdem dunkel auf Weiss');
+    assert.ok(heizung.words.some(w => /^4\.?$/.test(w)) && !heizung.words.includes('1.'), 'nummerierte Liste beginnt bei 4 (<ol start>)');
+    assert.ok(heizung.words.includes('wichtig') && heizung.words.includes('dringend'), 'hervorgehobener Text steht im PDF');
+    assert.match(heizung.content, /\b0\.98\d* 0\.83\d* 0\.83\d* rg [^]*? f\b/, 'Hervorhebung {rot}: gefülltes Rechteck in hellem Rot hinter dem Text (auch bei dunkler Einstellung)');
+    assert.match(heizung.content, /\b1 0\.94\d* 0\.54\d* rg/, 'schlichtes ==Text==: kräftiges Gelb');
     const listPages = pdf.pages.slice(at('Liste')).filter(p => p.words.includes('Betrag'));
     assert.ok(listPages.length >= 2, 'die Titelzeile der langen Tabelle steht auf jeder ihrer Seiten');
     assert.ok(listPages[1].words.indexOf('Betrag') < listPages[1].words.indexOf('Posten', listPages[1].words.indexOf('Betrag')), 'oben auf der Folgeseite');
@@ -3535,7 +3602,7 @@ async function runExtractUi(browser, part, step) {
     await page.click('[data-view="map"]');
     await btnHidden();
     await node('Einleitung').click({ button: 'right' });
-    await page.click('#contextMenu button:has-text("Archivieren…")');
+    await pickSub(page, 'Ordnen', 'Archivieren…');
     await node('Einleitung').waitFor({ state: 'detached' });
     await page.click('#mapArchiveBtn');
     await node('Einleitung').dblclick();
@@ -3603,13 +3670,15 @@ async function runSendUi(browser, part, step) {
     await page.waitForSelector('body:not(.editor-open)');
     const openSend = async title => {
       await node(title).click({ button: 'right' });
-      await page.click('#contextMenu button:has-text("Versand")');
+      const top = page.locator('#contextMenu > button:has(> span:first-child:text-is("Versand"))');
+      if (await top.count()) await top.click(); // archivierte Notizen: «Versand» steht im Menü selbst
+      else await pickSub(page, 'Ausgabe');
       await page.waitForSelector('.context-sub .send-panel');
       return page.$$eval('.context-sub .send-panel button', l => l.map(b => b.textContent));
     };
     assert.deepEqual(await openSend(TITLE), ['E-Mail', 'Teilen'], 'Vorgabe: beide');
-    const items = await page.$$eval('#contextMenu > button', l => l.map(b => b.querySelector('span').textContent));
-    assert.equal(items[items.indexOf('Drucken…') + 1], 'Versand', 'nach «Drucken…»');
+    const outputs = await page.$$eval('.context-sub > .context-list > button', l => l.map(b => b.querySelector('span').textContent));
+    assert.deepEqual(outputs, ['Als Bild kopieren', 'Drucken…'], 'Ausgabe: Bild und Drucken, dahinter die Versandwege');
 
     const [dl] = await Promise.all([page.waitForEvent('download'), page.click('.context-sub button:has-text("E-Mail")')]);
     assert.equal(dl.suggestedFilename(), 'Sitzung Vorstand - Budget.eml', 'Dateiname ohne Sonderzeichen');
@@ -3668,7 +3737,7 @@ async function runSendUi(browser, part, step) {
     await page.waitForSelector(READY, { timeout: 30000 });
     assert.equal(await page.$eval('#sendSelect', s => s.value), 'share', 'nach dem Neuladen');
     await node(TITLE).click({ button: 'right' });
-    await page.click('#contextMenu button:has-text("Archivieren…")');
+    await pickSub(page, 'Ordnen', 'Archivieren…');
     await node(TITLE).waitFor({ state: 'detached' });
     await page.click('#mapArchiveBtn');
     assert.deepEqual(await openSend(TITLE), ['Teilen'], 'auch für archivierte Notizen');
@@ -3694,7 +3763,7 @@ async function runSendUi(browser, part, step) {
     const n2 = p2.locator('g.mm-node:has(> text:text-is("Ohne Teilen"))');
     await n2.waitFor();
     await n2.click({ button: 'right' });
-    await p2.click('#contextMenu button:has-text("Versand")');
+    await pickSub(p2, 'Ausgabe');
     assert.deepEqual(await p2.$$eval('.context-sub .send-panel button', l => l.map(b => b.textContent)), ['E-Mail'], 'auch wenn nur Teilen eingestellt ist');
     await plain.close();
     assert.deepEqual(errors, []);
@@ -4438,6 +4507,213 @@ async function runLastChange(browser, part, step) {
   }
 }
 
+async function runPartialFolding(browser, part, step) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'de-CH' });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  await page.goto(APP_URL);
+  await page.waitForSelector(READY, { timeout: 30000 });
+  const node = title => page.locator(`g.mm-node:has(> text:text-is("${title}"))`);
+  const add = async (title, parent) => {
+    if (parent) await node(parent).click(); else await page.click('#mindmap', { position: { x: 30, y: 700 } });
+    await page.keyboard.press('Tab');
+    await page.waitForSelector('#renameInput:not([hidden])');
+    await page.keyboard.type(title);
+    await page.keyboard.press('Enter');
+    await node(title).waitFor();
+  };
+  const open = async title => {
+    await node(title).click({ button: 'right' });
+    await page.waitForSelector('#contextMenu:not([hidden])');
+  };
+  const menu = async (title, group, label) => { await open(title); await pickSub(page, group, label); };
+  const topLabels = () => page.$$eval('#contextMenu > button', l => l.map(b => b.querySelector('span').textContent));
+  const subLabels = () => page.$$eval('.context-sub button > span:first-child', l => l.map(b => b.textContent));
+  const visible = () => page.$$eval('g.mm-node:not(.mm-root) > text', l => l.map(x => x.textContent).sort());
+  const badge = title => node(title).locator('.mm-hiddenbadge text');
+  const settle = async () => { await page.waitForFunction(SAVED, null, { timeout: 15000 }); };
+  try {
+    await add('Projekt');
+    for (const k of ['Heizung', 'Offerte', 'Budget', 'Planung']) await add(k, 'Projekt');
+    await add('Ferien');
+    await add('Team');
+    const ALL = ['Budget', 'Ferien', 'Heizung', 'Offerte', 'Planung', 'Projekt', 'Team'];
+    assert.deepEqual(await visible(), ALL);
+
+    // ---------- Menü: Gruppen und Untermenüs ----------
+    await open('Projekt');
+    const top = (await topLabels()).filter(l => l !== 'Vorlage'); // «Vorlage» gibt es nur mit Vorlagen-Ordner
+    assert.deepEqual(top, ['Öffnen', 'Unternotiz anlegen', 'Umbenennen', 'Ansicht', 'Ausgabe', 'Link', 'Ordnen', 'Löschen']);
+    assert.equal(await page.locator('#contextMenu > button.has-sub').count(), top.length - 4 + (await topLabels()).filter(l => l === 'Vorlage').length, 'vier (fünf) Untermenüs');
+    await pickSub(page, 'Ansicht');
+    assert.deepEqual(await subLabels(), ['Unternotizen einklappen', 'Einklappen', 'Andere einklappen', 'Alle wieder zeigen']);
+    await pickSub(page, 'Ausgabe');
+    assert.deepEqual((await subLabels()).slice(0, 2), ['Als Bild kopieren', 'Drucken…']);
+    assert.ok(await page.locator('.context-sub .send-panel button').count() >= 1, 'Versand-Wege im Untermenü Ausgabe');
+    await pickSub(page, 'Link');
+    assert.deepEqual(await subLabels(), ['Link kopieren', 'Link hinterlegen…']);
+    await pickSub(page, 'Ordnen');
+    const ordnen = await subLabels();
+    assert.deepEqual(ordnen.slice(0, 2), ['Nach oben', 'Nach unten']);
+    assert.ok(ordnen.includes('Archivieren…') && ordnen.some(l => /^Auf die (linke|rechte) Seite$/.test(l)), 'Hauptast: Seite wechseln, archivieren: ' + ordnen);
+    assert.equal(await page.locator('.context-sub').count(), 1, 'immer nur ein Untermenü offen');
+    assert.equal(await page.locator('.context-sub button:has(> span.key:text-is("Alt+↑"))').count(), 1, 'Tastenkürzel am Eintrag');
+    await page.keyboard.press('Escape');
+    // eine Unternotiz ohne Unternotizen: kein «Unternotizen einklappen», keine Seite
+    await open('Budget');
+    await pickSub(page, 'Ansicht');
+    assert.deepEqual(await subLabels(), ['Einklappen', 'Andere einklappen', 'Alle wieder zeigen']);
+    await pickSub(page, 'Ordnen');
+    assert.ok(!(await subLabels()).some(l => /Seite$/.test(l)), 'Seite nur bei Hauptästen');
+    await page.keyboard.press('Escape');
+    // Link vorhanden: Öffnen, Ändern, Entfernen statt Hinterlegen
+    await page.locator('g.mm-node:has(> text:text-is("Ferien"))').click({ button: 'right' });
+    await pickSub(page, 'Link', 'Link hinterlegen…');
+    await page.fill('#nodeLinkInput', 'https://www.example.ch/ferien');
+    await page.click('#nodeLinkSaveBtn');
+    await page.waitForSelector('#nodeLinkDialog', { state: 'hidden' });
+    await open('Ferien');
+    await pickSub(page, 'Link');
+    assert.deepEqual(await subLabels(), ['Link kopieren', 'Link öffnen', 'Link ändern…', 'Link entfernen']);
+    await page.keyboard.press('Escape');
+    // Tastatur: Pfeil rechts öffnet und fokussiert, Escape schliesst nur das Untermenü
+    await open('Budget');
+    await page.focus('#contextMenu > button:has(> span:first-child:text-is("Ansicht"))');
+    await page.keyboard.press('ArrowRight');
+    await page.waitForSelector('.context-sub');
+    assert.equal(await page.evaluate(() => !!document.activeElement.closest('.context-sub')), true, 'Fokus im Untermenü');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('.context-sub').count(), 0, 'Untermenü zu');
+    assert.equal(await page.locator('#contextMenu').isVisible(), true, 'Hauptmenü bleibt');
+    await page.keyboard.press('Escape');
+    // am Bildschirmrand: Menü und Untermenü bleiben im Fenster
+    await node('Projekt').evaluate(g => g.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: window.innerWidth - 4, clientY: window.innerHeight - 4 })));
+    await page.waitForSelector('#contextMenu:not([hidden])');
+    for (const group of ['Ansicht', 'Ordnen']) {
+      await pickSub(page, group);
+      const inside = await page.evaluate(() => [document.querySelector('#contextMenu'), document.querySelector('.context-sub')].every(e => {
+        const r = e.getBoundingClientRect();
+        return r.left >= 0 && r.top >= 0 && r.right <= window.innerWidth && r.bottom <= window.innerHeight;
+      }));
+      assert.equal(inside, true, `${group} am Rand im Fenster`);
+    }
+    await page.keyboard.press('Escape');
+    part('Kontextmenü: Ansicht, Ausgabe, Link, Ordnen (und Vorlage) als Untermenüs mit den Einträgen und Kürzeln, Link-Einträge je Zustand, Pfeil rechts und Escape, am Bildschirmrand');
+
+    // ---------- Einklappen, +N, wieder zeigen ----------
+    await menu('Budget', 'Ansicht', 'Einklappen');
+    await node('Budget').waitFor({ state: 'detached' });
+    assert.deepEqual(await visible(), ['Ferien', 'Heizung', 'Offerte', 'Planung', 'Projekt', 'Team'], 'nur Budget ist weg');
+    assert.equal(await badge('Projekt').textContent(), '+1');
+    await page.click('g.mm-node:has(> text:text-is("Projekt")) .mm-hiddenbadge');
+    await node('Budget').waitFor();
+    assert.equal(await page.locator('.mm-hiddenbadge').count(), 0, 'Klick auf «+1» zeigt es wieder');
+    part('Einklappen blendet nur den Knoten aus, der Elternknoten zeigt «+1», ein Klick darauf zeigt ihn wieder');
+
+    // Mehrfachauswahl
+    await node('Heizung').click({ modifiers: ['Control'] });
+    await node('Offerte').click({ modifiers: ['Control'] });
+    await page.waitForFunction(() => document.querySelector('#multiCount').textContent === '2 Notizen ausgewählt');
+    await menu('Heizung', 'Ansicht', 'Einklappen');
+    await node('Heizung').waitFor({ state: 'detached' });
+    assert.deepEqual(await visible(), ['Budget', 'Ferien', 'Planung', 'Projekt', 'Team'], 'beide markierten weg');
+    assert.equal(await badge('Projekt').textContent(), '+2');
+    assert.equal(await page.locator('#multiBar').isVisible(), false, 'Auswahl aufgehoben');
+    part('Einklappen mit Mehrfachauswahl blendet alle markierten aus');
+
+    // Alle wieder zeigen (am Nachbarn)
+    await menu('Planung', 'Ansicht', 'Alle wieder zeigen');
+    await node('Heizung').waitFor();
+    assert.deepEqual(await visible(), ALL);
+    assert.equal(await page.locator('.mm-hiddenbadge').count(), 0);
+    // … und am Elternknoten selbst: seine ausgeblendeten Unternotizen
+    await menu('Offerte', 'Ansicht', 'Einklappen');
+    await node('Offerte').waitFor({ state: 'detached' });
+    await menu('Projekt', 'Ansicht', 'Alle wieder zeigen');
+    await node('Offerte').waitFor();
+    part('Alle wieder zeigen: ausgeblendete Geschwister und die Unternotizen des Knotens');
+
+    // Andere einklappen: eine Notiz, dann eine Mehrfachauswahl
+    await menu('Planung', 'Ansicht', 'Andere einklappen');
+    await node('Heizung').waitFor({ state: 'detached' });
+    assert.deepEqual(await visible(), ['Ferien', 'Planung', 'Projekt', 'Team'], 'Geschwister weg, Planung und fremde Äste bleiben');
+    assert.equal(await badge('Projekt').textContent(), '+3');
+    await page.click('g.mm-node:has(> text:text-is("Projekt")) .mm-hiddenbadge');
+    await node('Heizung').waitFor();
+    await node('Heizung').click({ modifiers: ['Control'] });
+    await node('Offerte').click({ modifiers: ['Control'] });
+    await menu('Heizung', 'Ansicht', 'Andere einklappen');
+    await node('Budget').waitFor({ state: 'detached' });
+    assert.deepEqual(await visible(), ['Ferien', 'Heizung', 'Offerte', 'Projekt', 'Team'], 'Budget und Planung weg');
+    assert.equal(await badge('Projekt').textContent(), '+2');
+    part('Andere einklappen: alle Geschwister, die nicht markiert sind, mit Mehrfachauswahl je Elternknoten');
+
+    // Tastatur überspringt Ausgeblendetes
+    await node('Offerte').click();
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await page.locator('g.mm-node.mm-selected > text').textContent(), 'Offerte', 'unter Offerte ist nichts Sichtbares mehr');
+    await node('Offerte').click();
+    await page.keyboard.press('ArrowUp');
+    assert.equal(await page.locator('g.mm-node.mm-selected > text').textContent(), 'Heizung');
+    // Suche: Treffer in ausgeblendeten Notizen markieren den Elternknoten
+    await page.fill('#mapSearch', 'Planung');
+    await page.waitForSelector('g.mm-node.mm-match-inside');
+    assert.equal(await page.locator('g.mm-node.mm-match-inside > text').textContent(), 'Projekt');
+    await page.fill('#mapSearch', '');
+    await page.waitForFunction(() => !document.querySelector('g.mm-node.mm-match-inside'));
+    part('Pfeiltasten überspringen ausgeblendete Notizen, Suchtreffer darin zeigen sich am Elternknoten');
+
+    // Eingeklappt und ausgeblendet sind unabhängig
+    await page.click('g.mm-node:has(> text:text-is("Projekt")) .mm-toggle');
+    await node('Heizung').waitFor({ state: 'detached' });
+    await page.click('g.mm-node:has(> text:text-is("Projekt")) .mm-toggle');
+    await node('Heizung').waitFor();
+    assert.equal(await node('Budget').count(), 0, 'Aus- und Einklappen lässt Ausgeblendetes ausgeblendet');
+    assert.equal(await badge('Projekt').textContent(), '+2');
+
+    // Hauptast ausblenden: das Zeichen steht an der Wurzel
+    await menu('Team', 'Ansicht', 'Einklappen');
+    await node('Team').waitFor({ state: 'detached' });
+    assert.equal(await page.locator('g.mm-root .mm-hiddenbadge text').textContent(), '+1');
+    await page.click('g.mm-root .mm-hiddenbadge');
+    await node('Team').waitFor();
+    part('Aus- und Einklappen sind unabhängig, auch Hauptäste lassen sich ausblenden (Zeichen an der Wurzel)');
+
+    // Neuladen: bleibt so
+    await settle();
+    await page.reload();
+    await page.waitForSelector(READY, { timeout: 30000 });
+    await node('Projekt').waitFor();
+    assert.deepEqual(await visible(), ['Ferien', 'Heizung', 'Offerte', 'Projekt', 'Team']);
+    assert.equal(await badge('Projekt').textContent(), '+2');
+    part('Ausgeblendet bleibt nach dem Neuladen');
+
+    // Eine ausgeblendete Notiz aus der Liste öffnen macht sie wieder sichtbar
+    await page.click('#viewListBtn');
+    await page.waitForSelector('body.view-list');
+    await page.click('#list li >> text=Budget');
+    await page.waitForFunction(() => document.querySelector('#title').value === 'Budget');
+    await page.click('#viewMapBtn');
+    await page.waitForSelector('#mindmap:not([hidden])');
+    await node('Budget').waitFor();
+    assert.equal(await badge('Projekt').textContent(), '+1', 'nur Planung bleibt ausgeblendet');
+    part('Eine ausgeblendete Notiz aus der Liste geöffnet ist in der Mindmap wieder da');
+
+    // Alles ausklappen zeigt alles
+    await page.click('#mindmap', { button: 'right', position: { x: 40, y: 700 } });
+    await page.click('#contextMenu button:has-text("Alles ausklappen")');
+    await node('Planung').waitFor();
+    assert.deepEqual(await visible(), ALL);
+    assert.equal(await page.locator('.mm-hiddenbadge').count(), 0);
+    part('Alles ausklappen zeigt auch alles Ausgeblendete');
+    assert.deepEqual(errors, []);
+  } finally {
+    await ctx.close();
+  }
+}
+
 suite('App-Test', [
   { name: null, run: runSmoke }, // druckt seine Gruppen selbst
   { name: 'Bereiche: anlegen, wechseln (Statusleiste, Menü, Alt+1 … 9), Adresse #w=… und ?w=…, Weiterleitung eines Webservers, Datei und Hauptfarbe je Bereich, umbenennen, entfernen, Datei als Bereich, zwei Tabs', run: runAreas },
@@ -4450,5 +4726,6 @@ suite('App-Test', [
   { name: 'Speichern sicher (v4.4.0): Stoppschirm statt leer (zu neu, beschädigt, fremd), Schema im Dateikopf, Halt bei Massenverlust, Sicherungen, Datei vor jedem Schreiben geprüft', run: runSaveSafety },
   { name: 'Unzuverlässige Ablage (v4.6.0): still wiederholen, ruhige Leiste, verständliche Meldungen, Grösse prüfen, Abgleich-Eintrag und Abgleich beim Verbinden, schneller Start mit Fortschritt, Abbrechen', run: runUnreliableStorage },
   { name: 'Die letzte Änderung beim Schliessen (v4.7.0): Rettungskopie in localStorage, beim nächsten Öffnen übernommen oder zusammengeführt oder angeboten, Browser-Kopie sofort beim Verlassen, Tabs ohne Datei', run: runLastChange },
+  { name: 'Teilweise einklappen und gruppiertes Kontextmenü (v4.8.0): Untermenüs, Einklappen, Andere einklappen, +N, Alle wieder zeigen, Mehrfachauswahl, Neuladen, Liste öffnet, Alles ausklappen', run: runPartialFolding },
   { name: 'Backend-Vertrag: Methodenliste, JSON-sichere Rückgaben, Änderungsmeldung, Fehlerkennungen', run: runBackend },
 ], { browser: true });

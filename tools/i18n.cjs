@@ -223,6 +223,8 @@ function writePack(file, code, name, options, keys, existing) {
 
 const GERMAN = /[äöüÄÖÜß„“«»]|\b(und|oder|der|die|das|den|dem|ein|eine|einen|nicht|kein|keine|mit|für|von|zu|wird|werden|wurde|ist|sind|Notiz|Notizen|Aufgabe|Aufgaben|Frage|Fragen|Datei|Fehler|Neue|Neu|Alle|Keine|Ohne|Bitte|bis|aus|im|in|am|auf|noch|nur|als|wie|auch|Archiv|Antwort|Tag|Tags|offen|offene|erledigt|Treffer|Gelöscht|Archiviert|Erstellt|Geändert|Titel|Pfad|Termin|Termine|Unteraufgabe|Unteraufgaben|Unternotiz|Unternotizen)\b/;
 const SQL = /^\s*(SELECT|INSERT|UPDATE|DELETE|ALTER|CREATE|PRAGMA|EXISTS|DROP|WITH|n\.id|\(length|CASE)\b|\bFROM\b|\bWHERE\b/;
+// Schreibweisen der Hervorhebungsfarben im Editor (markdown.js, ab v1.4.0): Eingabe-Alternativen, keine sichtbaren Texte
+const SPELLINGS = new Set(['grün', 'türkis']);
 const SINGLE_WORD = /^[A-ZÄÖÜ][a-zäöüß…]{2,}…?$/;
 const TECH_WORDS = new Set(['Enter', 'Escape', 'Tab', 'Delete', 'Backspace', 'Shift', 'Control', 'Alt', 'Meta', 'Home', 'End', 'Space', 'Event', 'Error', 'Files', 'Content', 'Accept', 'Mindmap']);
 
@@ -271,6 +273,7 @@ function lint() {
           if (/<[a-z]/.test(src.slice(node.start, node.end))) return; // Markup-Vorlagen
           text = node.quasis.map(q => q.value.cooked).join('§');
         }
+        if (SPELLINGS.has(text)) return;
         if (SQL.test(text) || !/[A-Za-zÄÖÜäöüß]/.test(text)) return;
         const german = GERMAN.test(text);
         const word = isLit && SINGLE_WORD.test(text) && !TECH_WORDS.has(text);
